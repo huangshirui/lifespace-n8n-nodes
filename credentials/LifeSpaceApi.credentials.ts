@@ -8,7 +8,7 @@ import type {
 export class LifeSpaceApi implements ICredentialType {
   name = 'lifeSpaceApi';
 
-  displayName = 'LifeSpace Connection';
+  displayName = 'LifeSpace Connection API';
 
   icon = 'file:lifespace.svg' as const;
 
