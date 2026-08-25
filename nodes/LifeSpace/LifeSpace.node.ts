@@ -1,4 +1,5 @@
 import type {
+  FieldType,
   IDataObject,
   IExecuteFunctions,
   IHttpRequestOptions,
@@ -8,6 +9,7 @@ import type {
   INodeType,
   INodeTypeDescription,
   JsonObject,
+  ResourceMapperFields,
 } from 'n8n-workflow';
 import { NodeApiError, NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 
@@ -17,6 +19,17 @@ type DiscoveryAction = {
   access: DiscoveryAccess;
   kind: 'workflow' | 'capability';
 };
+type DiscoveryField = {
+  key: string;
+  type: 'string' | 'text' | 'integer' | 'number' | 'boolean' | 'date' | 'datetime' | 'timezone' | 'enum' | 'person' | 'person_list' | 'record' | 'record_list';
+  description?: string;
+  required?: boolean;
+  nullable?: boolean;
+  immutable?: boolean;
+  readOnly?: boolean;
+  values?: string[];
+  targetModel?: string;
+};
 type DiscoveryModel = {
   key: string;
   route: string;
@@ -25,6 +38,7 @@ type DiscoveryModel = {
   display: { singular: string; plural: string };
   description: string | null;
   access: DiscoveryAccess[];
+  fields: DiscoveryField[];
   actions: DiscoveryAction[];
 };
 type DiscoveryResponse = {
@@ -45,6 +59,11 @@ function parseJsonObject(
     throw new NodeOperationError(context.getNode(), `${fieldName} must be a JSON object`, { itemIndex });
   }
   return parsed as IDataObject;
+}
+
+function mappedFields(context: IExecuteFunctions, itemIndex: number): IDataObject {
+  const value = context.getNodeParameter('fields.value', itemIndex, {});
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as IDataObject : {};
 }
 
 async function loadDiscovery(this: ILoadOptionsFunctions): Promise<DiscoveryResponse> {
@@ -69,6 +88,27 @@ async function loadDiscovery(this: ILoadOptionsFunctions): Promise<DiscoveryResp
 
 function requiredAccessForOperation(operation: string): DiscoveryAccess {
   return ['create', 'update', 'delete'].includes(operation) ? 'write' : 'read';
+}
+
+function resourceMapperType(field: DiscoveryField): FieldType {
+  switch (field.type) {
+    case 'integer':
+    case 'number':
+      return 'number';
+    case 'boolean':
+      return 'boolean';
+    case 'datetime':
+      return 'dateTime';
+    case 'person_list':
+    case 'record_list':
+      return 'array';
+    case 'enum':
+      return 'options';
+    default:
+      // Date-only values intentionally remain strings so n8n does not convert
+      // YYYY-MM-DD business dates into timezone-bearing instants.
+      return 'string';
+  }
 }
 
 export class LifeSpace implements INodeType {
@@ -186,17 +226,36 @@ export class LifeSpace implements INodeType {
         },
       },
       {
-        displayName: 'Fields (JSON)',
+        displayName: 'Fields',
         name: 'fields',
-        type: 'json',
-        default: '{}',
+        type: 'resourceMapper',
+        default: {
+          mappingMode: 'defineBelow',
+          value: null,
+        },
+        noDataExpression: true,
+        required: true,
+        typeOptions: {
+          loadOptionsDependsOn: ['modelRoute', 'operation'],
+          resourceMapper: {
+            resourceMapperMethod: 'getModelFields',
+            mode: 'add',
+            fieldWords: {
+              singular: 'field',
+              plural: 'fields',
+            },
+            addAllFields: true,
+            supportAutoMap: false,
+            noFieldsError: 'The selected LifeSpace model has no writable fields for this operation.',
+          },
+        },
         displayOptions: {
           show: {
             resource: ['modelRecord'],
             operation: ['create', 'update'],
           },
         },
-        description: 'Record fields defined by the selected LifeSpace model',
+        description: 'Writable fields loaded from the selected model through LifeSpace Runtime Discovery',
       },
       {
         displayName: 'Version',
@@ -342,6 +401,34 @@ export class LifeSpace implements INodeType {
         }));
       },
     },
+    resourceMapping: {
+      async getModelFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
+        const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
+        if (!modelRoute) return { fields: [] };
+
+        const operation = String(this.getNodeParameter('operation', 'create'));
+        const discovery = await loadDiscovery.call(this);
+        const model = discovery.data.models.find((entry) => entry.route === modelRoute);
+        if (!model) return { fields: [] };
+
+        const fields = model.fields
+          .filter((field) => !field.readOnly && (operation !== 'update' || !field.immutable))
+          .map((field) => ({
+            id: field.key,
+            displayName: field.key,
+            required: operation === 'create' && field.required === true,
+            defaultMatch: false,
+            canBeUsedToMatch: false,
+            display: true,
+            type: resourceMapperType(field),
+            options: field.type === 'enum'
+              ? (field.values ?? []).map((value) => ({ name: value, value }))
+              : undefined,
+          }));
+
+        return { fields };
+      },
+    },
   };
 
   async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
@@ -376,7 +463,7 @@ export class LifeSpace implements INodeType {
             options = {
               method: 'POST',
               url: `${baseUrl}${collectionPath}`,
-              body: parseJsonObject(this, itemIndex, this.getNodeParameter('fields', itemIndex, '{}'), 'Fields'),
+              body: mappedFields(this, itemIndex),
               json: true,
             };
           } else {
@@ -386,16 +473,10 @@ export class LifeSpace implements INodeType {
             if (operation === 'get') {
               options = { method: 'GET', url: `${baseUrl}${recordPath}`, json: true };
             } else if (operation === 'update') {
-              const fields = parseJsonObject(
-                this,
-                itemIndex,
-                this.getNodeParameter('fields', itemIndex, '{}'),
-                'Fields',
-              );
               options = {
                 method: 'PATCH',
                 url: `${baseUrl}${recordPath}`,
-                body: { ...fields, version: this.getNodeParameter('version', itemIndex) },
+                body: { ...mappedFields(this, itemIndex), version: this.getNodeParameter('version', itemIndex) },
                 json: true,
               };
             } else if (operation === 'delete') {
