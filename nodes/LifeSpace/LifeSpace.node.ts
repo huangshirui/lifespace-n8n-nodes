@@ -2,11 +2,37 @@ import type {
   IDataObject,
   IExecuteFunctions,
   IHttpRequestOptions,
+  ILoadOptionsFunctions,
   INodeExecutionData,
+  INodePropertyOptions,
   INodeType,
   INodeTypeDescription,
+  JsonObject,
 } from 'n8n-workflow';
-import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
+import { NodeApiError, NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
+
+type DiscoveryAccess = 'read' | 'write' | 'manage';
+type DiscoveryAction = {
+  key: string;
+  access: DiscoveryAccess;
+  kind: 'workflow' | 'capability';
+};
+type DiscoveryModel = {
+  key: string;
+  route: string;
+  version: number;
+  schemaHash: string;
+  display: { singular: string; plural: string };
+  description: string | null;
+  access: DiscoveryAccess[];
+  actions: DiscoveryAction[];
+};
+type DiscoveryResponse = {
+  data: {
+    spaceId: string;
+    models: DiscoveryModel[];
+  };
+};
 
 function parseJsonObject(
   context: IExecuteFunctions,
@@ -19,6 +45,33 @@ function parseJsonObject(
     throw new NodeOperationError(context.getNode(), `${fieldName} must be a JSON object`, { itemIndex });
   }
   return parsed as IDataObject;
+}
+
+async function loadDiscovery(this: ILoadOptionsFunctions): Promise<DiscoveryResponse> {
+  const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
+  if (!spaceId) return { data: { spaceId: '', models: [] } };
+
+  const credentials = await this.getCredentials('lifeSpaceApi');
+  const baseUrl = String(credentials.baseUrl).replace(/\/$/, '');
+  const options: IHttpRequestOptions = {
+    method: 'GET',
+    url: `${baseUrl}/api/v1/spaces/${encodeURIComponent(spaceId)}/_discovery`,
+    json: true,
+  };
+
+  try {
+    return await this.helpers.httpRequestWithAuthentication.call(
+      this,
+      'lifeSpaceApi',
+      options,
+    ) as DiscoveryResponse;
+  } catch (error) {
+    throw new NodeApiError(this.getNode(), error as JsonObject);
+  }
+}
+
+function requiredAccessForOperation(operation: string): DiscoveryAccess {
+  return ['create', 'update', 'delete'].includes(operation) ? 'write' : 'read';
 }
 
 export class LifeSpace implements INodeType {
@@ -116,16 +169,20 @@ export class LifeSpace implements INodeType {
         default: '',
         required: true,
         displayOptions: { show: { resource: ['modelRecord'] } },
-        description: 'Source Space that owns the model record',
+        description: 'Source Space that owns the model record. Model and action choices refresh from this Space.',
       },
       {
-        displayName: 'Model Route',
+        displayName: 'Model Name or Route',
         name: 'modelRoute',
-        type: 'string',
+        type: 'options',
+        typeOptions: {
+          loadOptionsMethod: 'getModels',
+        },
+        options: [],
         default: '',
         required: true,
         displayOptions: { show: { resource: ['modelRecord'] } },
-        description: 'Published model route from the pinned LifeSpace Model Contract, for example events or tasks',
+        description: 'Choose from models currently authorized for this credential and Space',
       },
       {
         displayName: 'Record ID',
@@ -151,7 +208,7 @@ export class LifeSpace implements INodeType {
             operation: ['create', 'update'],
           },
         },
-        description: 'Record fields defined by the pinned LifeSpace Model Contract',
+        description: 'Record fields defined by the selected LifeSpace model',
       },
       {
         displayName: 'Version',
@@ -179,12 +236,16 @@ export class LifeSpace implements INodeType {
             operation: ['list'],
           },
         },
-        description: 'Query parameters supported by the published model contract, such as filters, sort, limit or cursor',
+        description: 'Query parameters supported by the selected model, such as filters, sort, limit or cursor',
       },
       {
-        displayName: 'Action Key',
+        displayName: 'Action Name or Key',
         name: 'actionKey',
-        type: 'string',
+        type: 'options',
+        typeOptions: {
+          loadOptionsMethod: 'getActions',
+        },
+        options: [],
         default: '',
         required: true,
         displayOptions: {
@@ -193,7 +254,7 @@ export class LifeSpace implements INodeType {
             operation: ['executeAction'],
           },
         },
-        description: 'Published Capability or workflow action key from the pinned Model Contract',
+        description: 'Choose from actions currently authorized for the selected model and Space',
       },
       {
         displayName: 'Action Input (JSON)',
@@ -206,7 +267,7 @@ export class LifeSpace implements INodeType {
             operation: ['executeAction'],
           },
         },
-        description: 'Action input defined by the pinned Model Contract. Model Definition v1 workflow actions typically require version.',
+        description: 'Action input defined by the selected model. Model Definition v1 workflow actions typically require version.',
       },
       {
         displayName: 'Operation',
@@ -260,6 +321,39 @@ export class LifeSpace implements INodeType {
         },
       },
     ],
+  };
+
+  methods = {
+    loadOptions: {
+      async getModels(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const discovery = await loadDiscovery.call(this);
+        const operation = String(this.getNodeParameter('operation', 'list'));
+
+        return discovery.data.models
+          .filter((model) => operation === 'executeAction'
+            ? model.actions.length > 0
+            : model.access.includes(requiredAccessForOperation(operation)))
+          .map((model) => ({
+            name: `${model.display.plural} (${model.route})`,
+            value: model.route,
+            description: model.description ?? undefined,
+          }));
+      },
+      async getActions(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
+        if (!modelRoute) return [];
+
+        const discovery = await loadDiscovery.call(this);
+        const model = discovery.data.models.find((entry) => entry.route === modelRoute);
+        if (!model) return [];
+
+        return model.actions.map((action) => ({
+          name: action.key,
+          value: action.key,
+          description: `${action.kind} action · ${action.access} access`,
+        }));
+      },
+    },
   };
 
   async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
