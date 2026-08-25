@@ -7,6 +7,7 @@ Official n8n community nodes for integrating workflows and AI agents with LifeSp
 The package currently provides:
 
 - a LifeSpace Connection credential using a Connection Base URL plus an opaque `lsp_pat_*` Service API Token;
+- a LifeSpace Webhook credential for storing event-subscription signing secrets outside workflow parameters;
 - a LifeSpace node with generic Model Record operations plus an advanced connection-relative API request escape hatch;
 - discovery-driven Model and Action selectors against the connection's current LifeSpace authority;
 - a LifeSpace Trigger that receives signed LifeSpace domain-event webhooks;
@@ -83,9 +84,11 @@ To use the trigger:
 1. add a LifeSpace Trigger to an n8n workflow and activate the workflow;
 2. copy the node's production webhook URL;
 3. create a LifeSpace event subscription for the required Space/model/events and use that URL as the webhook destination;
-4. copy the one-time signing secret returned by LifeSpace into the Trigger's **Signing Secret** field;
-5. optionally set expected Space/model filters in the Trigger as an additional local check;
+4. create a **LifeSpace Webhook API** credential and store the one-time signing secret returned by LifeSpace in that credential;
+5. attach the credential to the Trigger and optionally set expected Space/model filters as an additional local check;
 6. use LifeSpace's subscription test action to verify delivery.
+
+The signing secret is intentionally stored as an n8n Credential rather than as a workflow parameter. Workflow exports therefore reference the credential instead of embedding the secret as ordinary node configuration.
 
 The trigger validates `X-LifeSpace-Timestamp` and `X-LifeSpace-Signature` using the upstream LifeSpace HMAC-SHA256 contract before emitting workflow data.
 
