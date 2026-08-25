@@ -4,14 +4,15 @@ Official n8n community nodes for integrating workflows and AI agents with LifeSp
 
 ## Status
 
-Initial scaffold. The package currently provides:
+The package currently provides:
 
 - a LifeSpace API credential for opaque `lsp_pat_*` Service API Tokens;
 - a thin LifeSpace node with a generic Core API request operation;
+- a LifeSpace Trigger that receives signed LifeSpace domain-event webhooks;
 - the official `n8n-node` development toolchain;
 - CI for lint and build validation.
 
-Domain-specific resources, actions, triggers and AI-tool surfaces will be added only against stable upstream LifeSpace contracts/discovery metadata.
+Domain-specific resources, actions and AI-tool surfaces will be added only against stable upstream LifeSpace contracts/discovery metadata.
 
 ## Architecture boundary
 
@@ -43,15 +44,31 @@ npm run dev
 
 ## Credentials
 
-For owner-controlled n8n instances, use a LifeSpace Service API Token (`lsp_pat_*`). The node sends it to LifeSpace Core as a Bearer token.
+For owner-controlled n8n instances, use a LifeSpace Service API Token (`lsp_pat_*`). The LifeSpace action node sends it to LifeSpace Core as a Bearer token.
 
 Do not store real tokens in source code, workflow examples or repository files.
+
+## LifeSpace Trigger
+
+LifeSpace event subscriptions are currently managed by an authenticated LifeSpace user with Space-management permission. A service token intentionally cannot create or modify subscriptions.
+
+To use the trigger:
+
+1. add a LifeSpace Trigger to an n8n workflow and activate the workflow;
+2. copy the node's production webhook URL;
+3. create a LifeSpace event subscription for the required Space/model/events and use that URL as the webhook destination;
+4. copy the one-time signing secret returned by LifeSpace into the Trigger's **Signing Secret** field;
+5. optionally set expected Space/model filters in the Trigger as an additional local check;
+6. use LifeSpace's subscription test action to verify delivery.
+
+The trigger validates `X-LifeSpace-Timestamp` and `X-LifeSpace-Signature` using the upstream LifeSpace HMAC-SHA256 contract before emitting workflow data.
 
 ## Planned surfaces
 
 - LifeSpace resource/action node backed by stable LifeSpace contracts and discovery metadata;
-- LifeSpace Trigger backed by the platform event/subscription contract;
+- discovery-driven action/resource UX;
 - n8n AI Tool support for approved LifeSpace actions;
+- delegated subscription management if LifeSpace later exposes an appropriate user-authorized contract;
 - OAuth `client_credentials` support where required;
 - npm publishing with GitHub Actions provenance.
 
