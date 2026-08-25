@@ -1,9 +1,9 @@
 import type {
   IExecuteFunctions,
+  IHttpRequestOptions,
   INodeExecutionData,
   INodeType,
   INodeTypeDescription,
-  IRequestOptions,
 } from 'n8n-workflow';
 import { NodeConnectionType, NodeOperationError } from 'n8n-workflow';
 
@@ -11,7 +11,10 @@ export class LifeSpace implements INodeType {
   description: INodeTypeDescription = {
     displayName: 'LifeSpace',
     name: 'lifeSpace',
-    icon: 'file:lifespace.svg',
+    icon: {
+      light: 'file:lifespace.svg',
+      dark: 'file:lifespace.svg',
+    },
     group: ['transform'],
     version: 1,
     subtitle: '={{$parameter["operation"]}}',
@@ -21,6 +24,7 @@ export class LifeSpace implements INodeType {
     },
     inputs: [NodeConnectionType.Main],
     outputs: [NodeConnectionType.Main],
+    usableAsTool: true,
     credentials: [
       {
         name: 'lifeSpaceApi',
@@ -37,7 +41,7 @@ export class LifeSpace implements INodeType {
           {
             name: 'API Request',
             value: 'apiRequest',
-            action: 'Make a LifeSpace API request',
+            action: 'Make a request to LifeSpace',
             description: 'Call a LifeSpace Core API path without redefining its domain contract',
           },
         ],
@@ -48,11 +52,11 @@ export class LifeSpace implements INodeType {
         name: 'method',
         type: 'options',
         options: [
-          { name: 'GET', value: 'GET' },
-          { name: 'POST', value: 'POST' },
-          { name: 'PATCH', value: 'PATCH' },
-          { name: 'PUT', value: 'PUT' },
           { name: 'DELETE', value: 'DELETE' },
+          { name: 'GET', value: 'GET' },
+          { name: 'PATCH', value: 'PATCH' },
+          { name: 'POST', value: 'POST' },
+          { name: 'PUT', value: 'PUT' },
         ],
         default: 'GET',
       },
@@ -86,9 +90,9 @@ export class LifeSpace implements INodeType {
 
     for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
       try {
-        const method = this.getNodeParameter('method', itemIndex) as IRequestOptions['method'];
+        const method = this.getNodeParameter('method', itemIndex) as IHttpRequestOptions['method'];
         const path = String(this.getNodeParameter('path', itemIndex));
-        const options: IRequestOptions = {
+        const options: IHttpRequestOptions = {
           method,
           url: `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`,
           json: true,
@@ -99,8 +103,7 @@ export class LifeSpace implements INodeType {
           options.body = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
         }
 
-        const response = await this.helpers.requestWithAuthentication.call(
-          this,
+        const response = await this.helpers.httpRequestWithAuthentication(
           'lifeSpaceApi',
           options,
         );
