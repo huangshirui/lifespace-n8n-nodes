@@ -1,7 +1,10 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import type {
+  ICredentialTestFunctions,
+  ICredentialsDecrypted,
   IDataObject,
   IHookFunctions,
+  INodeCredentialTestResult,
   INodeType,
   INodeTypeDescription,
   IWebhookFunctions,
@@ -10,6 +13,7 @@ import type {
 import { NodeConnectionTypes } from 'n8n-workflow';
 
 const MAX_TIMESTAMP_SKEW_SECONDS = 300;
+const SIGNING_SECRET_PATTERN = /^[a-f0-9]{64}$/;
 
 function safeEqual(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left, 'utf8');
@@ -38,6 +42,7 @@ export class LifeSpaceTrigger implements INodeType {
       {
         name: 'lifeSpaceWebhookApi',
         required: true,
+        testedBy: 'lifeSpaceWebhookCredentialTest',
       },
     ],
     webhooks: [
@@ -94,6 +99,27 @@ export class LifeSpaceTrigger implements INodeType {
     ],
   };
 
+  methods = {
+    credentialTest: {
+      async lifeSpaceWebhookCredentialTest(
+        this: ICredentialTestFunctions,
+        credential: ICredentialsDecrypted,
+      ): Promise<INodeCredentialTestResult> {
+        const signingSecret = String(credential.data?.signingSecret ?? '');
+        if (!SIGNING_SECRET_PATTERN.test(signingSecret)) {
+          return {
+            status: 'Error',
+            message: 'Signing Secret must be the 64-character hexadecimal secret returned by LifeSpace',
+          };
+        }
+        return {
+          status: 'OK',
+          message: 'Signing Secret format is valid. Use the LifeSpace subscription test for end-to-end verification.',
+        };
+      },
+    },
+  };
+
   webhookMethods = {
     default: {
       async checkExists(this: IHookFunctions): Promise<boolean> {
@@ -132,7 +158,7 @@ export class LifeSpaceTrigger implements INodeType {
     if (
       !timestamp ||
       !signature ||
-      !signingSecret ||
+      !SIGNING_SECRET_PATTERN.test(signingSecret) ||
       !Number.isFinite(timestampSeconds) ||
       Math.abs(Math.floor(Date.now() / 1000) - timestampSeconds) > MAX_TIMESTAMP_SKEW_SECONDS
     ) {
