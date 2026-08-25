@@ -30,6 +30,11 @@ type DiscoveryField = {
   values?: string[];
   targetModel?: string;
 };
+type DiscoveryQuery = {
+  searchable: string[];
+  filterable: string[];
+  sortable: string[];
+};
 type DiscoveryModel = {
   key: string;
   route: string;
@@ -39,6 +44,7 @@ type DiscoveryModel = {
   description: string | null;
   access: DiscoveryAccess[];
   fields: DiscoveryField[];
+  query: DiscoveryQuery;
   actions: DiscoveryAction[];
 };
 type DiscoveryResponse = {
@@ -46,6 +52,11 @@ type DiscoveryResponse = {
     spaceId: string;
     models: DiscoveryModel[];
   };
+};
+type QueryFilter = {
+  field?: string;
+  operator?: 'exact' | 'from' | 'to';
+  value?: string;
 };
 
 function parseJsonObject(
@@ -66,6 +77,37 @@ function mappedFields(context: IExecuteFunctions, itemIndex: number): IDataObjec
   return value && typeof value === 'object' && !Array.isArray(value) ? value as IDataObject : {};
 }
 
+function queryParameters(context: IExecuteFunctions, itemIndex: number): IDataObject {
+  const qs: IDataObject = {};
+  const search = String(context.getNodeParameter('search', itemIndex, '')).trim();
+  const sortField = String(context.getNodeParameter('sortField', itemIndex, 'createdAt')).trim();
+  const sortDirection = String(context.getNodeParameter('sortDirection', itemIndex, 'desc')).trim();
+  const cursor = String(context.getNodeParameter('cursor', itemIndex, '')).trim();
+  const limit = context.getNodeParameter('limit', itemIndex, 100) as number;
+  const filters = context.getNodeParameter('filters.filter', itemIndex, []) as QueryFilter[];
+
+  if (search) qs.q = search;
+  if (sortField) qs.sort = `${sortField}:${sortDirection}`;
+  qs.limit = limit;
+  if (cursor) qs.cursor = cursor;
+
+  const usedKeys = new Set<string>();
+  for (const filter of filters) {
+    const field = String(filter.field ?? '').trim();
+    const value = String(filter.value ?? '');
+    const operator = filter.operator ?? 'exact';
+    if (!field || value === '') continue;
+    const key = operator === 'from' ? `${field}From` : operator === 'to' ? `${field}To` : field;
+    if (usedKeys.has(key)) {
+      throw new NodeOperationError(context.getNode(), `Query filter ${key} may be supplied only once`, { itemIndex });
+    }
+    usedKeys.add(key);
+    qs[key] = value;
+  }
+
+  return qs;
+}
+
 async function loadDiscovery(this: ILoadOptionsFunctions): Promise<DiscoveryResponse> {
   const credentials = await this.getCredentials('lifeSpaceApi');
   const baseUrl = String(credentials.baseUrl).replace(/\/$/, '');
@@ -84,6 +126,10 @@ async function loadDiscovery(this: ILoadOptionsFunctions): Promise<DiscoveryResp
   } catch (error) {
     throw new NodeApiError(this.getNode(), error as JsonObject);
   }
+}
+
+function selectedModel(discovery: DiscoveryResponse, route: string): DiscoveryModel | undefined {
+  return discovery.data.models.find((entry) => entry.route === route);
 }
 
 function requiredAccessForOperation(operation: string): DiscoveryAccess {
@@ -273,17 +319,98 @@ export class LifeSpace implements INodeType {
         description: 'Current record version used for optimistic concurrency',
       },
       {
-        displayName: 'Query Parameters (JSON)',
-        name: 'queryParameters',
-        type: 'json',
-        default: '{}',
-        displayOptions: {
-          show: {
-            resource: ['modelRecord'],
-            operation: ['list'],
+        displayName: 'Search',
+        name: 'search',
+        type: 'string',
+        default: '',
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+        description: 'Full-text search across the selected model fields declared searchable by LifeSpace. Leave empty to disable search.',
+      },
+      {
+        displayName: 'Filters',
+        name: 'filters',
+        type: 'fixedCollection',
+        default: {},
+        placeholder: 'Add Filter',
+        typeOptions: { multipleValues: true },
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+        options: [
+          {
+            displayName: 'Filter',
+            name: 'filter',
+            values: [
+              {
+                displayName: 'Field Name or ID',
+                name: 'field',
+                type: 'options',
+                typeOptions: { loadOptionsMethod: 'getFilterableFields' },
+                options: [],
+                default: '',
+                required: true,
+                description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+              },
+              {
+                displayName: 'Operator',
+                name: 'operator',
+                type: 'options',
+                options: [
+                  { name: 'Equals', value: 'exact' },
+                  { name: 'From / Greater Than or Equal', value: 'from' },
+                  { name: 'To / Less Than or Equal', value: 'to' },
+                ],
+                default: 'exact',
+                description: 'Range operators are supported by LifeSpace only for date, datetime, integer and number fields',
+              },
+              {
+                displayName: 'Value',
+                name: 'value',
+                type: 'string',
+                default: '',
+                required: true,
+                description: 'For enum equality filters, comma-separated values select any of the listed values. Relation fields use LifeSpace IDs.',
+              },
+            ],
           },
-        },
-        description: 'Query parameters supported by the selected model, such as filters, sort, limit or cursor',
+        ],
+      },
+      {
+        displayName: 'Sort Field Name or ID',
+        name: 'sortField',
+        type: 'options',
+        typeOptions: { loadOptionsMethod: 'getSortableFields' },
+        options: [],
+        default: 'createdAt',
+        required: true,
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+        description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+      },
+      {
+        displayName: 'Sort Direction',
+        name: 'sortDirection',
+        type: 'options',
+        options: [
+          { name: 'Ascending', value: 'asc' },
+          { name: 'Descending', value: 'desc' },
+        ],
+        default: 'desc',
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+      },
+      {
+        displayName: 'Limit',
+        name: 'limit',
+        type: 'number',
+        typeOptions: { minValue: 1, maxValue: 200, numberPrecision: 0 },
+        default: 100,
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+        description: 'Maximum number of records to return',
+      },
+      {
+        displayName: 'Cursor',
+        name: 'cursor',
+        type: 'string',
+        default: '',
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+        description: 'Opaque nextCursor returned by a previous query. Leave empty for the first page.',
       },
       {
         displayName: 'Action Name or ID',
@@ -391,7 +518,7 @@ export class LifeSpace implements INodeType {
         if (!modelRoute) return [];
 
         const discovery = await loadDiscovery.call(this);
-        const model = discovery.data.models.find((entry) => entry.route === modelRoute);
+        const model = selectedModel(discovery, modelRoute);
         if (!model) return [];
 
         return model.actions.map((action) => ({
@@ -399,6 +526,34 @@ export class LifeSpace implements INodeType {
           value: action.key,
           description: `${action.kind} action · ${action.access} access`,
         }));
+      },
+      async getFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
+        if (!modelRoute) return [];
+        const discovery = await loadDiscovery.call(this);
+        const model = selectedModel(discovery, modelRoute);
+        if (!model) return [];
+        return model.query.filterable.map((fieldKey) => {
+          const field = model.fields.find((entry) => entry.key === fieldKey);
+          const rangeSupported = field && ['date', 'datetime', 'integer', 'number'].includes(field.type);
+          return {
+            name: fieldKey,
+            value: fieldKey,
+            description: rangeSupported ? `${field?.type ?? 'field'} · equality and range filters` : `${field?.type ?? 'field'} · equality filter`,
+          };
+        });
+      },
+      async getSortableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
+        if (!modelRoute) return [];
+        const discovery = await loadDiscovery.call(this);
+        const model = selectedModel(discovery, modelRoute);
+        if (!model) return [];
+        return [
+          { name: 'Created At', value: 'createdAt' },
+          { name: 'Updated At', value: 'updatedAt' },
+          ...model.query.sortable.map((fieldKey) => ({ name: fieldKey, value: fieldKey })),
+        ];
       },
     },
     resourceMapping: {
@@ -408,7 +563,7 @@ export class LifeSpace implements INodeType {
 
         const operation = String(this.getNodeParameter('operation', 'create'));
         const discovery = await loadDiscovery.call(this);
-        const model = discovery.data.models.find((entry) => entry.route === modelRoute);
+        const model = selectedModel(discovery, modelRoute);
         if (!model) return { fields: [] };
 
         const fields = model.fields
@@ -451,12 +606,7 @@ export class LifeSpace implements INodeType {
             options = {
               method: 'GET',
               url: `${baseUrl}${collectionPath}`,
-              qs: parseJsonObject(
-                this,
-                itemIndex,
-                this.getNodeParameter('queryParameters', itemIndex, '{}'),
-                'Query Parameters',
-              ),
+              qs: queryParameters(this, itemIndex),
               json: true,
             };
           } else if (operation === 'create') {
