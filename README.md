@@ -11,7 +11,8 @@ The package currently provides:
 - discovery-driven Model and Action selectors against the connection's current LifeSpace authority;
 - a LifeSpace Trigger that receives signed LifeSpace domain-event webhooks;
 - the official `n8n-node` development toolchain;
-- CI for lint and build validation.
+- CI for lint and build validation;
+- a GitHub Actions npm publishing path with provenance support.
 
 Domain-specific UX and AI-tool surfaces will be added only against stable upstream LifeSpace contracts/discovery metadata.
 
@@ -88,13 +89,30 @@ To use the trigger:
 
 The trigger validates `X-LifeSpace-Timestamp` and `X-LifeSpace-Signature` using the upstream LifeSpace HMAC-SHA256 contract before emitting workflow data.
 
+## Publishing and verification
+
+This repository is public and is intended to remain eligible for n8n community-node verification.
+
+Publishing is performed only by `.github/workflows/publish.yml` from a version tag matching `*.*.*`. The workflow grants only `contents: read` plus `id-token: write`, so npm can attach a provenance attestation to the public package.
+
+Preferred npm authentication is Trusted Publishing through GitHub Actions. A scoped `NPM_TOKEN` is supported only as a fallback. Do not publish a verification candidate directly from a developer workstation.
+
+Before the first npm release:
+
+1. ensure the `n8n-nodes-lifespace` package is available to the publishing npm account;
+2. configure npm Trusted Publishing for `huangshirui/lifespace-n8n-nodes` and workflow `publish.yml`, or install a narrowly scoped fallback `NPM_TOKEN`;
+3. ensure CI passes on the exact release commit;
+4. create the release through the `n8n-node` release flow so the pushed version tag triggers the provenance workflow;
+5. verify the npm package links back to this public GitHub repository and exposes the MIT license and expected node metadata.
+
+The package intentionally has no runtime `dependencies`. It must not read environment variables or the local filesystem. Node UI, help text, errors, README content and examples remain English-only for n8n verification compatibility.
+
 ## Planned surfaces
 
 - dynamic field/query UX driven by stable LifeSpace discovery metadata;
 - n8n AI Tool experience for approved LifeSpace actions;
 - delegated subscription management if LifeSpace later exposes an appropriate user-authorized contract;
-- OAuth `client_credentials` support where required;
-- npm publishing with GitHub Actions provenance.
+- OAuth `client_credentials` support where required.
 
 ## License
 
