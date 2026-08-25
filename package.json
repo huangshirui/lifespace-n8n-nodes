@@ -35,7 +35,8 @@
       "dist/credentials/LifeSpaceApi.credentials.js"
     ],
     "nodes": [
-      "dist/nodes/LifeSpace/LifeSpace.node.js"
+      "dist/nodes/LifeSpace/LifeSpace.node.js",
+      "dist/nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.js"
     ]
   },
   "devDependencies": {
