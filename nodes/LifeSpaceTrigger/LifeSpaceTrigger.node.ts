@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import type {
   IDataObject,
+  IHookFunctions,
   INodeType,
   INodeTypeDescription,
   IWebhookFunctions,
@@ -26,6 +27,7 @@ export class LifeSpaceTrigger implements INodeType {
     },
     group: ['trigger'],
     version: 1,
+    subtitle: '={{$parameter["eventTypes"]}}',
     description: 'Starts the workflow when LifeSpace domain events are delivered',
     defaults: {
       name: 'LifeSpace Trigger',
@@ -93,6 +95,29 @@ export class LifeSpaceTrigger implements INodeType {
         description: 'Optional additional check. Leave empty to accept any model allowed by the LifeSpace subscription.',
       },
     ],
+  };
+
+  webhookMethods = {
+    default: {
+      async checkExists(this: IHookFunctions): Promise<boolean> {
+        const webhookData = this.getWorkflowStaticData('node');
+        return webhookData.lifeSpaceManualSubscription === true;
+      },
+      async create(this: IHookFunctions): Promise<boolean> {
+        const webhookData = this.getWorkflowStaticData('node');
+        // LifeSpace subscription management currently requires an authenticated user
+        // with spaces:manage. The n8n service credential must not bypass that boundary.
+        // n8n still requires a complete webhook lifecycle, so this hook records only
+        // local activation state; the external subscription is created separately.
+        webhookData.lifeSpaceManualSubscription = true;
+        return true;
+      },
+      async delete(this: IHookFunctions): Promise<boolean> {
+        const webhookData = this.getWorkflowStaticData('node');
+        delete webhookData.lifeSpaceManualSubscription;
+        return true;
+      },
+    },
   };
 
   async webhook(this: IWebhookFunctions): Promise<IWebhookResponseData> {
