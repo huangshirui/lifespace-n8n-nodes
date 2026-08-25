@@ -9,7 +9,7 @@ The package currently provides:
 - a LifeSpace Connection credential using a Connection Base URL plus an opaque `lsp_pat_*` Service API Token;
 - a LifeSpace Webhook credential for storing event-subscription signing secrets outside workflow parameters;
 - a LifeSpace node with generic Model Record operations plus an advanced connection-relative API request escape hatch;
-- discovery-driven Model and Action selectors against the connection's current LifeSpace authority;
+- discovery-driven Model, Action and Create/Update field UX against the connection's current LifeSpace authority;
 - a LifeSpace Trigger that receives signed LifeSpace domain-event webhooks;
 - the official `n8n-node` development toolchain;
 - CI for lint and build validation;
@@ -69,9 +69,25 @@ The **Model Record** resource is a thin adapter over LifeSpace Generic Runtime r
 - Delete with optimistic concurrency;
 - Execute Action for published Capability/workflow actions.
 
-The node loads its Model selector from `{Connection Base URL}/_discovery`. The list contains only models the current connection can actually use after LifeSpace applies credential scopes, Application × Model Access and current Space membership/Data Grants. The **Action** selector is then loaded dynamically from the selected model and is filtered by the same effective authority.
+The node loads its Model selector from `{Connection Base URL}/_discovery`. The list contains only models the current connection can currently use after LifeSpace applies credential scopes, Application × Model Access and current Space membership/Data Grants. The **Action** selector is then loaded dynamically from the selected model and is filtered by the same discovery authority.
 
-The node does not use the privileged `model-admin/contracts/*` surface for ordinary workflow discovery and does not copy model definitions into this repository. Record fields, query parameters and action inputs remain governed by LifeSpace model metadata. They remain JSON inputs for now; later UX may use n8n dynamic schema/resource mapping where that can be driven directly by stable LifeSpace discovery metadata.
+### Discovery-driven fields
+
+Create and Update use n8n's resource-mapper UI driven directly by the selected model's bounded Runtime Discovery metadata instead of a handwritten `Fields (JSON)` contract.
+
+- required Create fields follow LifeSpace field metadata;
+- read-only fields are excluded;
+- immutable fields are additionally excluded from Update;
+- enum fields render as options;
+- number, boolean, datetime and list fields use the corresponding n8n input types;
+- LifeSpace date-only fields intentionally remain strings so `YYYY-MM-DD` values are never converted into timezone-bearing instants;
+- automatic input-data mapping is intentionally disabled for now so unrelated incoming keys are not silently sent to LifeSpace's strict model schema.
+
+LifeSpace Core remains authoritative for validation and authorization when the operation executes. Runtime Discovery is a dynamic UX/capability preview, not an execution-authorization proof.
+
+List / Query parameters and Action Input remain JSON for now. Query UX needs operator/range semantics rather than simple field mapping, while dynamic Action Input requires bounded action-input metadata from LifeSpace Discovery. These should be added only when their upstream contracts are explicit rather than copied into this package.
+
+The node does not use the privileged `model-admin/contracts/*` surface for ordinary workflow discovery and does not copy model definitions into this repository.
 
 The **API Request** resource remains available as an advanced escape hatch for paths relative to the configured Connection Base URL.
 
@@ -112,7 +128,9 @@ The package intentionally has no runtime `dependencies`. It must not read enviro
 
 ## Planned surfaces
 
-- dynamic field/query UX driven by stable LifeSpace discovery metadata;
+- operator-aware dynamic query UX driven by stable LifeSpace query metadata;
+- dynamic Action Input when LifeSpace exposes a bounded action-input discovery contract;
+- richer relation selectors when LifeSpace exposes an appropriate authorized lookup surface;
 - n8n AI Tool experience for approved LifeSpace actions;
 - delegated subscription management if LifeSpace later exposes an appropriate user-authorized contract;
 - OAuth `client_credentials` support where required.
