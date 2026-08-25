@@ -8,10 +8,15 @@ import type {
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 
-function parseJsonObject(value: unknown, fieldName: string): IDataObject {
+function parseJsonObject(
+  context: IExecuteFunctions,
+  itemIndex: number,
+  value: unknown,
+  fieldName: string,
+): IDataObject {
   const parsed = typeof value === 'string' ? JSON.parse(value) : value;
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`${fieldName} must be a JSON object`);
+    throw new NodeOperationError(context.getNode(), `${fieldName} must be a JSON object`, { itemIndex });
   }
   return parsed as IDataObject;
 }
@@ -278,14 +283,19 @@ export class LifeSpace implements INodeType {
             options = {
               method: 'GET',
               url: `${baseUrl}${collectionPath}`,
-              qs: parseJsonObject(this.getNodeParameter('queryParameters', itemIndex, '{}'), 'Query Parameters'),
+              qs: parseJsonObject(
+                this,
+                itemIndex,
+                this.getNodeParameter('queryParameters', itemIndex, '{}'),
+                'Query Parameters',
+              ),
               json: true,
             };
           } else if (operation === 'create') {
             options = {
               method: 'POST',
               url: `${baseUrl}${collectionPath}`,
-              body: parseJsonObject(this.getNodeParameter('fields', itemIndex, '{}'), 'Fields'),
+              body: parseJsonObject(this, itemIndex, this.getNodeParameter('fields', itemIndex, '{}'), 'Fields'),
               json: true,
             };
           } else {
@@ -295,7 +305,12 @@ export class LifeSpace implements INodeType {
             if (operation === 'get') {
               options = { method: 'GET', url: `${baseUrl}${recordPath}`, json: true };
             } else if (operation === 'update') {
-              const fields = parseJsonObject(this.getNodeParameter('fields', itemIndex, '{}'), 'Fields');
+              const fields = parseJsonObject(
+                this,
+                itemIndex,
+                this.getNodeParameter('fields', itemIndex, '{}'),
+                'Fields',
+              );
               options = {
                 method: 'PATCH',
                 url: `${baseUrl}${recordPath}`,
@@ -314,7 +329,12 @@ export class LifeSpace implements INodeType {
               options = {
                 method: 'POST',
                 url: `${baseUrl}${recordPath}/actions/${actionKey}`,
-                body: parseJsonObject(this.getNodeParameter('actionInput', itemIndex, '{}'), 'Action Input'),
+                body: parseJsonObject(
+                  this,
+                  itemIndex,
+                  this.getNodeParameter('actionInput', itemIndex, '{}'),
+                  'Action Input',
+                ),
                 json: true,
               };
             }
@@ -329,7 +349,12 @@ export class LifeSpace implements INodeType {
           };
 
           if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(String(method))) {
-            options.body = parseJsonObject(this.getNodeParameter('jsonBody', itemIndex, '{}'), 'JSON Body');
+            options.body = parseJsonObject(
+              this,
+              itemIndex,
+              this.getNodeParameter('jsonBody', itemIndex, '{}'),
+              'JSON Body',
+            );
           }
         }
 
