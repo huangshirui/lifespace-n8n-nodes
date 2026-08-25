@@ -48,14 +48,11 @@ function parseJsonObject(
 }
 
 async function loadDiscovery(this: ILoadOptionsFunctions): Promise<DiscoveryResponse> {
-  const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
-  if (!spaceId) return { data: { spaceId: '', models: [] } };
-
   const credentials = await this.getCredentials('lifeSpaceApi');
   const baseUrl = String(credentials.baseUrl).replace(/\/$/, '');
   const options: IHttpRequestOptions = {
     method: 'GET',
-    url: `${baseUrl}/api/v1/spaces/${encodeURIComponent(spaceId)}/_discovery`,
+    url: `${baseUrl}/_discovery`,
     json: true,
   };
 
@@ -161,15 +158,6 @@ export class LifeSpace implements INodeType {
           },
         ],
         default: 'list',
-      },
-      {
-        displayName: 'Space ID',
-        name: 'spaceId',
-        type: 'string',
-        default: '',
-        required: true,
-        displayOptions: { show: { resource: ['modelRecord'] } },
-        description: 'Source Space that owns the model record. Model and action choices refresh from this Space.',
       },
       {
         displayName: 'Model Name or ID',
@@ -280,7 +268,7 @@ export class LifeSpace implements INodeType {
             name: 'API Request',
             value: 'apiRequest',
             action: 'Make an API request',
-            description: 'Call a LifeSpace Core API path without redefining its domain contract',
+            description: 'Call a path relative to the configured LifeSpace Connection Base URL',
           },
         ],
         default: 'apiRequest',
@@ -303,10 +291,10 @@ export class LifeSpace implements INodeType {
         displayName: 'Path',
         name: 'path',
         type: 'string',
-        default: '/api/v1/',
+        default: '/',
         required: true,
         displayOptions: { show: { resource: ['apiRequest'] } },
-        description: 'LifeSpace Core API path. Keep contract semantics in the upstream LifeSpace repository.',
+        description: 'Path relative to the configured LifeSpace Connection Base URL',
       },
       {
         displayName: 'JSON Body',
@@ -369,9 +357,8 @@ export class LifeSpace implements INodeType {
 
         if (resource === 'modelRecord') {
           const operation = this.getNodeParameter('operation', itemIndex) as string;
-          const spaceId = encodeURIComponent(String(this.getNodeParameter('spaceId', itemIndex)));
           const modelRoute = encodeURIComponent(String(this.getNodeParameter('modelRoute', itemIndex)));
-          const collectionPath = `/api/v1/spaces/${spaceId}/${modelRoute}`;
+          const collectionPath = `/${modelRoute}`;
 
           if (operation === 'list') {
             options = {
