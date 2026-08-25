@@ -7,12 +7,12 @@ Official n8n community nodes for integrating workflows and AI agents with LifeSp
 The package currently provides:
 
 - a LifeSpace API credential for opaque `lsp_pat_*` Service API Tokens;
-- a thin LifeSpace node with a generic Core API request operation;
+- a LifeSpace node with generic Model Record operations plus an advanced Core API request escape hatch;
 - a LifeSpace Trigger that receives signed LifeSpace domain-event webhooks;
 - the official `n8n-node` development toolchain;
 - CI for lint and build validation.
 
-Domain-specific resources, actions and AI-tool surfaces will be added only against stable upstream LifeSpace contracts/discovery metadata.
+Domain-specific UX and AI-tool surfaces will be added only against stable upstream LifeSpace contracts/discovery metadata.
 
 ## Architecture boundary
 
@@ -44,9 +44,26 @@ npm run dev
 
 ## Credentials
 
-For owner-controlled n8n instances, use a LifeSpace Service API Token (`lsp_pat_*`). The LifeSpace action node sends it to LifeSpace Core as a Bearer token.
+For owner-controlled n8n instances, use a LifeSpace Service API Token (`lsp_pat_*`). The LifeSpace node sends it to LifeSpace Core as a Bearer token.
 
 Do not store real tokens in source code, workflow examples or repository files.
+
+## LifeSpace Model Record
+
+The **Model Record** resource is a thin adapter over LifeSpace Generic Runtime routes. It supports:
+
+- Create;
+- Get;
+- List / Query;
+- Update with optimistic concurrency;
+- Delete with optimistic concurrency;
+- Execute Action for published Capability/workflow actions.
+
+The node asks for the published **Model Route** rather than embedding model definitions. Record fields, query parameters and action inputs remain governed by the application's pinned immutable LifeSpace Model Contract Revision.
+
+LifeSpace currently exposes full immutable Model Contract reads through the service-only Model Admin surface (`models:manage`). The n8n runtime node intentionally does not use that privileged surface as ordinary workflow discovery. When LifeSpace exposes an application/service-authorized discovery contract, model/field/action selectors can become dynamically populated without changing the Generic Runtime contract.
+
+The **API Request** resource remains available as an advanced escape hatch for Kernel or newly introduced LifeSpace APIs that do not yet have first-class node UX.
 
 ## LifeSpace Trigger
 
@@ -65,9 +82,8 @@ The trigger validates `X-LifeSpace-Timestamp` and `X-LifeSpace-Signature` using 
 
 ## Planned surfaces
 
-- LifeSpace resource/action node backed by stable LifeSpace contracts and discovery metadata;
-- discovery-driven action/resource UX;
-- n8n AI Tool support for approved LifeSpace actions;
+- application/service-authorized discovery-driven model/action UX;
+- n8n AI Tool experience for approved LifeSpace actions;
 - delegated subscription management if LifeSpace later exposes an appropriate user-authorized contract;
 - OAuth `client_credentials` support where required;
 - npm publishing with GitHub Actions provenance.

@@ -1,4 +1,5 @@
 import type {
+  IDataObject,
   IExecuteFunctions,
   IHttpRequestOptions,
   INodeExecutionData,
@@ -6,6 +7,19 @@ import type {
   INodeTypeDescription,
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
+
+function parseJsonObject(
+  context: IExecuteFunctions,
+  itemIndex: number,
+  value: unknown,
+  fieldName: string,
+): IDataObject {
+  const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new NodeOperationError(context.getNode(), `${fieldName} must be a JSON object`, { itemIndex });
+  }
+  return parsed as IDataObject;
+}
 
 export class LifeSpace implements INodeType {
   description: INodeTypeDescription = {
@@ -17,7 +31,7 @@ export class LifeSpace implements INodeType {
     },
     group: ['transform'],
     version: 1,
-    subtitle: '={{$parameter["operation"]}}',
+    subtitle: '={{$parameter["resource"] + ": " + $parameter["operation"]}}',
     description: 'Use LifeSpace in n8n workflows',
     defaults: {
       name: 'LifeSpace',
@@ -33,10 +47,173 @@ export class LifeSpace implements INodeType {
     ],
     properties: [
       {
+        displayName: 'Resource',
+        name: 'resource',
+        type: 'options',
+        noDataExpression: true,
+        options: [
+          {
+            name: 'Model Record',
+            value: 'modelRecord',
+          },
+          {
+            name: 'API Request',
+            value: 'apiRequest',
+          },
+        ],
+        default: 'modelRecord',
+      },
+      {
         displayName: 'Operation',
         name: 'operation',
         type: 'options',
         noDataExpression: true,
+        displayOptions: { show: { resource: ['modelRecord'] } },
+        options: [
+          {
+            name: 'Create',
+            value: 'create',
+            action: 'Create a model record',
+            description: 'Create a record through the LifeSpace Generic Runtime',
+          },
+          {
+            name: 'Delete',
+            value: 'delete',
+            action: 'Delete a model record',
+            description: 'Delete a record using optimistic concurrency',
+          },
+          {
+            name: 'Execute Action',
+            value: 'executeAction',
+            action: 'Execute a model action',
+            description: 'Execute a published Capability or workflow action on a record',
+          },
+          {
+            name: 'Get',
+            value: 'get',
+            action: 'Get a model record',
+            description: 'Get one model record by ID',
+          },
+          {
+            name: 'List / Query',
+            value: 'list',
+            action: 'List or query model records',
+            description: 'Query a model collection using its published query contract',
+          },
+          {
+            name: 'Update',
+            value: 'update',
+            action: 'Update a model record',
+            description: 'Update a record using optimistic concurrency',
+          },
+        ],
+        default: 'list',
+      },
+      {
+        displayName: 'Space ID',
+        name: 'spaceId',
+        type: 'string',
+        default: '',
+        required: true,
+        displayOptions: { show: { resource: ['modelRecord'] } },
+        description: 'Source Space that owns the model record',
+      },
+      {
+        displayName: 'Model Route',
+        name: 'modelRoute',
+        type: 'string',
+        default: '',
+        required: true,
+        displayOptions: { show: { resource: ['modelRecord'] } },
+        description: 'Published model route from the pinned LifeSpace Model Contract, for example events or tasks',
+      },
+      {
+        displayName: 'Record ID',
+        name: 'recordId',
+        type: 'string',
+        default: '',
+        required: true,
+        displayOptions: {
+          show: {
+            resource: ['modelRecord'],
+            operation: ['get', 'update', 'delete', 'executeAction'],
+          },
+        },
+      },
+      {
+        displayName: 'Fields (JSON)',
+        name: 'fields',
+        type: 'json',
+        default: '{}',
+        displayOptions: {
+          show: {
+            resource: ['modelRecord'],
+            operation: ['create', 'update'],
+          },
+        },
+        description: 'Record fields defined by the pinned LifeSpace Model Contract',
+      },
+      {
+        displayName: 'Version',
+        name: 'version',
+        type: 'number',
+        typeOptions: { minValue: 1, numberPrecision: 0 },
+        default: 1,
+        required: true,
+        displayOptions: {
+          show: {
+            resource: ['modelRecord'],
+            operation: ['update', 'delete'],
+          },
+        },
+        description: 'Current record version used for optimistic concurrency',
+      },
+      {
+        displayName: 'Query Parameters (JSON)',
+        name: 'queryParameters',
+        type: 'json',
+        default: '{}',
+        displayOptions: {
+          show: {
+            resource: ['modelRecord'],
+            operation: ['list'],
+          },
+        },
+        description: 'Query parameters supported by the published model contract, such as filters, sort, limit or cursor',
+      },
+      {
+        displayName: 'Action Key',
+        name: 'actionKey',
+        type: 'string',
+        default: '',
+        required: true,
+        displayOptions: {
+          show: {
+            resource: ['modelRecord'],
+            operation: ['executeAction'],
+          },
+        },
+        description: 'Published Capability or workflow action key from the pinned Model Contract',
+      },
+      {
+        displayName: 'Action Input (JSON)',
+        name: 'actionInput',
+        type: 'json',
+        default: '{}',
+        displayOptions: {
+          show: {
+            resource: ['modelRecord'],
+            operation: ['executeAction'],
+          },
+        },
+        description: 'Action input defined by the pinned Model Contract. Model Definition v1 workflow actions typically require version.',
+      },
+      {
+        displayName: 'Operation',
+        name: 'operation',
+        type: 'options',
+        noDataExpression: true,
+        displayOptions: { show: { resource: ['apiRequest'] } },
         options: [
           {
             name: 'API Request',
@@ -51,6 +228,7 @@ export class LifeSpace implements INodeType {
         displayName: 'Method',
         name: 'method',
         type: 'options',
+        displayOptions: { show: { resource: ['apiRequest'] } },
         options: [
           { name: 'DELETE', value: 'DELETE' },
           { name: 'GET', value: 'GET' },
@@ -66,6 +244,7 @@ export class LifeSpace implements INodeType {
         type: 'string',
         default: '/api/v1/',
         required: true,
+        displayOptions: { show: { resource: ['apiRequest'] } },
         description: 'LifeSpace Core API path. Keep contract semantics in the upstream LifeSpace repository.',
       },
       {
@@ -75,7 +254,8 @@ export class LifeSpace implements INodeType {
         default: '{}',
         displayOptions: {
           show: {
-            method: ['POST', 'PATCH', 'PUT'],
+            resource: ['apiRequest'],
+            method: ['POST', 'PATCH', 'PUT', 'DELETE'],
           },
         },
       },
@@ -90,17 +270,92 @@ export class LifeSpace implements INodeType {
 
     for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
       try {
-        const method = this.getNodeParameter('method', itemIndex) as IHttpRequestOptions['method'];
-        const path = String(this.getNodeParameter('path', itemIndex));
-        const options: IHttpRequestOptions = {
-          method,
-          url: `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`,
-          json: true,
-        };
+        const resource = this.getNodeParameter('resource', itemIndex) as string;
+        let options: IHttpRequestOptions;
 
-        if (['POST', 'PATCH', 'PUT'].includes(String(method))) {
-          const rawBody = this.getNodeParameter('jsonBody', itemIndex, '{}');
-          options.body = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
+        if (resource === 'modelRecord') {
+          const operation = this.getNodeParameter('operation', itemIndex) as string;
+          const spaceId = encodeURIComponent(String(this.getNodeParameter('spaceId', itemIndex)));
+          const modelRoute = encodeURIComponent(String(this.getNodeParameter('modelRoute', itemIndex)));
+          const collectionPath = `/api/v1/spaces/${spaceId}/${modelRoute}`;
+
+          if (operation === 'list') {
+            options = {
+              method: 'GET',
+              url: `${baseUrl}${collectionPath}`,
+              qs: parseJsonObject(
+                this,
+                itemIndex,
+                this.getNodeParameter('queryParameters', itemIndex, '{}'),
+                'Query Parameters',
+              ),
+              json: true,
+            };
+          } else if (operation === 'create') {
+            options = {
+              method: 'POST',
+              url: `${baseUrl}${collectionPath}`,
+              body: parseJsonObject(this, itemIndex, this.getNodeParameter('fields', itemIndex, '{}'), 'Fields'),
+              json: true,
+            };
+          } else {
+            const recordId = encodeURIComponent(String(this.getNodeParameter('recordId', itemIndex)));
+            const recordPath = `${collectionPath}/${recordId}`;
+
+            if (operation === 'get') {
+              options = { method: 'GET', url: `${baseUrl}${recordPath}`, json: true };
+            } else if (operation === 'update') {
+              const fields = parseJsonObject(
+                this,
+                itemIndex,
+                this.getNodeParameter('fields', itemIndex, '{}'),
+                'Fields',
+              );
+              options = {
+                method: 'PATCH',
+                url: `${baseUrl}${recordPath}`,
+                body: { ...fields, version: this.getNodeParameter('version', itemIndex) },
+                json: true,
+              };
+            } else if (operation === 'delete') {
+              options = {
+                method: 'DELETE',
+                url: `${baseUrl}${recordPath}`,
+                body: { version: this.getNodeParameter('version', itemIndex) },
+                json: true,
+              };
+            } else {
+              const actionKey = encodeURIComponent(String(this.getNodeParameter('actionKey', itemIndex)));
+              options = {
+                method: 'POST',
+                url: `${baseUrl}${recordPath}/actions/${actionKey}`,
+                body: parseJsonObject(
+                  this,
+                  itemIndex,
+                  this.getNodeParameter('actionInput', itemIndex, '{}'),
+                  'Action Input',
+                ),
+                json: true,
+              };
+            }
+          }
+        } else {
+          const method = this.getNodeParameter('method', itemIndex) as IHttpRequestOptions['method'];
+          const path = String(this.getNodeParameter('path', itemIndex));
+          options = {
+            method,
+            url: `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`,
+            json: true,
+          };
+
+          if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(String(method))) {
+            options.body = parseJsonObject(
+              this,
+              itemIndex,
+              this.getNodeParameter('jsonBody', itemIndex, '{}'),
+              'JSON Body',
+            );
+          }
         }
 
         const response = await this.helpers.httpRequestWithAuthentication.call(
@@ -110,8 +365,10 @@ export class LifeSpace implements INodeType {
         );
 
         const json = typeof response === 'object' && response !== null
-          ? response
-          : { data: response };
+          ? response as IDataObject
+          : response === undefined || response === null
+            ? { success: true }
+            : { data: response };
 
         output.push({ json, pairedItem: { item: itemIndex } });
       } catch (error) {
