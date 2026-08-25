@@ -5,7 +5,7 @@ import type {
   INodeType,
   INodeTypeDescription,
 } from 'n8n-workflow';
-import { NodeConnectionType, NodeOperationError } from 'n8n-workflow';
+import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 
 export class LifeSpace implements INodeType {
   description: INodeTypeDescription = {
@@ -22,8 +22,8 @@ export class LifeSpace implements INodeType {
     defaults: {
       name: 'LifeSpace',
     },
-    inputs: [NodeConnectionType.Main],
-    outputs: [NodeConnectionType.Main],
+    inputs: [NodeConnectionTypes.Main],
+    outputs: [NodeConnectionTypes.Main],
     usableAsTool: true,
     credentials: [
       {
@@ -103,7 +103,8 @@ export class LifeSpace implements INodeType {
           options.body = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
         }
 
-        const response = await this.helpers.httpRequestWithAuthentication(
+        const response = await this.helpers.httpRequestWithAuthentication.call(
+          this,
           'lifeSpaceApi',
           options,
         );
