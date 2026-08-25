@@ -8,7 +8,7 @@ import type {
 export class LifeSpaceApi implements ICredentialType {
   name = 'lifeSpaceApi';
 
-  displayName = 'LifeSpace API';
+  displayName = 'LifeSpace Connection';
 
   icon = 'file:lifespace.svg' as const;
 
@@ -16,12 +16,13 @@ export class LifeSpaceApi implements ICredentialType {
 
   properties: INodeProperties[] = [
     {
-      displayName: 'Base URL',
+      displayName: 'Connection Base URL',
       name: 'baseUrl',
       type: 'string',
-      default: 'https://core.aisr.online',
+      default: '',
+      placeholder: 'https://core.aisr.online/api/v1/spaces/spc_...',
       required: true,
-      description: 'Base URL of the LifeSpace Core API',
+      description: 'Copy the Connection Base URL from the LifeSpace Web integration configuration',
     },
     {
       displayName: 'Service API Token',
@@ -30,7 +31,7 @@ export class LifeSpaceApi implements ICredentialType {
       typeOptions: { password: true },
       default: '',
       required: true,
-      description: 'LifeSpace opaque Service API Token (lsp_pat_*)',
+      description: 'Copy the LifeSpace Service API Token (lsp_pat_*) issued for this connection',
     },
   ];
 
@@ -45,8 +46,8 @@ export class LifeSpaceApi implements ICredentialType {
 
   test: ICredentialTestRequest = {
     request: {
-      baseURL: '={{$credentials.baseUrl}}',
-      url: '/api/v1/spaces',
+      baseURL: '={{$credentials.baseUrl.replace(/\\/$/, "")}}',
+      url: '/_discovery',
       method: 'GET',
     },
   };
