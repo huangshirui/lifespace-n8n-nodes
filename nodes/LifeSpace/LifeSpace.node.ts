@@ -13,7 +13,7 @@ export class LifeSpace implements INodeType {
     name: 'lifeSpace',
     icon: {
       light: 'file:lifespace.svg',
-      dark: 'file:lifespace.svg',
+      dark: 'file:lifespace.dark.svg',
     },
     group: ['transform'],
     version: 1,
@@ -41,7 +41,7 @@ export class LifeSpace implements INodeType {
           {
             name: 'API Request',
             value: 'apiRequest',
-            action: 'Make a request to LifeSpace',
+            action: 'Make an API request',
             description: 'Call a LifeSpace Core API path without redefining its domain contract',
           },
         ],
