@@ -6,9 +6,9 @@ Official n8n community nodes for integrating workflows and AI agents with LifeSp
 
 The package currently provides:
 
-- a LifeSpace API credential for opaque `lsp_pat_*` Service API Tokens;
-- a LifeSpace node with generic Model Record operations plus an advanced Core API request escape hatch;
-- discovery-driven Model and Action selectors against the caller's current LifeSpace authority;
+- a LifeSpace Connection credential using a Connection Base URL plus an opaque `lsp_pat_*` Service API Token;
+- a LifeSpace node with generic Model Record operations plus an advanced connection-relative API request escape hatch;
+- discovery-driven Model and Action selectors against the connection's current LifeSpace authority;
 - a LifeSpace Trigger that receives signed LifeSpace domain-event webhooks;
 - the official `n8n-node` development toolchain;
 - CI for lint and build validation.
@@ -45,7 +45,14 @@ npm run dev
 
 ## Credentials
 
-For owner-controlled n8n instances, use a LifeSpace Service API Token (`lsp_pat_*`). The LifeSpace node sends it to LifeSpace Core as a Bearer token.
+Create and authorize the integration in LifeSpace Web first. The Web configuration owns the target Space and its granted model permissions, then exposes the values to copy into n8n:
+
+- **Connection Base URL**, for example `https://core.aisr.online/api/v1/spaces/spc_...`;
+- **Service API Token**, an opaque `lsp_pat_*` token issued for that connection.
+
+The Credential represents one already-configured LifeSpace connection. Individual LifeSpace nodes therefore do not ask for a Space ID.
+
+The Connection Base URL carries routing context only. Authorization still comes from the Service API Token plus LifeSpace credential scopes, Application × Model Access and current Space/Data Grant authority. Revoking the token or grant invalidates the connection without changing the n8n workflow.
 
 Do not store real tokens in source code, workflow examples or repository files.
 
@@ -60,11 +67,11 @@ The **Model Record** resource is a thin adapter over LifeSpace Generic Runtime r
 - Delete with optimistic concurrency;
 - Execute Action for published Capability/workflow actions.
 
-After a **Space ID** is provided, the node loads its Model selector from LifeSpace's Space-scoped Runtime Discovery surface. The list contains only models the current credential can actually use after LifeSpace applies credential scopes, Application × Model Access and current Space membership/Data Grants. The **Action** selector is then loaded dynamically from the selected model and is filtered by the same effective authority.
+The node loads its Model selector from `{Connection Base URL}/_discovery`. The list contains only models the current connection can actually use after LifeSpace applies credential scopes, Application × Model Access and current Space membership/Data Grants. The **Action** selector is then loaded dynamically from the selected model and is filtered by the same effective authority.
 
 The node does not use the privileged `model-admin/contracts/*` surface for ordinary workflow discovery and does not copy model definitions into this repository. Record fields, query parameters and action inputs remain governed by LifeSpace model metadata. They remain JSON inputs for now; later UX may use n8n dynamic schema/resource mapping where that can be driven directly by stable LifeSpace discovery metadata.
 
-The **API Request** resource remains available as an advanced escape hatch for Kernel or newly introduced LifeSpace APIs that do not yet have first-class node UX.
+The **API Request** resource remains available as an advanced escape hatch for paths relative to the configured Connection Base URL.
 
 ## LifeSpace Trigger
 
