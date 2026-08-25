@@ -1,5 +1,6 @@
 import type {
   IAuthenticateGeneric,
+  ICredentialTestRequest,
   ICredentialType,
   INodeProperties,
 } from 'n8n-workflow';
@@ -8,6 +9,8 @@ export class LifeSpaceApi implements ICredentialType {
   name = 'lifeSpaceApi';
 
   displayName = 'LifeSpace API';
+
+  icon = 'file:lifespace.svg' as const;
 
   documentationUrl = 'https://github.com/huangshirui/LifeSpace';
 
@@ -37,6 +40,14 @@ export class LifeSpaceApi implements ICredentialType {
       headers: {
         Authorization: '=Bearer {{$credentials.token}}',
       },
+    },
+  };
+
+  test: ICredentialTestRequest = {
+    request: {
+      baseURL: '={{$credentials.baseUrl}}',
+      url: '/api/v1/spaces',
+      method: 'GET',
     },
   };
 }
