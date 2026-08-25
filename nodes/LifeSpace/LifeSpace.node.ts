@@ -172,7 +172,7 @@ export class LifeSpace implements INodeType {
         description: 'Source Space that owns the model record. Model and action choices refresh from this Space.',
       },
       {
-        displayName: 'Model Name or Route',
+        displayName: 'Model Name or ID',
         name: 'modelRoute',
         type: 'options',
         typeOptions: {
@@ -182,7 +182,7 @@ export class LifeSpace implements INodeType {
         default: '',
         required: true,
         displayOptions: { show: { resource: ['modelRecord'] } },
-        description: 'Choose from models currently authorized for this credential and Space',
+        description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
       },
       {
         displayName: 'Record ID',
@@ -239,7 +239,7 @@ export class LifeSpace implements INodeType {
         description: 'Query parameters supported by the selected model, such as filters, sort, limit or cursor',
       },
       {
-        displayName: 'Action Name or Key',
+        displayName: 'Action Name or ID',
         name: 'actionKey',
         type: 'options',
         typeOptions: {
@@ -254,7 +254,7 @@ export class LifeSpace implements INodeType {
             operation: ['executeAction'],
           },
         },
-        description: 'Choose from actions currently authorized for the selected model and Space',
+        description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
       },
       {
         displayName: 'Action Input (JSON)',
