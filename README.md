@@ -9,7 +9,7 @@ The package currently provides:
 - a LifeSpace Connection credential using a Connection Base URL plus an opaque `lsp_pat_*` Service API Token;
 - a LifeSpace Webhook credential for storing event-subscription signing secrets outside workflow parameters;
 - a LifeSpace node with generic Model Record operations plus an advanced connection-relative API request escape hatch;
-- discovery-driven Model, Action and Create/Update field UX against the connection's current LifeSpace authority;
+- discovery-driven Model, Action, Create/Update field, Query and Action Input UX against the connection's current LifeSpace authority;
 - a LifeSpace Trigger that receives signed LifeSpace domain-event webhooks;
 - the official `n8n-node` development toolchain;
 - CI for lint and build validation;
@@ -83,9 +83,27 @@ Create and Update use n8n's resource-mapper UI driven directly by the selected m
 - LifeSpace date-only fields intentionally remain strings so `YYYY-MM-DD` values are never converted into timezone-bearing instants;
 - automatic input-data mapping is intentionally disabled for now so unrelated incoming keys are not silently sent to LifeSpace's strict model schema.
 
-LifeSpace Core remains authoritative for validation and authorization when the operation executes. Runtime Discovery is a dynamic UX/capability preview, not an execution-authorization proof.
+### Discovery-driven query
 
-List / Query parameters and Action Input remain JSON for now. Query UX needs operator/range semantics rather than simple field mapping, while dynamic Action Input requires bounded action-input metadata from LifeSpace Discovery. These should be added only when their upstream contracts are explicit rather than copied into this package.
+List / Query uses bounded query metadata from LifeSpace Runtime Discovery rather than a free-form JSON request.
+
+- searchable fields enable the Search input only where the model declares search support;
+- filter fields are limited to the model's published filterable fields;
+- equality and supported range operators map to LifeSpace Generic Runtime query parameters;
+- sort fields are limited to published sortable fields;
+- pagination uses the LifeSpace `limit` and opaque `cursor` contract;
+- the node does not invent query operators or field semantics that are absent from upstream Discovery metadata.
+
+### Discovery-driven Action Input
+
+Execute Action uses a second resource-mapper driven by the selected action's bounded input metadata from LifeSpace Runtime Discovery.
+
+- Model Definition v1 workflow actions currently expose the optimistic-concurrency `version` input;
+- the `record-occurrence` Capability action exposes `version`, `occurredOn` and optional `note` according to the upstream contract;
+- required/optional status, primitive input types, date-only handling and length/range constraints come from LifeSpace metadata;
+- the node does not copy action schemas into this package or accept an unrestricted Action Input JSON object for normal use.
+
+LifeSpace Core remains authoritative for validation and authorization when an operation executes. Runtime Discovery is a dynamic UX/capability preview, not an execution-authorization proof.
 
 The node does not use the privileged `model-admin/contracts/*` surface for ordinary workflow discovery and does not copy model definitions into this repository.
 
@@ -99,10 +117,11 @@ To use the trigger:
 
 1. add a LifeSpace Trigger to an n8n workflow and activate the workflow;
 2. copy the node's production webhook URL;
-3. create a LifeSpace event subscription for the required Space/model/events and use that URL as the webhook destination;
-4. create a **LifeSpace Webhook API** credential and store the one-time signing secret returned by LifeSpace in that credential;
-5. attach the credential to the Trigger and optionally set expected Space/model filters as an additional local check;
-6. use LifeSpace's subscription test action to verify delivery.
+3. create a LifeSpace Webhook Endpoint for the target Space and use that URL as its destination;
+4. attach one or more LifeSpace Event Subscription filters for the required model/events to that endpoint;
+5. create a **LifeSpace Webhook API** credential and store the endpoint's one-time signing secret in that credential;
+6. attach the credential to the Trigger and optionally set expected Space/model filters as an additional local check;
+7. use LifeSpace's endpoint test action to verify delivery.
 
 The signing secret is intentionally stored as an n8n Credential rather than as a workflow parameter. Workflow exports therefore reference the credential instead of embedding the secret as ordinary node configuration.
 
@@ -128,11 +147,9 @@ The package intentionally has no runtime `dependencies`. It must not read enviro
 
 ## Planned surfaces
 
-- operator-aware dynamic query UX driven by stable LifeSpace query metadata;
-- dynamic Action Input when LifeSpace exposes a bounded action-input discovery contract;
 - richer relation selectors when LifeSpace exposes an appropriate authorized lookup surface;
-- n8n AI Tool experience for approved LifeSpace actions;
-- delegated subscription management if LifeSpace later exposes an appropriate user-authorized contract;
+- a more explicit n8n AI Tool experience for approved LifeSpace actions if the generic tool-capable node proves insufficient;
+- delegated Webhook Endpoint / Event Subscription management if LifeSpace later exposes an appropriate user-authorized integration contract;
 - OAuth `client_credentials` support where required.
 
 ## License
