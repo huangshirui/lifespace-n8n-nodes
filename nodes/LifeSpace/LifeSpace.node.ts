@@ -83,7 +83,7 @@ function queryParameters(context: IExecuteFunctions, itemIndex: number): IDataOb
   const sortField = String(context.getNodeParameter('sortField', itemIndex, 'createdAt')).trim();
   const sortDirection = String(context.getNodeParameter('sortDirection', itemIndex, 'desc')).trim();
   const cursor = String(context.getNodeParameter('cursor', itemIndex, '')).trim();
-  const limit = context.getNodeParameter('limit', itemIndex, 100) as number;
+  const limit = context.getNodeParameter('limit', itemIndex, 50) as number;
   const filters = context.getNodeParameter('filters.filter', itemIndex, []) as QueryFilter[];
 
   if (search) qs.q = search;
@@ -400,9 +400,9 @@ export class LifeSpace implements INodeType {
         name: 'limit',
         type: 'number',
         typeOptions: { minValue: 1, maxValue: 200, numberPrecision: 0 },
-        default: 100,
+        default: 50,
         displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
-        description: 'Maximum number of records to return',
+        description: 'Max number of results to return',
       },
       {
         displayName: 'Cursor',
