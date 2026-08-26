@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "description": "Official n8n community nodes for integrating workflows and AI agents with LifeSpace.",
   "license": "MIT",
-  "homepage": "https://github.com/huangshirui/lifespace-n8n-nodes",
+  "homepage": "https://github.com/huangshirui/lifespace-n8n-nodes#readme",
+  "bugs": {
+    "url": "https://github.com/huangshirui/lifespace-n8n-nodes/issues"
+  },
   "keywords": [
     "n8n-community-node-package",
     "n8n",
@@ -17,7 +20,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/huangshirui/lifespace-n8n-nodes.git"
+    "url": "git+https://github.com/huangshirui/lifespace-n8n-nodes.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
     "build": "n8n-node build",
@@ -32,7 +39,8 @@
     "n8nNodesApiVersion": 1,
     "strict": true,
     "credentials": [
-      "dist/credentials/LifeSpaceApi.credentials.js"
+      "dist/credentials/LifeSpaceApi.credentials.js",
+      "dist/credentials/LifeSpaceWebhookApi.credentials.js"
     ],
     "nodes": [
       "dist/nodes/LifeSpace/LifeSpace.node.js",
@@ -40,7 +48,7 @@
     ]
   },
   "devDependencies": {
-    "@n8n/node-cli": "*",
+    "@n8n/node-cli": "0.44.5",
     "eslint": "9.39.4",
     "prettier": "3.8.3",
     "release-it": "20.2.0",

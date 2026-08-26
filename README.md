@@ -6,11 +6,14 @@ Official n8n community nodes for integrating workflows and AI agents with LifeSp
 
 The package currently provides:
 
-- a LifeSpace API credential for opaque `lsp_pat_*` Service API Tokens;
-- a LifeSpace node with generic Model Record operations plus an advanced Core API request escape hatch;
+- a LifeSpace Connection credential using a Connection Base URL plus an opaque `lsp_pat_*` Service API Token;
+- a LifeSpace Webhook credential for storing event-subscription signing secrets outside workflow parameters;
+- a LifeSpace node with generic Model Record operations plus an advanced connection-relative API request escape hatch;
+- discovery-driven Model, Action, Create/Update field, Query and Action Input UX against the connection's current LifeSpace authority;
 - a LifeSpace Trigger that receives signed LifeSpace domain-event webhooks;
 - the official `n8n-node` development toolchain;
-- CI for lint and build validation.
+- CI for lint and build validation;
+- a GitHub Actions npm publishing path with provenance support.
 
 Domain-specific UX and AI-tool surfaces will be added only against stable upstream LifeSpace contracts/discovery metadata.
 
@@ -44,7 +47,14 @@ npm run dev
 
 ## Credentials
 
-For owner-controlled n8n instances, use a LifeSpace Service API Token (`lsp_pat_*`). The LifeSpace node sends it to LifeSpace Core as a Bearer token.
+Create and authorize the integration in LifeSpace Web first. The Web configuration owns the target Space and its granted model permissions, then exposes the values to copy into n8n:
+
+- **Connection Base URL**, for example `https://core.aisr.online/api/v1/spaces/spc_...`;
+- **Service API Token**, an opaque `lsp_pat_*` token issued for that connection.
+
+The Credential represents one already-configured LifeSpace connection. Individual LifeSpace nodes therefore do not ask for a Space ID.
+
+The Connection Base URL carries routing context only. Authorization still comes from the Service API Token plus LifeSpace credential scopes, Application × Model Access and current Space/Data Grant authority. Revoking the token or grant invalidates the connection without changing the n8n workflow.
 
 Do not store real tokens in source code, workflow examples or repository files.
 
@@ -59,11 +69,45 @@ The **Model Record** resource is a thin adapter over LifeSpace Generic Runtime r
 - Delete with optimistic concurrency;
 - Execute Action for published Capability/workflow actions.
 
-The node asks for the published **Model Route** rather than embedding model definitions. Record fields, query parameters and action inputs remain governed by the application's pinned immutable LifeSpace Model Contract Revision.
+The node loads its Model selector from `{Connection Base URL}/_discovery`. The list contains only models the current connection can currently use after LifeSpace applies credential scopes, Application × Model Access and current Space membership/Data Grants. The **Action** selector is then loaded dynamically from the selected model and is filtered by the same discovery authority.
 
-LifeSpace currently exposes full immutable Model Contract reads through the service-only Model Admin surface (`models:manage`). The n8n runtime node intentionally does not use that privileged surface as ordinary workflow discovery. When LifeSpace exposes an application/service-authorized discovery contract, model/field/action selectors can become dynamically populated without changing the Generic Runtime contract.
+### Discovery-driven fields
 
-The **API Request** resource remains available as an advanced escape hatch for Kernel or newly introduced LifeSpace APIs that do not yet have first-class node UX.
+Create and Update use n8n's resource-mapper UI driven directly by the selected model's bounded Runtime Discovery metadata instead of a handwritten `Fields (JSON)` contract.
+
+- required Create fields follow LifeSpace field metadata;
+- read-only fields are excluded;
+- immutable fields are additionally excluded from Update;
+- enum fields render as options;
+- number, boolean, datetime and list fields use the corresponding n8n input types;
+- LifeSpace date-only fields intentionally remain strings so `YYYY-MM-DD` values are never converted into timezone-bearing instants;
+- automatic input-data mapping is intentionally disabled for now so unrelated incoming keys are not silently sent to LifeSpace's strict model schema.
+
+### Discovery-driven query
+
+List / Query uses bounded query metadata from LifeSpace Runtime Discovery rather than a free-form JSON request.
+
+- searchable fields enable the Search input only where the model declares search support;
+- filter fields are limited to the model's published filterable fields;
+- equality and supported range operators map to LifeSpace Generic Runtime query parameters;
+- sort fields are limited to published sortable fields;
+- pagination uses the LifeSpace `limit` and opaque `cursor` contract;
+- the node does not invent query operators or field semantics that are absent from upstream Discovery metadata.
+
+### Discovery-driven Action Input
+
+Execute Action uses a second resource-mapper driven by the selected action's bounded input metadata from LifeSpace Runtime Discovery.
+
+- Model Definition v1 workflow actions currently expose the optimistic-concurrency `version` input;
+- the `record-occurrence` Capability action exposes `version`, `occurredOn` and optional `note` according to the upstream contract;
+- required/optional status, primitive input types, date-only handling and length/range constraints come from LifeSpace metadata;
+- the node does not copy action schemas into this package or accept an unrestricted Action Input JSON object for normal use.
+
+LifeSpace Core remains authoritative for validation and authorization when an operation executes. Runtime Discovery is a dynamic UX/capability preview, not an execution-authorization proof.
+
+The node does not use the privileged `model-admin/contracts/*` surface for ordinary workflow discovery and does not copy model definitions into this repository.
+
+The **API Request** resource remains available as an advanced escape hatch for paths relative to the configured Connection Base URL.
 
 ## LifeSpace Trigger
 
@@ -73,20 +117,40 @@ To use the trigger:
 
 1. add a LifeSpace Trigger to an n8n workflow and activate the workflow;
 2. copy the node's production webhook URL;
-3. create a LifeSpace event subscription for the required Space/model/events and use that URL as the webhook destination;
-4. copy the one-time signing secret returned by LifeSpace into the Trigger's **Signing Secret** field;
-5. optionally set expected Space/model filters in the Trigger as an additional local check;
-6. use LifeSpace's subscription test action to verify delivery.
+3. create a LifeSpace Webhook Endpoint for the target Space and use that URL as its destination;
+4. attach one or more LifeSpace Event Subscription filters for the required model/events to that endpoint;
+5. create a **LifeSpace Webhook API** credential and store the endpoint's one-time signing secret in that credential;
+6. attach the credential to the Trigger and optionally set expected Space/model filters as an additional local check;
+7. use LifeSpace's endpoint test action to verify delivery.
+
+The signing secret is intentionally stored as an n8n Credential rather than as a workflow parameter. Workflow exports therefore reference the credential instead of embedding the secret as ordinary node configuration.
 
 The trigger validates `X-LifeSpace-Timestamp` and `X-LifeSpace-Signature` using the upstream LifeSpace HMAC-SHA256 contract before emitting workflow data.
 
+## Publishing and verification
+
+This repository is public and is intended to remain eligible for n8n community-node verification.
+
+Publishing is performed only by `.github/workflows/publish.yml` from a version tag matching `*.*.*`. The workflow grants only `contents: read` plus `id-token: write`, so npm can attach a provenance attestation to the public package.
+
+Preferred npm authentication is Trusted Publishing through GitHub Actions. A scoped `NPM_TOKEN` is supported only as a fallback. Do not publish a verification candidate directly from a developer workstation.
+
+Before the first npm release:
+
+1. ensure the `n8n-nodes-lifespace` package is available to the publishing npm account;
+2. configure npm Trusted Publishing for `huangshirui/lifespace-n8n-nodes` and workflow `publish.yml`, or install a narrowly scoped fallback `NPM_TOKEN`;
+3. ensure CI passes on the exact release commit;
+4. create the release through the `n8n-node` release flow so the pushed version tag triggers the provenance workflow;
+5. verify the npm package links back to this public GitHub repository and exposes the MIT license and expected node metadata.
+
+The package intentionally has no runtime `dependencies`. It must not read environment variables or the local filesystem. Node UI, help text, errors, README content and examples remain English-only for n8n verification compatibility.
+
 ## Planned surfaces
 
-- application/service-authorized discovery-driven model/action UX;
-- n8n AI Tool experience for approved LifeSpace actions;
-- delegated subscription management if LifeSpace later exposes an appropriate user-authorized contract;
-- OAuth `client_credentials` support where required;
-- npm publishing with GitHub Actions provenance.
+- richer relation selectors when LifeSpace exposes an appropriate authorized lookup surface;
+- a more explicit n8n AI Tool experience for approved LifeSpace actions if the generic tool-capable node proves insufficient;
+- delegated Webhook Endpoint / Event Subscription management if LifeSpace later exposes an appropriate user-authorized integration contract;
+- OAuth `client_credentials` support where required.
 
 ## License
 

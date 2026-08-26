@@ -1,7 +1,10 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import type {
+  ICredentialTestFunctions,
+  ICredentialsDecrypted,
   IDataObject,
   IHookFunctions,
+  INodeCredentialTestResult,
   INodeType,
   INodeTypeDescription,
   IWebhookFunctions,
@@ -10,6 +13,7 @@ import type {
 import { NodeConnectionTypes } from 'n8n-workflow';
 
 const MAX_TIMESTAMP_SKEW_SECONDS = 300;
+const SIGNING_SECRET_PATTERN = /^[a-f0-9]{64}$/;
 
 function safeEqual(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left, 'utf8');
@@ -34,6 +38,13 @@ export class LifeSpaceTrigger implements INodeType {
     },
     inputs: [],
     outputs: [NodeConnectionTypes.Main],
+    credentials: [
+      {
+        name: 'lifeSpaceWebhookApi',
+        required: true,
+        testedBy: 'lifeSpaceWebhookCredentialTest',
+      },
+    ],
     webhooks: [
       {
         name: 'default',
@@ -45,19 +56,10 @@ export class LifeSpaceTrigger implements INodeType {
     properties: [
       {
         displayName:
-          'Create the LifeSpace event subscription separately and use this node\'s production webhook URL as the destination. Paste the signing secret returned by LifeSpace below.',
+          'Create the LifeSpace event subscription separately and use this node\'s production webhook URL as the destination. Store the one-time signing secret in the LifeSpace Webhook API credential attached to this node.',
         name: 'setupNotice',
         type: 'notice',
         default: '',
-      },
-      {
-        displayName: 'Signing Secret',
-        name: 'signingSecret',
-        type: 'string',
-        typeOptions: { password: true },
-        default: '',
-        required: true,
-        description: 'Signing secret returned when the LifeSpace event subscription is created',
       },
       {
         displayName: 'Event Types',
@@ -97,6 +99,27 @@ export class LifeSpaceTrigger implements INodeType {
     ],
   };
 
+  methods = {
+    credentialTest: {
+      async lifeSpaceWebhookCredentialTest(
+        this: ICredentialTestFunctions,
+        credential: ICredentialsDecrypted,
+      ): Promise<INodeCredentialTestResult> {
+        const signingSecret = String(credential.data?.signingSecret ?? '');
+        if (!SIGNING_SECRET_PATTERN.test(signingSecret)) {
+          return {
+            status: 'Error',
+            message: 'Signing Secret must be the 64-character hexadecimal secret returned by LifeSpace',
+          };
+        }
+        return {
+          status: 'OK',
+          message: 'Signing Secret format is valid. Use the LifeSpace subscription test for end-to-end verification.',
+        };
+      },
+    },
+  };
+
   webhookMethods = {
     default: {
       async checkExists(this: IHookFunctions): Promise<boolean> {
@@ -124,16 +147,18 @@ export class LifeSpaceTrigger implements INodeType {
     const req = this.getRequestObject();
     const headers = this.getHeaderData() as IDataObject;
     const response = this.getResponseObject();
+    const credentials = await this.getCredentials('lifeSpaceWebhookApi');
 
     const timestamp = String(headers['x-lifespace-timestamp'] ?? '');
     const signatureHeader = String(headers['x-lifespace-signature'] ?? '');
-    const signingSecret = this.getNodeParameter('signingSecret') as string;
+    const signingSecret = String(credentials.signingSecret ?? '');
     const signature = signatureHeader.startsWith('v1=') ? signatureHeader.slice(3) : '';
     const timestampSeconds = Number(timestamp);
 
     if (
       !timestamp ||
       !signature ||
+      !SIGNING_SECRET_PATTERN.test(signingSecret) ||
       !Number.isFinite(timestampSeconds) ||
       Math.abs(Math.floor(Date.now() / 1000) - timestampSeconds) > MAX_TIMESTAMP_SKEW_SECONDS
     ) {
