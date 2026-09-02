@@ -20,6 +20,8 @@ import {
 
 const MAX_TIMESTAMP_SKEW_SECONDS = 300;
 const SIGNING_SECRET_PATTERN = /^[a-f0-9]{64}$/;
+const DYNAMIC_OPTION_DESCRIPTION = 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>';
+const DYNAMIC_MULTI_OPTION_DESCRIPTION = 'Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>';
 
 function safeEqual(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left, 'utf8');
@@ -77,10 +79,10 @@ export class LifeSpaceTrigger implements INodeType {
         options: [],
         default: '',
         required: true,
-        description: 'Choose a Space available to the current LifeSpace credential',
+        description: DYNAMIC_OPTION_DESCRIPTION,
       },
       {
-        displayName: 'Record Types',
+        displayName: 'Record Type Names or IDs',
         name: 'recordTypeKeys',
         type: 'multiOptions',
         typeOptions: {
@@ -90,7 +92,7 @@ export class LifeSpaceTrigger implements INodeType {
         options: [],
         default: [],
         required: true,
-        description: 'Select one or more Record Types delivered through the same LifeSpace Webhook Endpoint',
+        description: DYNAMIC_MULTI_OPTION_DESCRIPTION,
       },
       {
         displayName: 'Event Types',
