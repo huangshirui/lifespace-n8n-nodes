@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   validate:
@@ -29,32 +28,7 @@ jobs:
         run: npm test
 
       - name: Lint
-        id: lint
-        continue-on-error: true
-        shell: bash
-        run: |
-          set +e
-          npm run lint 2>&1 | tee lint-output.txt
-          status=${PIPESTATUS[0]}
-          exit "$status"
-
-      - name: Report lint failure
-        if: steps.lint.outcome == 'failure' && github.event_name == 'pull_request'
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const fs = require('fs');
-            const output = fs.readFileSync('lint-output.txt', 'utf8').slice(-50000);
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: `<!-- lifespace-ci-lint-debug -->\n### CI lint failure\n\n\`\`\`text\n${output}\n\`\`\``,
-            });
-
-      - name: Fail after lint report
-        if: steps.lint.outcome == 'failure'
-        run: exit 1
+        run: npm run lint
 
       - name: Build
         run: npm run build
