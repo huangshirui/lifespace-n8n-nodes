@@ -32,8 +32,6 @@ type QueryPage = {
   nextCursor: string | null;
 };
 
-const DYNAMIC_OPTION_DESCRIPTION = 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>';
-
 function parseJsonObject(
   context: IExecuteFunctions,
   itemIndex: number,
@@ -127,8 +125,6 @@ function resourceMapperType(field: DiscoveryField): FieldType {
     case 'enum':
       return 'options';
     default:
-      // Date-only values intentionally remain strings so n8n does not convert
-      // YYYY-MM-DD business dates into timezone-bearing instants.
       return 'string';
   }
 }
@@ -247,7 +243,7 @@ export class LifeSpace implements INodeType {
         default: '',
         required: true,
         displayOptions: { show: { resource: ['modelRecord'] } },
-        description: DYNAMIC_OPTION_DESCRIPTION,
+        description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
       },
       {
         displayName: 'Record Type Name or ID',
@@ -261,7 +257,7 @@ export class LifeSpace implements INodeType {
         default: '',
         required: true,
         displayOptions: { show: { resource: ['modelRecord'] } },
-        description: DYNAMIC_OPTION_DESCRIPTION,
+        description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
       },
       {
         displayName: 'Record ID',
@@ -352,7 +348,7 @@ export class LifeSpace implements INodeType {
                 options: [],
                 default: '',
                 required: true,
-                description: DYNAMIC_OPTION_DESCRIPTION,
+                description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
               },
               {
                 displayName: 'Operator',
@@ -410,7 +406,7 @@ export class LifeSpace implements INodeType {
             typeOptions: { loadOptionsMethod: 'getSortableFields' },
             options: [],
             default: '',
-            description: DYNAMIC_OPTION_DESCRIPTION,
+            description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
           },
           {
             displayName: 'Sort Direction',
@@ -447,7 +443,7 @@ export class LifeSpace implements INodeType {
             operation: ['executeAction'],
           },
         },
-        description: DYNAMIC_OPTION_DESCRIPTION,
+        description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
       },
       {
         displayName: 'Action Input',
@@ -622,8 +618,6 @@ export class LifeSpace implements INodeType {
 
         const fields = model.fields
           .filter((field) => !field.readOnly && (operation !== 'update' || !field.immutable))
-          // Required/default semantics remain controlled by LifeSpace Discovery. This
-          // intentionally does not invent adapter-side defaults while upstream #99 converges.
           .map((field) => mapperField(field, operation === 'create' && field.required === true));
 
         return { fields };
