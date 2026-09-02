@@ -20,8 +20,6 @@ import {
 
 const MAX_TIMESTAMP_SKEW_SECONDS = 300;
 const SIGNING_SECRET_PATTERN = /^[a-f0-9]{64}$/;
-const DYNAMIC_OPTION_DESCRIPTION = 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>';
-const DYNAMIC_MULTI_OPTION_DESCRIPTION = 'Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>';
 
 function safeEqual(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left, 'utf8');
@@ -79,7 +77,7 @@ export class LifeSpaceTrigger implements INodeType {
         options: [],
         default: '',
         required: true,
-        description: DYNAMIC_OPTION_DESCRIPTION,
+        description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
       },
       {
         displayName: 'Record Type Names or IDs',
@@ -92,7 +90,7 @@ export class LifeSpaceTrigger implements INodeType {
         options: [],
         default: [],
         required: true,
-        description: DYNAMIC_MULTI_OPTION_DESCRIPTION,
+        description: 'Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
       },
       {
         displayName: 'Event Types',
@@ -172,10 +170,6 @@ export class LifeSpaceTrigger implements INodeType {
       },
       async create(this: IHookFunctions): Promise<boolean> {
         const webhookData = this.getWorkflowStaticData('node');
-        // LifeSpace endpoint/subscription management is a Space-management operation.
-        // The n8n service credential must not bypass that authority boundary. n8n still
-        // requires a complete webhook lifecycle, so this hook records local activation
-        // state while the external endpoint/subscriptions are configured separately.
         webhookData.lifeSpaceManualSubscription = true;
         return true;
       },
