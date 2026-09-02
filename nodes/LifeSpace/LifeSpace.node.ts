@@ -32,6 +32,8 @@ type QueryPage = {
   nextCursor: string | null;
 };
 
+const DYNAMIC_OPTION_DESCRIPTION = 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>';
+
 function parseJsonObject(
   context: IExecuteFunctions,
   itemIndex: number,
@@ -245,7 +247,7 @@ export class LifeSpace implements INodeType {
         default: '',
         required: true,
         displayOptions: { show: { resource: ['modelRecord'] } },
-        description: 'Choose a Space available to the current LifeSpace credential',
+        description: DYNAMIC_OPTION_DESCRIPTION,
       },
       {
         displayName: 'Record Type Name or ID',
@@ -259,7 +261,7 @@ export class LifeSpace implements INodeType {
         default: '',
         required: true,
         displayOptions: { show: { resource: ['modelRecord'] } },
-        description: 'Choose from Record Types available in the selected Space',
+        description: DYNAMIC_OPTION_DESCRIPTION,
       },
       {
         displayName: 'Record ID',
@@ -350,7 +352,7 @@ export class LifeSpace implements INodeType {
                 options: [],
                 default: '',
                 required: true,
-                description: 'Choose from fields declared filterable by LifeSpace',
+                description: DYNAMIC_OPTION_DESCRIPTION,
               },
               {
                 displayName: 'Operator',
@@ -382,7 +384,7 @@ export class LifeSpace implements INodeType {
         type: 'boolean',
         default: false,
         displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
-        description: 'Whether to automatically follow LifeSpace nextCursor values until all matching records are returned',
+        description: 'Whether to return all results or only up to a given limit',
       },
       {
         displayName: 'Limit',
@@ -408,7 +410,7 @@ export class LifeSpace implements INodeType {
             typeOptions: { loadOptionsMethod: 'getSortableFields' },
             options: [],
             default: '',
-            description: 'Optional. Leave unset to use the deterministic default ordering provided by LifeSpace.',
+            description: DYNAMIC_OPTION_DESCRIPTION,
           },
           {
             displayName: 'Sort Direction',
@@ -445,7 +447,7 @@ export class LifeSpace implements INodeType {
             operation: ['executeAction'],
           },
         },
-        description: 'Choose an action published by the selected Record Type',
+        description: DYNAMIC_OPTION_DESCRIPTION,
       },
       {
         displayName: 'Action Input',
