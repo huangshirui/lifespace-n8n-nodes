@@ -153,10 +153,14 @@ If another writer has already changed the record, LifeSpace rejects the stale ve
 1. Set **Operation** to **Execute Action**.
 2. Choose the model and record.
 3. Choose an **Action** from the dynamic selector.
-4. Fill in the dynamically generated **Action Input** form.
+4. Fill in the dynamically generated **Action Input** form when the Action has semantic/domain inputs.
 5. Execute the node.
 
-LifeSpace supplies the bounded Action Input metadata. The node does not maintain a second copy of action schemas.
+LifeSpace Runtime Discovery keeps **Action semantic input** separate from technical optimistic-concurrency metadata. The Action Input form therefore contains only model/Capability-owned business inputs; an Action with no domain input has no business fields to fill in.
+
+When the selected Action declares the `record-version` concurrency strategy, the node reads the current record immediately before execution and injects the required concurrency evidence using the transport metadata supplied by LifeSpace. The adapter does not hard-code a model-specific Action schema or expose the concurrency field as ordinary business input. If the record changes again between that read and Action execution, LifeSpace still rejects the stale write through its normal optimistic-concurrency guard.
+
+For compatibility with older LifeSpace Runtime Discovery versions that represented concurrency inside Action Input, the node continues to send the discovered input unchanged when no separate `concurrency` metadata is present.
 
 ### Advanced API Request
 
@@ -194,7 +198,8 @@ Optionally configure expected Space/model filters in the Trigger as an additiona
 - **LifeSpace Webhook API** credential: webhook signing secret;
 - **LifeSpace** node: discovery-driven Model Record operations plus advanced API Request;
 - **LifeSpace Trigger**: signed Domain Event webhook trigger;
-- dynamic Model, field, query, Action and Action Input UI based on current LifeSpace Runtime Discovery.
+- dynamic Model, field, query, Action and semantic Action Input UI based on current LifeSpace Runtime Discovery;
+- discovery-driven Action concurrency handling without copying model-specific mutation semantics into the adapter.
 
 LifeSpace Core remains authoritative for validation and authorization when an operation executes. Runtime Discovery is a dynamic UX/capability preview, not an execution-authorization proof.
 
