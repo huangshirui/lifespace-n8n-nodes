@@ -78,14 +78,6 @@ function discoveryFixture({ legacyAction = false } = {}) {
   };
 }
 
-function parameterReader(parameters) {
-  return (name, _itemIndexOrDefault, explicitDefault) => {
-    if (Object.prototype.hasOwnProperty.call(parameters, name)) return parameters[name];
-    if (arguments.length >= 3) return explicitDefault;
-    return _itemIndexOrDefault;
-  };
-}
-
 function loadOptionsContext(discovery, parameters = {}) {
   return {
     getCredentials: async () => ({ baseUrl: `${BASE_URL}/` }),
