@@ -29,11 +29,20 @@ type DiscoveryField = {
   values?: string[];
   targetModel?: string;
 };
+type DiscoveryActionConcurrency = {
+  strategy: string;
+  required: boolean;
+  transport: {
+    in: string;
+    name: string;
+  };
+};
 type DiscoveryAction = {
   key: string;
   access: DiscoveryAccess;
   kind: 'workflow' | 'capability';
   input: { fields: DiscoveryField[] };
+  concurrency?: DiscoveryActionConcurrency;
 };
 type DiscoveryQuery = {
   searchable: string[];
@@ -133,6 +142,25 @@ async function loadDiscovery(this: ILoadOptionsFunctions): Promise<DiscoveryResp
   }
 }
 
+async function loadExecutionDiscovery(
+  context: IExecuteFunctions,
+  baseUrl: string,
+): Promise<DiscoveryResponse> {
+  try {
+    return await context.helpers.httpRequestWithAuthentication.call(
+      context,
+      'lifeSpaceApi',
+      {
+        method: 'GET',
+        url: `${baseUrl}/_discovery`,
+        json: true,
+      },
+    ) as DiscoveryResponse;
+  } catch (error) {
+    throw new NodeApiError(context.getNode(), error as JsonObject);
+  }
+}
+
 function selectedModel(discovery: DiscoveryResponse, route: string): DiscoveryModel | undefined {
   return discovery.data.models.find((entry) => entry.route === route);
 }
@@ -174,6 +202,45 @@ function mapperField(field: DiscoveryField, required: boolean) {
     options: field.type === 'enum'
       ? (field.values ?? []).map((value) => ({ name: value, value }))
       : undefined,
+  };
+}
+
+async function actionBodyWithConcurrency(
+  context: IExecuteFunctions,
+  itemIndex: number,
+  baseUrl: string,
+  recordPath: string,
+  action: DiscoveryAction,
+  semanticInput: IDataObject,
+): Promise<IDataObject> {
+  const concurrency = action.concurrency;
+  if (!concurrency || !concurrency.required) return semanticInput;
+
+  if (concurrency.strategy !== 'record-version' || concurrency.transport.in !== 'body' || !concurrency.transport.name) {
+    throw new NodeOperationError(
+      context.getNode(),
+      `LifeSpace Action ${action.key} uses an unsupported concurrency contract`,
+      { itemIndex },
+    );
+  }
+
+  const response = await context.helpers.httpRequestWithAuthentication.call(
+    context,
+    'lifeSpaceApi',
+    { method: 'GET', url: `${baseUrl}${recordPath}`, json: true },
+  ) as { data?: IDataObject };
+  const concurrencyValue = response.data?.[concurrency.transport.name];
+  if (typeof concurrencyValue !== 'number' || !Number.isInteger(concurrencyValue) || concurrencyValue < 1) {
+    throw new NodeOperationError(
+      context.getNode(),
+      `LifeSpace record did not expose usable ${concurrency.strategy} evidence`,
+      { itemIndex },
+    );
+  }
+
+  return {
+    ...semanticInput,
+    [concurrency.transport.name]: concurrencyValue,
   };
 }
 
@@ -459,7 +526,6 @@ export class LifeSpace implements INodeType {
           value: null,
         },
         noDataExpression: true,
-        required: true,
         typeOptions: {
           loadOptionsDependsOn: ['modelRoute', 'actionKey'],
           resourceMapper: {
@@ -471,7 +537,7 @@ export class LifeSpace implements INodeType {
             },
             addAllFields: true,
             supportAutoMap: false,
-            noFieldsError: 'The selected LifeSpace action does not accept input fields.',
+            noFieldsError: 'This LifeSpace action has no semantic input fields. Required concurrency metadata is handled separately.',
           },
         },
         displayOptions: {
@@ -480,7 +546,7 @@ export class LifeSpace implements INodeType {
             operation: ['executeAction'],
           },
         },
-        description: 'Action input loaded from LifeSpace Runtime Discovery and validated again by Core at execution time',
+        description: 'Semantic Action input loaded from LifeSpace Runtime Discovery. Technical concurrency metadata is resolved separately.',
       },
       {
         displayName: 'Operation',
@@ -633,6 +699,7 @@ export class LifeSpace implements INodeType {
     const output: INodeExecutionData[] = [];
     const credentials = await this.getCredentials('lifeSpaceApi');
     const baseUrl = String(credentials.baseUrl).replace(/\/$/, '');
+    let executionDiscovery: DiscoveryResponse | undefined;
 
     for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
       try {
@@ -641,7 +708,8 @@ export class LifeSpace implements INodeType {
 
         if (resource === 'modelRecord') {
           const operation = this.getNodeParameter('operation', itemIndex) as string;
-          const modelRoute = encodeURIComponent(String(this.getNodeParameter('modelRoute', itemIndex)));
+          const modelRouteValue = String(this.getNodeParameter('modelRoute', itemIndex));
+          const modelRoute = encodeURIComponent(modelRouteValue);
           const collectionPath = `/${modelRoute}`;
 
           if (operation === 'list') {
@@ -679,11 +747,30 @@ export class LifeSpace implements INodeType {
                 json: true,
               };
             } else {
-              const actionKey = encodeURIComponent(String(this.getNodeParameter('actionKey', itemIndex)));
+              const actionKeyValue = String(this.getNodeParameter('actionKey', itemIndex));
+              const actionKey = encodeURIComponent(actionKeyValue);
+              executionDiscovery ??= await loadExecutionDiscovery(this, baseUrl);
+              const model = selectedModel(executionDiscovery, modelRouteValue);
+              const action = model?.actions.find((entry) => entry.key === actionKeyValue);
+              if (!action) {
+                throw new NodeOperationError(
+                  this.getNode(),
+                  `LifeSpace Action ${actionKeyValue} is not available for model ${modelRouteValue}`,
+                  { itemIndex },
+                );
+              }
+              const body = await actionBodyWithConcurrency(
+                this,
+                itemIndex,
+                baseUrl,
+                recordPath,
+                action,
+                mappedValue(this, itemIndex, 'actionInput'),
+              );
               options = {
                 method: 'POST',
                 url: `${baseUrl}${recordPath}/actions/${actionKey}`,
-                body: mappedValue(this, itemIndex, 'actionInput'),
+                body,
                 json: true,
               };
             }
