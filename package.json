@@ -40,7 +40,8 @@
     "n8nNodesApiVersion": 1,
     "strict": true,
     "credentials": [
-      "dist/credentials/LifeSpaceApi.credentials.js"
+      "dist/credentials/LifeSpaceApi.credentials.js",
+      "dist/credentials/LifeSpaceWebhookApi.credentials.js"
     ],
     "nodes": [
       "dist/nodes/LifeSpace/LifeSpace.node.js",
