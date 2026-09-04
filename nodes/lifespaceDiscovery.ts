@@ -11,6 +11,7 @@ export type DiscoveryAccess = 'read' | 'write' | 'manage';
 export type DiscoveryField = {
   key: string;
   type: 'string' | 'text' | 'integer' | 'number' | 'boolean' | 'date' | 'datetime' | 'timezone' | 'enum' | 'person' | 'person_list' | 'record' | 'record_list';
+  title?: string;
   description?: string;
   required?: boolean;
   nullable?: boolean;
@@ -55,6 +56,15 @@ export type DiscoveryModel = {
     searchable: string[];
     filterable: string[];
     sortable: string[];
+    sort: {
+      parameter: 'sort';
+      syntax: 'field:direction';
+      repeatable: true;
+      ordered: true;
+      maxCriteria: number;
+      default: string[];
+      envelopeFields: string[];
+    };
   };
   actions: DiscoveryAction[];
 };
