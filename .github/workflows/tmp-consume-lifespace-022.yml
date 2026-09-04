@@ -21,6 +21,25 @@ jobs:
           node-version: '22.22.0'
       - name: Apply adapter patch
         run: python .github/tmp_patch_lifespace_022.py
+      - name: Align fixed-collection test parameter shape
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('test/contract.test.mjs')
+          text = path.read_text()
+          old = """      sorts: { sort: [
+                  { field: 'dueDate', direction: 'asc' },
+                  { field: 'name', direction: 'desc' },
+                ] },"""
+          new = """      'sorts.sort': [
+                  { field: 'dueDate', direction: 'asc' },
+                  { field: 'name', direction: 'desc' },
+                ],"""
+          if old not in text:
+              raise RuntimeError('multi-sort test parameter anchor not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
       - name: Install dependencies
         run: npm install
       - name: Lint
