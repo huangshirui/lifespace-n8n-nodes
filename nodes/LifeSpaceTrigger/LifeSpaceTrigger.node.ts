@@ -48,7 +48,11 @@ export class LifeSpaceTrigger implements INodeType {
       {
         name: 'lifeSpaceApi',
         required: true,
-        testedBy: 'lifeSpaceTriggerCredentialTest',
+      },
+      {
+        name: 'lifeSpaceWebhookApi',
+        required: true,
+        testedBy: 'lifeSpaceWebhookCredentialTest',
       },
     ],
     webhooks: [
@@ -62,7 +66,7 @@ export class LifeSpaceTrigger implements INodeType {
     properties: [
       {
         displayName:
-          'Configure one LifeSpace Webhook Endpoint with this node\'s production webhook URL, then attach one Event Subscription per selected Record Type. Store the endpoint signing secret in the same LifeSpace API credential used by this node.',
+          'The LifeSpace API credential supplies Runtime Discovery context. The separate Webhook Signing credential stores the endpoint-scoped HMAC secret, which has a different lifecycle from the Service API Token. Configure one LifeSpace Webhook Endpoint with this node\'s production webhook URL, then attach one Event Subscription per selected Record Type.',
         name: 'setupNotice',
         type: 'notice',
         default: '',
@@ -143,11 +147,11 @@ export class LifeSpaceTrigger implements INodeType {
       },
     },
     credentialTest: {
-      async lifeSpaceTriggerCredentialTest(
+      async lifeSpaceWebhookCredentialTest(
         this: ICredentialTestFunctions,
         credential: ICredentialsDecrypted,
       ): Promise<INodeCredentialTestResult> {
-        const signingSecret = String(credential.data?.webhookSigningSecret ?? '');
+        const signingSecret = String(credential.data?.signingSecret ?? '');
         if (!SIGNING_SECRET_PATTERN.test(signingSecret)) {
           return {
             status: 'Error',
@@ -185,11 +189,11 @@ export class LifeSpaceTrigger implements INodeType {
     const req = this.getRequestObject();
     const headers = this.getHeaderData() as IDataObject;
     const response = this.getResponseObject();
-    const credentials = await this.getCredentials('lifeSpaceApi');
+    const credentials = await this.getCredentials('lifeSpaceWebhookApi');
 
     const timestamp = String(headers['x-lifespace-timestamp'] ?? '');
     const signatureHeader = String(headers['x-lifespace-signature'] ?? '');
-    const signingSecret = String(credentials.webhookSigningSecret ?? '');
+    const signingSecret = String(credentials.signingSecret ?? '');
     const signature = signatureHeader.startsWith('v1=') ? signatureHeader.slice(3) : '';
     const timestampSeconds = Number(timestamp);
 
