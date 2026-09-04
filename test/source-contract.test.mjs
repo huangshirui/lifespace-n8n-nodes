@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 async function text(path) {
@@ -10,6 +10,7 @@ test('public LifeSpace adapter surfaces use neutral examples', async () => {
   const paths = [
     'README.md',
     'credentials/LifeSpaceApi.credentials.ts',
+    'credentials/LifeSpaceWebhookApi.credentials.ts',
     'nodes/LifeSpace/LifeSpace.node.ts',
     'nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.ts',
   ];
@@ -18,15 +19,17 @@ test('public LifeSpace adapter surfaces use neutral examples', async () => {
   assert.equal(content.includes('api.example.com'), true);
 });
 
-test('package exposes one LifeSpace credential type', async () => {
+test('package separates outbound API auth from endpoint-scoped webhook signing', async () => {
   const packageJson = JSON.parse(await text('package.json'));
   assert.deepEqual(packageJson.n8n.credentials, [
     'dist/credentials/LifeSpaceApi.credentials.js',
+    'dist/credentials/LifeSpaceWebhookApi.credentials.js',
   ]);
 
-  await assert.rejects(
-    access(new URL('../credentials/LifeSpaceWebhookApi.credentials.ts', import.meta.url)),
-  );
+  const trigger = await text('nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.ts');
+  assert.match(trigger, /name: 'lifeSpaceApi'/u);
+  assert.match(trigger, /name: 'lifeSpaceWebhookApi'/u);
+  assert.match(trigger, /getCredentials\('lifeSpaceWebhookApi'\)/u);
 });
 
 test('Runtime Discovery UX is cross-Space and Record-facing', async () => {
@@ -46,7 +49,7 @@ test('Trigger supports multiple Record Types and current endpoint test event', a
   assert.doesNotMatch(trigger, /subscription\.test/u);
 });
 
-test('Action, Trigger and credential use the same LifeSpace mark', async () => {
+test('Action, Trigger and credentials use the same LifeSpace mark family', async () => {
   const [credentialLight, actionLight, triggerLight, credentialDark, actionDark, triggerDark] = await Promise.all([
     text('credentials/lifespace.svg'),
     text('nodes/LifeSpace/lifespace.svg'),
