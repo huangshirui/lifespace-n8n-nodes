@@ -119,7 +119,7 @@ sort_ui = """      {
                 options: [],
                 default: '',
                 required: true,
-                description: 'Choose from the sortable fields advertised by LifeSpace Runtime Discovery',
+                description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
               },
               {
                 displayName: 'Direction',
