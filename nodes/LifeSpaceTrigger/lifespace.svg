@@ -1,15 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="LifeSpace">
   <defs>
-    <linearGradient id="lifespace-bg" x1="7" y1="57" x2="57" y2="7" gradientUnits="userSpaceOnUse">
+    <linearGradient id="lifespace-mark" x1="10" y1="54" x2="54" y2="10" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#075FEA"/>
       <stop offset="0.55" stop-color="#087CF5"/>
       <stop offset="1" stop-color="#25A8FF"/>
     </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="14" fill="url(#lifespace-bg)"/>
-  <g fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M29 14.5 19 20.5a5 5 0 0 0-2.5 4.3v12.4a5 5 0 0 0 2.5 4.3l10 6"/>
-    <path d="M35 18.5 45 24.5a5 5 0 0 1 2.5 4.3v12.4a5 5 0 0 1-2.5 4.3l-10 6"/>
+  <g fill="none" stroke="url(#lifespace-mark)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M28.5 10.5 17.5 17a7 7 0 0 0-3.5 6.1v17.8a7 7 0 0 0 3.5 6.1l11 6.5"/>
+    <path d="M35.5 10.5 46.5 17a7 7 0 0 1 3.5 6.1v17.8a7 7 0 0 1-3.5 6.1l-11 6.5"/>
   </g>
-  <circle cx="30.5" cy="32" r="4.6" fill="#FFFFFF"/>
+  <circle cx="32" cy="32" r="5" fill="url(#lifespace-mark)"/>
 </svg>
