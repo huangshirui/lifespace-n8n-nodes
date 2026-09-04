@@ -542,7 +542,6 @@ export class LifeSpace implements INodeType {
           value: null,
         },
         noDataExpression: true,
-        required: false,
         typeOptions: {
           loadOptionsDependsOn: ['spaceId', 'modelRoute', 'actionKey'],
           resourceMapper: {
