@@ -8,21 +8,24 @@ import type {
 export class LifeSpaceApi implements ICredentialType {
   name = 'lifeSpaceApi';
 
-  displayName = 'LifeSpace Connection API';
+  displayName = 'LifeSpace API';
 
-  icon = 'file:lifespace.svg' as const;
+  icon = {
+    light: 'file:lifespace.svg',
+    dark: 'file:lifespace.dark.svg',
+  } as const;
 
-  documentationUrl = 'https://github.com/huangshirui/LifeSpace';
+  documentationUrl = 'https://github.com/huangshirui/LifeSpace/blob/main/docs/service-authentication.md';
 
   properties: INodeProperties[] = [
     {
-      displayName: 'Connection Base URL',
+      displayName: 'API Base URL',
       name: 'baseUrl',
       type: 'string',
       default: '',
-      placeholder: 'https://core.aisr.online/api/v1/spaces/spc_...',
+      placeholder: 'https://api.example.com/api/v1',
       required: true,
-      description: 'Copy the Connection Base URL from the LifeSpace Web integration configuration',
+      description: 'LifeSpace Core API root. Do not include a Space or Record Type path.',
     },
     {
       displayName: 'Service API Token',
@@ -30,8 +33,18 @@ export class LifeSpaceApi implements ICredentialType {
       type: 'string',
       typeOptions: { password: true },
       default: '',
+      placeholder: 'lsp_pat_...',
       required: true,
-      description: 'Copy the LifeSpace Service API Token (lsp_pat_*) issued for this connection',
+      description: 'Opaque LifeSpace Service API Token used by n8n for API calls and Runtime Discovery',
+    },
+    {
+      displayName: 'Webhook Signing Secret',
+      name: 'webhookSigningSecret',
+      type: 'string',
+      typeOptions: { password: true },
+      default: '',
+      placeholder: '64-character hexadecimal secret',
+      description: 'Optional for normal LifeSpace nodes; required by LifeSpace Trigger to verify signed webhook deliveries',
     },
   ];
 
@@ -47,7 +60,7 @@ export class LifeSpaceApi implements ICredentialType {
   test: ICredentialTestRequest = {
     request: {
       baseURL: '={{$credentials.baseUrl.replace(/\\/$/, "")}}',
-      url: '/_discovery',
+      url: '/me/_discovery',
       method: 'GET',
     },
   };
