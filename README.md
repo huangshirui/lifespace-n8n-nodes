@@ -44,7 +44,7 @@ Restart n8n afterwards. In queue mode, install the package anywhere that may exe
 
 ## Quick start
 
-Create one **LifeSpace API** credential.
+Create a **LifeSpace API** credential for Runtime Discovery and LifeSpace API calls.
 
 It contains:
 
@@ -54,14 +54,15 @@ It contains:
   https://api.example.com/api/v1
   ```
 
-- **Service API Token**, an opaque LifeSpace `lsp_pat_*` token;
-- **Webhook Signing Secret**, optional for normal LifeSpace nodes and required only when the credential is also used by **LifeSpace Trigger**.
+- **Service API Token**, an opaque LifeSpace `lsp_pat_*` token.
 
 The API Base URL is the LifeSpace Core API root. Do not include a Space ID or Record Type path.
 
 The token is shown only when it is created or rotated. Store it in n8n immediately; do not put it in workflow fields, URLs, source files, or workflow exports.
 
-Runtime Discovery determines which Spaces, Record Types, fields, queries and Actions the current credential can use. Execution authorization is still enforced by LifeSpace from the current principal, credential scope, Application × Model Access and current Space/Data Grant authority.
+A **LifeSpace Trigger** additionally uses a **LifeSpace Webhook Signing** credential containing the endpoint-scoped HMAC signing secret. This is deliberately separate from the API credential: the Service API Token authenticates outbound n8n → LifeSpace calls, while the signing secret verifies inbound LifeSpace → n8n deliveries and rotates with its Webhook Endpoint. The Trigger still reuses the LifeSpace API credential for Space/Record Type discovery, so API context is not duplicated.
+
+Runtime Discovery determines which Spaces, Record Types, fields, queries and Actions the current API credential can use. Execution authorization is still enforced by LifeSpace from the current principal, credential scope, Application × Model Access and current Space/Data Grant authority.
 
 ## LifeSpace contract compatibility
 
@@ -111,7 +112,7 @@ For example, lifecycle state such as Task status can remain server/Action-owned 
 
 LifeSpace uses optimistic concurrency.
 
-By default the node reads the current Record version immediately before Update/Delete and sends that version with the mutation. This keeps the ordinary n8n UI free from mandatory internal `version` entry while preserving LifeSpace stale-write protection for the actual mutation race.
+By default the node reads the current Record version immediately before Update/Delete and sends that version with the mutation. This keeps the ordinary n8n UI free from mandatory internal `version` entry while preserving stale-write protection for the actual mutation race.
 
 If a workflow intentionally needs to bind a known version, add **Concurrency Options → Version**.
 
@@ -165,23 +166,25 @@ One Webhook Endpoint can therefore carry events for multiple Record Types throug
 ### Trigger setup
 
 1. Add a **LifeSpace Trigger** node.
-2. Attach the same **LifeSpace API** credential type used by normal LifeSpace nodes and set its **Webhook Signing Secret**.
-3. Choose the **Space** from Runtime Discovery.
-4. Choose one or more **Record Types**.
-5. Choose the required **Event Types**.
-6. Activate the workflow and copy the production webhook URL.
-7. In the application/LifeSpace integration management surface, configure one **Webhook Endpoint** using that URL.
-8. Store the endpoint's one-time signing secret in the n8n credential.
-9. Attach one LifeSpace **Event Subscription** per selected Record Type to the same endpoint, with matching event-type filters.
-10. Use the LifeSpace Webhook Endpoint test operation to verify delivery.
+2. Attach a **LifeSpace API** credential. The Trigger uses it only for Runtime Discovery and normal LifeSpace API context.
+3. Attach a **LifeSpace Webhook Signing** credential containing the signing secret for this Webhook Endpoint.
+4. Choose the **Space** from Runtime Discovery.
+5. Choose one or more **Record Types**.
+6. Choose the required **Event Types**.
+7. Activate the workflow and copy the production webhook URL.
+8. In the application/LifeSpace integration management surface, configure one **Webhook Endpoint** using that URL.
+9. Store the endpoint's one-time signing secret in the Webhook Signing credential.
+10. Attach one LifeSpace **Event Subscription** per selected Record Type to the same endpoint, with matching event-type filters.
+11. Use the LifeSpace Webhook Endpoint test operation to verify delivery.
 
 The Trigger verifies `X-LifeSpace-Timestamp` and `X-LifeSpace-Signature` with the LifeSpace HMAC-SHA256 contract before emitting workflow data. `endpoint.test` payloads are always accepted after signature verification.
 
-Webhook Endpoint / Event Subscription creation is intentionally not performed by the n8n service credential today because LifeSpace treats that configuration as a Space-management operation. The adapter does not bypass that authority boundary.
+Webhook Endpoint / Event Subscription creation is intentionally not performed by the n8n Service API Token today because LifeSpace treats that configuration as a Space-management operation. The adapter does not bypass that authority boundary.
 
 ## What the package provides
 
-- one **LifeSpace API** credential type for API authentication plus optional webhook verification secret;
+- **LifeSpace API** credential for API authentication and Runtime Discovery;
+- **LifeSpace Webhook Signing** credential for endpoint-scoped inbound HMAC verification;
 - **LifeSpace** node with discovery-driven Record operations plus advanced API Request;
 - **LifeSpace Trigger** with signed multi-Record-Type Domain Event filtering;
 - dynamic Space, Record Type, field, query, Action and Action Input UI based on Runtime Discovery.
