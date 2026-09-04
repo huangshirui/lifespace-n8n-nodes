@@ -308,6 +308,65 @@ test('Return All follows LifeSpace nextCursor automatically', async () => {
   });
 });
 
+test('LifeSpace 0.22 field titles and sortable envelope metadata drive generated labels', async () => {
+  const node = new LifeSpace();
+  const discovery = discoveryFixture();
+  const task = discovery.data.spaces[0].models[0];
+  task.fields.find((field) => field.key === 'name').title = 'Task Name';
+  task.fields.find((field) => field.key === 'dueDate').title = 'Due Date';
+  task.query.sortable = ['dueDate', 'name'];
+  task.query.sort = {
+    parameter: 'sort',
+    syntax: 'field:direction',
+    repeatable: true,
+    ordered: true,
+    maxCriteria: 8,
+    default: ['createdAt:desc'],
+    envelopeFields: ['createdAt', 'updatedAt'],
+  };
+
+  const fields = await node.methods.resourceMapping.getRecordFields.call(
+    loadOptionsContext(discovery, { spaceId: 'spc_test', modelRoute: 'tasks', operation: 'create' }),
+  );
+  assert.equal(fields.fields.find((field) => field.id === 'name').displayName, 'Task Name');
+
+  const sorts = await node.methods.loadOptions.getSortableFields.call(
+    loadOptionsContext(discovery, { spaceId: 'spc_test', modelRoute: 'tasks' }),
+  );
+  assert.deepEqual(sorts.map((item) => [item.name, item.value]), [
+    ['Created At', 'createdAt'],
+    ['Updated At', 'updatedAt'],
+    ['Due Date', 'dueDate'],
+    ['Task Name', 'name'],
+  ]);
+});
+
+test('List sends ordered LifeSpace 0.22 multi-sort as repeated query parameters', async () => {
+  const node = new LifeSpace();
+  const context = executeContext(
+    {
+      resource: 'modelRecord',
+      operation: 'list',
+      spaceId: 'spc_test',
+      modelRoute: 'tasks',
+      search: '',
+      returnAll: false,
+      limit: 25,
+      'sorts.sort': [
+        { field: 'dueDate', direction: 'asc' },
+        { field: 'name', direction: 'desc' },
+      ],
+      options: {},
+      'filters.filter': [],
+    },
+    () => ({ data: { items: [], nextCursor: null } }),
+  );
+
+  await node.execute.call(context);
+  assert.deepEqual(context.calls[0].options.qs.sort, ['dueDate:asc', 'name:desc']);
+  assert.equal(context.calls[0].options.arrayFormat, 'repeat');
+});
+
 test('Update fetches current version by default and sends it with the mutation', async () => {
   const node = new LifeSpace();
   const context = executeContext(

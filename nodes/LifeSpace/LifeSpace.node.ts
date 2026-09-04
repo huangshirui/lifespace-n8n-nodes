@@ -30,6 +30,11 @@ type QueryFilter = {
   value?: string;
 };
 
+type QuerySort = {
+  field?: string;
+  direction?: 'asc' | 'desc';
+};
+
 type QueryPage = {
   items: IDataObject[];
   nextCursor: string | null;
@@ -62,14 +67,34 @@ function queryParameters(
   const qs: IDataObject = {};
   const search = String(context.getNodeParameter('search', itemIndex, '')).trim();
   const options = context.getNodeParameter('options', itemIndex, {}) as IDataObject;
-  const sortField = String(options.sortField ?? '').trim();
-  const sortDirection = String(options.sortDirection ?? 'desc').trim();
+  const configuredSorts = context.getNodeParameter('sorts.sort', itemIndex, []) as QuerySort[];
+  const legacySortField = String(options.sortField ?? '').trim();
+  const legacySortDirection = String(options.sortDirection ?? 'desc').trim();
   const configuredCursor = String(options.cursor ?? '').trim();
   const cursor = cursorOverride ?? configuredCursor;
   const filters = context.getNodeParameter('filters.filter', itemIndex, []) as QueryFilter[];
 
   if (search) qs.q = search;
-  if (sortField) qs.sort = `${sortField}:${sortDirection}`;
+
+  const orderedSorts: string[] = [];
+  const usedSortFields = new Set<string>();
+  for (const sort of configuredSorts) {
+    const field = String(sort.field ?? '').trim();
+    if (!field) continue;
+    const direction = String(sort.direction ?? 'asc').trim();
+    if (direction !== 'asc' && direction !== 'desc') {
+      throw new NodeOperationError(context.getNode(), `Sort direction for ${field} must be asc or desc`, { itemIndex });
+    }
+    if (usedSortFields.has(field)) {
+      throw new NodeOperationError(context.getNode(), `Sort field ${field} may be supplied only once`, { itemIndex });
+    }
+    usedSortFields.add(field);
+    orderedSorts.push(`${field}:${direction}`);
+  }
+
+  if (orderedSorts.length === 1) qs.sort = orderedSorts[0];
+  if (orderedSorts.length > 1) qs.sort = orderedSorts;
+  if (orderedSorts.length === 0 && legacySortField) qs.sort = `${legacySortField}:${legacySortDirection}`;
   qs.limit = limit;
   if (cursor) qs.cursor = cursor;
 
@@ -135,7 +160,7 @@ function resourceMapperType(field: DiscoveryField): FieldType {
 function mapperField(field: DiscoveryField, required: boolean) {
   return {
     id: field.key,
-    displayName: humanizeKey(field.key),
+    displayName: field.title?.trim() || humanizeKey(field.key),
     required,
     defaultMatch: false,
     canBeUsedToMatch: false,
@@ -462,6 +487,44 @@ export class LifeSpace implements INodeType {
         description: 'Max number of results to return',
       },
       {
+        displayName: 'Sorts',
+        name: 'sorts',
+        type: 'fixedCollection',
+        default: {},
+        placeholder: 'Add Sort',
+        typeOptions: { multipleValues: true },
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+        options: [
+          {
+            displayName: 'Sort',
+            name: 'sort',
+            values: [
+              {
+                displayName: 'Field Name or ID',
+                name: 'field',
+                type: 'options',
+                typeOptions: { loadOptionsMethod: 'getSortableFields' },
+                options: [],
+                default: '',
+                required: true,
+                description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+              },
+              {
+                displayName: 'Direction',
+                name: 'direction',
+                type: 'options',
+                options: [
+                  { name: 'Ascending', value: 'asc' },
+                  { name: 'Descending', value: 'desc' },
+                ],
+                default: 'asc',
+              },
+            ],
+          },
+        ],
+        description: 'Add sort criteria in priority order. If omitted, LifeSpace applies the server-declared default order.',
+      },
+      {
         displayName: 'Options',
         name: 'options',
         type: 'collection',
@@ -469,25 +532,6 @@ export class LifeSpace implements INodeType {
         default: {},
         displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
         options: [
-          {
-            displayName: 'Sort Field Name or ID',
-            name: 'sortField',
-            type: 'options',
-            typeOptions: { loadOptionsMethod: 'getSortableFields' },
-            options: [],
-            default: '',
-            description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
-          },
-          {
-            displayName: 'Sort Direction',
-            name: 'sortDirection',
-            type: 'options',
-            options: [
-              { name: 'Ascending', value: 'asc' },
-              { name: 'Descending', value: 'desc' },
-            ],
-            default: 'desc',
-          },
           {
             displayName: 'Cursor',
             name: 'cursor',
@@ -668,7 +712,7 @@ export class LifeSpace implements INodeType {
           const field = model.fields.find((entry) => entry.key === fieldKey);
           const rangeSupported = field && ['date', 'datetime', 'integer', 'number'].includes(field.type);
           return {
-            name: humanizeKey(fieldKey),
+            name: field?.title?.trim() || humanizeKey(fieldKey),
             value: fieldKey,
             description: rangeSupported ? `${field?.type ?? 'field'} · equality and range filters` : `${field?.type ?? 'field'} · equality filter`,
           };
@@ -682,9 +726,14 @@ export class LifeSpace implements INodeType {
         const model = discoveryModel(discovery, spaceId, modelRoute);
         if (!model) return [];
         return [
-          { name: 'Created At', value: 'createdAt' },
-          { name: 'Updated At', value: 'updatedAt' },
-          ...model.query.sortable.map((fieldKey) => ({ name: humanizeKey(fieldKey), value: fieldKey })),
+          ...model.query.sort.envelopeFields.map((fieldKey) => ({
+            name: humanizeKey(fieldKey),
+            value: fieldKey,
+          })),
+          ...model.query.sortable.map((fieldKey) => {
+            const field = model.fields.find((entry) => entry.key === fieldKey);
+            return { name: field?.title?.trim() || humanizeKey(fieldKey), value: fieldKey };
+          }),
         ];
       },
     },
@@ -749,15 +798,18 @@ export class LifeSpace implements INodeType {
             const returnAll = this.getNodeParameter('returnAll', itemIndex, false) as boolean;
             if (!returnAll) {
               const limit = this.getNodeParameter('limit', itemIndex, 50) as number;
+              const qs = queryParameters(this, itemIndex, limit);
+              const requestOptions: IHttpRequestOptions = {
+                method: 'GET',
+                url: `${baseUrl}${collectionPath}`,
+                qs,
+                json: true,
+              };
+              if (Array.isArray(qs.sort)) requestOptions.arrayFormat = 'repeat';
               response = await this.helpers.httpRequestWithAuthentication.call(
                 this,
                 'lifeSpaceApi',
-                {
-                  method: 'GET',
-                  url: `${baseUrl}${collectionPath}`,
-                  qs: queryParameters(this, itemIndex, limit),
-                  json: true,
-                },
+                requestOptions,
               );
             } else {
               const allItems: IDataObject[] = [];
@@ -765,15 +817,18 @@ export class LifeSpace implements INodeType {
               let cursor: string | undefined;
 
               do {
+                const qs = queryParameters(this, itemIndex, 200, cursor);
+                const requestOptions: IHttpRequestOptions = {
+                  method: 'GET',
+                  url: `${baseUrl}${collectionPath}`,
+                  qs,
+                  json: true,
+                };
+                if (Array.isArray(qs.sort)) requestOptions.arrayFormat = 'repeat';
                 const pageResponse = await this.helpers.httpRequestWithAuthentication.call(
                   this,
                   'lifeSpaceApi',
-                  {
-                    method: 'GET',
-                    url: `${baseUrl}${collectionPath}`,
-                    qs: queryParameters(this, itemIndex, 200, cursor),
-                    json: true,
-                  },
+                  requestOptions,
                 );
                 const page = queryPage(this, itemIndex, pageResponse);
                 allItems.push(...page.items);

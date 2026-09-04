@@ -66,14 +66,15 @@ Runtime Discovery determines which Spaces, Record Types, fields, queries and Act
 
 ## LifeSpace contract compatibility
 
-This package follows the current LifeSpace Core Kernel `0.21.0` contract family.
+This package follows the current LifeSpace Core Kernel `0.22.0` contract family.
 
 The UX depends on these Kernel capabilities:
 
 - `0.18.0`: cross-Space current-principal Runtime Discovery at `GET /api/v1/me/_discovery`;
 - `0.19.0`: authoritative server defaults exposed in Runtime Discovery;
 - `0.20.0`: Action semantic input separated from optimistic-concurrency metadata;
-- `0.21.0`: current Kernel baseline consumed during this convergence pass.
+- `0.21.0`: invitation-token transport hardening retained by the current baseline;
+- `0.22.0`: authoritative field `title` metadata plus ordered repeatable Generic Query sort metadata.
 
 Ordinary Record CRUD/Action routes remain model-contract surfaces derived from published Model Definitions; the n8n adapter does not maintain a second copy of those schemas.
 
@@ -125,12 +126,11 @@ The normal UI supports:
 - **Return All** to follow `nextCursor` automatically;
 - **Limit** when Return All is disabled.
 
-Advanced **Options** contain:
+Use **Sorts → Add Sort** to add zero or more sort criteria in priority order. Sortable model fields use authoritative `title` metadata from Runtime Discovery, while envelope fields such as `createdAt` / `updatedAt` are offered only when Discovery advertises them. Multiple criteria are sent as ordered repeated `sort=field:direction` query parameters.
 
-- optional **Sort Field** and **Sort Direction**;
-- manual **Cursor** as an escape hatch.
+Advanced **Options** contain manual **Cursor** as an escape hatch.
 
-If Sort is omitted, the adapter omits the query parameter and LifeSpace supplies its deterministic default order. Ordered multi-field sort is not emulated in the adapter; it will be exposed only when the LifeSpace Generic Query contract supports it.
+If Sorts is omitted, the adapter omits the query parameter and LifeSpace supplies its deterministic default order. Existing workflow exports that still contain the former single `options.sortField` / `options.sortDirection` parameters remain executable for compatibility.
 
 ### Execute Action
 
@@ -237,8 +237,6 @@ The package intentionally has no runtime `dependencies`. It must not read enviro
 
 The adapter deliberately does not invent missing platform semantics. Remaining improvements include:
 
-- ordered multi-field sort after LifeSpace Generic Query supports it;
-- canonical field labels after LifeSpace exposes them in Model semantics / Runtime Discovery;
 - richer relation selectors when LifeSpace exposes an authorized generic lookup surface appropriate for generated clients.
 
 ## License

@@ -37,9 +37,14 @@ test('Runtime Discovery UX is cross-Space and Record-facing', async () => {
   const node = await text('nodes/LifeSpace/LifeSpace.node.ts');
   assert.match(discovery, /\/me\/_discovery/u);
   assert.match(discovery, /defaults: Record<string, unknown>/u);
+  assert.match(discovery, /title\?: string/u);
+  assert.match(discovery, /repeatable: true/u);
+  assert.match(discovery, /envelopeFields: string\[\]/u);
   assert.match(node, /name: 'Record'/u);
   assert.match(node, /displayName: 'Record Type Name or ID'/u);
   assert.match(node, /displayName: 'Return All'/u);
+  assert.match(node, /name: 'sorts'/u);
+  assert.match(node, /field\.title\?\.trim\(\) \|\| humanizeKey/u);
 });
 
 test('Trigger supports multiple Record Types and current endpoint test event', async () => {
