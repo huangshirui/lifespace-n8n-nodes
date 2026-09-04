@@ -1,0 +1,38 @@
+name: Temporary LifeSpace 0.22 adapter patch
+
+on:
+  push:
+    branches:
+      - fix/lifespace-0.21-ux-convergence
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[skip-lifespace-022-patch]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/lifespace-0.21-ux-convergence
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.22.0'
+      - name: Apply adapter patch
+        run: python .github/tmp_patch_lifespace_022.py
+      - name: Install dependencies
+        run: npm install
+      - name: Lint
+        run: npm run lint
+      - name: Test
+        run: npm test
+      - name: Commit validated changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add nodes/LifeSpace/LifeSpace.node.ts test/contract.test.mjs test/source-contract.test.mjs README.md
+          git commit -m "feat: consume LifeSpace 0.22 discovery semantics [skip-lifespace-022-patch]"
+          git push origin HEAD:fix/lifespace-0.21-ux-convergence
