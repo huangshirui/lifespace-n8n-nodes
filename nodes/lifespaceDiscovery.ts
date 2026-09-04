@@ -1,4 +1,5 @@
 import type {
+  IExecuteFunctions,
   IHttpRequestOptions,
   ILoadOptionsFunctions,
   JsonObject,
@@ -73,9 +74,10 @@ export function normalizeBaseUrl(value: unknown): string {
   return String(value ?? '').replace(/\/$/, '');
 }
 
-export async function loadRuntimeDiscovery(this: ILoadOptionsFunctions): Promise<DiscoveryResponse> {
-  const credentials = await this.getCredentials('lifeSpaceApi');
-  const baseUrl = normalizeBaseUrl(credentials.baseUrl);
+async function requestRuntimeDiscovery(
+  context: ILoadOptionsFunctions | IExecuteFunctions,
+  baseUrl: string,
+): Promise<DiscoveryResponse> {
   const options: IHttpRequestOptions = {
     method: 'GET',
     url: `${baseUrl}/me/_discovery`,
@@ -83,14 +85,26 @@ export async function loadRuntimeDiscovery(this: ILoadOptionsFunctions): Promise
   };
 
   try {
-    return await this.helpers.httpRequestWithAuthentication.call(
-      this,
+    return await context.helpers.httpRequestWithAuthentication.call(
+      context,
       'lifeSpaceApi',
       options,
     ) as DiscoveryResponse;
   } catch (error) {
-    throw new NodeApiError(this.getNode(), error as JsonObject);
+    throw new NodeApiError(context.getNode(), error as JsonObject);
   }
+}
+
+export async function loadRuntimeDiscovery(this: ILoadOptionsFunctions): Promise<DiscoveryResponse> {
+  const credentials = await this.getCredentials('lifeSpaceApi');
+  return requestRuntimeDiscovery(this, normalizeBaseUrl(credentials.baseUrl));
+}
+
+export async function loadExecutionRuntimeDiscovery(
+  context: IExecuteFunctions,
+  baseUrl: string,
+): Promise<DiscoveryResponse> {
+  return requestRuntimeDiscovery(context, baseUrl);
 }
 
 export function discoverySpace(discovery: DiscoveryResponse, spaceId: string): DiscoverySpace | undefined {
