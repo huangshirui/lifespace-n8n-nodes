@@ -432,8 +432,8 @@ test('LifeSpace Trigger accepts a correctly signed event for any selected Record
   };
   const rawBody = JSON.stringify(body);
   const timestamp = String(Math.floor(Date.now() / 1000));
-  const webhookSigningSecret = 'a'.repeat(64);
-  const signature = createHmac('sha256', webhookSigningSecret)
+  const signingSecret = 'a'.repeat(64);
+  const signature = createHmac('sha256', signingSecret)
     .update(`${timestamp}.${rawBody}`)
     .digest('hex');
   const { state, response } = responseRecorder();
@@ -445,7 +445,7 @@ test('LifeSpace Trigger accepts a correctly signed event for any selected Record
       'x-lifespace-signature': `v1=${signature}`,
     }),
     getResponseObject: () => response,
-    getCredentials: async () => ({ webhookSigningSecret }),
+    getCredentials: async (name) => name === 'lifeSpaceWebhookApi' ? { signingSecret } : { baseUrl: BASE_URL },
     getBodyData: () => body,
     getNodeParameter(name, defaultValue) {
       const parameters = {
@@ -469,8 +469,8 @@ test('LifeSpace Trigger always accepts a correctly signed endpoint.test payload'
   const body = { type: 'endpoint.test', spaceId: 'spc_other', modelKey: 'other' };
   const rawBody = JSON.stringify(body);
   const timestamp = String(Math.floor(Date.now() / 1000));
-  const webhookSigningSecret = 'a'.repeat(64);
-  const signature = createHmac('sha256', webhookSigningSecret)
+  const signingSecret = 'a'.repeat(64);
+  const signature = createHmac('sha256', signingSecret)
     .update(`${timestamp}.${rawBody}`)
     .digest('hex');
   const { response } = responseRecorder();
@@ -482,7 +482,7 @@ test('LifeSpace Trigger always accepts a correctly signed endpoint.test payload'
       'x-lifespace-signature': `v1=${signature}`,
     }),
     getResponseObject: () => response,
-    getCredentials: async () => ({ webhookSigningSecret }),
+    getCredentials: async (name) => name === 'lifeSpaceWebhookApi' ? { signingSecret } : { baseUrl: BASE_URL },
     getBodyData: () => body,
     getNodeParameter: () => [],
     helpers: {
@@ -506,7 +506,9 @@ test('LifeSpace Trigger denies a webhook with an invalid signature', async () =>
       'x-lifespace-signature': `v1=${'0'.repeat(64)}`,
     }),
     getResponseObject: () => response,
-    getCredentials: async () => ({ webhookSigningSecret: 'a'.repeat(64) }),
+    getCredentials: async (name) => name === 'lifeSpaceWebhookApi'
+      ? { signingSecret: 'a'.repeat(64) }
+      : { baseUrl: BASE_URL },
     getBodyData: () => ({ type: 'record.updated', spaceId: 'spc_test', modelKey: 'task' }),
     getNodeParameter: () => [],
     helpers: {
