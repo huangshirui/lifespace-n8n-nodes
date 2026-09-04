@@ -5,19 +5,23 @@ export class LifeSpaceWebhookApi implements ICredentialType {
 
   displayName = 'LifeSpace Webhook API';
 
-  icon = 'file:lifespace.svg' as const;
+  icon = {
+    light: 'file:lifespace.svg',
+    dark: 'file:lifespace.dark.svg',
+  } as const;
 
-  documentationUrl = 'https://github.com/huangshirui/lifespace-n8n-nodes#lifespace-trigger';
+  documentationUrl = 'https://github.com/huangshirui/LifeSpace/blob/main/docs/contracts.md';
 
   properties: INodeProperties[] = [
     {
-      displayName: 'Signing Secret',
+      displayName: 'Webhook Signing Secret',
       name: 'signingSecret',
       type: 'string',
       typeOptions: { password: true },
       default: '',
+      placeholder: '64-character hexadecimal secret',
       required: true,
-      description: 'One-time signing secret returned when the LifeSpace event subscription is created or rotated',
+      description: 'Endpoint-scoped signing secret returned by LifeSpace when a Webhook Endpoint is created or rotated',
     },
   ];
 }

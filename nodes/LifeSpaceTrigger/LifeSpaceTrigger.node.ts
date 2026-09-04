@@ -4,13 +4,19 @@ import type {
   ICredentialsDecrypted,
   IDataObject,
   IHookFunctions,
+  ILoadOptionsFunctions,
   INodeCredentialTestResult,
+  INodePropertyOptions,
   INodeType,
   INodeTypeDescription,
   IWebhookFunctions,
   IWebhookResponseData,
 } from 'n8n-workflow';
 import { NodeConnectionTypes } from 'n8n-workflow';
+import {
+  discoverySpace,
+  loadRuntimeDiscovery,
+} from '../lifespaceDiscovery';
 
 const MAX_TIMESTAMP_SKEW_SECONDS = 300;
 const SIGNING_SECRET_PATTERN = /^[a-f0-9]{64}$/;
@@ -32,13 +38,17 @@ export class LifeSpaceTrigger implements INodeType {
     group: ['trigger'],
     version: 1,
     subtitle: '={{$parameter["eventTypes"]}}',
-    description: 'Starts the workflow when LifeSpace domain events are delivered',
+    description: 'Starts the workflow when selected LifeSpace record events are delivered',
     defaults: {
       name: 'LifeSpace Trigger',
     },
     inputs: [],
     outputs: [NodeConnectionTypes.Main],
     credentials: [
+      {
+        name: 'lifeSpaceApi',
+        required: true,
+      },
       {
         name: 'lifeSpaceWebhookApi',
         required: true,
@@ -56,10 +66,35 @@ export class LifeSpaceTrigger implements INodeType {
     properties: [
       {
         displayName:
-          'Create the LifeSpace event subscription separately and use this node\'s production webhook URL as the destination. Store the one-time signing secret in the LifeSpace Webhook API credential attached to this node.',
+          'The LifeSpace API credential supplies Runtime Discovery context. The separate Webhook Signing credential stores the endpoint-scoped HMAC secret, which has a different lifecycle from the Service API Token. Configure one LifeSpace Webhook Endpoint with this node\'s production webhook URL, then attach one Event Subscription per selected Record Type.',
         name: 'setupNotice',
         type: 'notice',
         default: '',
+      },
+      {
+        displayName: 'Space Name or ID',
+        name: 'spaceId',
+        type: 'options',
+        typeOptions: {
+          loadOptionsMethod: 'getSpaces',
+        },
+        options: [],
+        default: '',
+        required: true,
+        description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+      },
+      {
+        displayName: 'Record Type Names or IDs',
+        name: 'recordTypeKeys',
+        type: 'multiOptions',
+        typeOptions: {
+          loadOptionsMethod: 'getTriggerRecordTypes',
+          loadOptionsDependsOn: ['spaceId'],
+        },
+        options: [],
+        default: [],
+        required: true,
+        description: 'Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
       },
       {
         displayName: 'Event Types',
@@ -80,26 +115,37 @@ export class LifeSpaceTrigger implements INodeType {
           },
         ],
         default: ['record.created', 'record.updated', 'record.deleted'],
-        description: 'Only emit selected event types. LifeSpace subscription.test events are always accepted for webhook testing.',
-      },
-      {
-        displayName: 'Expected Space ID',
-        name: 'expectedSpaceId',
-        type: 'string',
-        default: '',
-        description: 'Optional additional check. Leave empty to accept any Space allowed by the LifeSpace subscription.',
-      },
-      {
-        displayName: 'Expected Model Key',
-        name: 'expectedModelKey',
-        type: 'string',
-        default: '',
-        description: 'Optional additional check. Leave empty to accept any model allowed by the LifeSpace subscription.',
+        description: 'Only emit selected event types. LifeSpace endpoint.test events are always accepted for end-to-end webhook testing.',
       },
     ],
   };
 
   methods = {
+    loadOptions: {
+      async getSpaces(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const discovery = await loadRuntimeDiscovery.call(this);
+        return discovery.data.spaces.map((space) => ({
+          name: space.spaceId,
+          value: space.spaceId,
+          description: `${space.models.length} available Record Type${space.models.length === 1 ? '' : 's'}`,
+        }));
+      },
+      async getTriggerRecordTypes(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
+        if (!spaceId) return [];
+        const discovery = await loadRuntimeDiscovery.call(this);
+        const space = discoverySpace(discovery, spaceId);
+        if (!space) return [];
+
+        return space.models
+          .filter((model) => model.access.includes('read'))
+          .map((model) => ({
+            name: `${model.display.plural} (${model.key})`,
+            value: model.key,
+            description: model.description ?? undefined,
+          }));
+      },
+    },
     credentialTest: {
       async lifeSpaceWebhookCredentialTest(
         this: ICredentialTestFunctions,
@@ -109,12 +155,12 @@ export class LifeSpaceTrigger implements INodeType {
         if (!SIGNING_SECRET_PATTERN.test(signingSecret)) {
           return {
             status: 'Error',
-            message: 'Signing Secret must be the 64-character hexadecimal secret returned by LifeSpace',
+            message: 'Webhook Signing Secret must be the 64-character hexadecimal secret returned by LifeSpace',
           };
         }
         return {
           status: 'OK',
-          message: 'Signing Secret format is valid. Use the LifeSpace subscription test for end-to-end verification.',
+          message: 'Webhook Signing Secret format is valid. Use the LifeSpace Webhook Endpoint test for end-to-end verification.',
         };
       },
     },
@@ -128,10 +174,6 @@ export class LifeSpaceTrigger implements INodeType {
       },
       async create(this: IHookFunctions): Promise<boolean> {
         const webhookData = this.getWorkflowStaticData('node');
-        // LifeSpace subscription management currently requires an authenticated user
-        // with spaces:manage. The n8n service credential must not bypass that boundary.
-        // n8n still requires a complete webhook lifecycle, so this hook records only
-        // local activation state; the external subscription is created separately.
         webhookData.lifeSpaceManualSubscription = true;
         return true;
       },
@@ -177,18 +219,25 @@ export class LifeSpaceTrigger implements INodeType {
 
     const bodyData = this.getBodyData() as IDataObject;
     const eventType = String(bodyData.type ?? '');
-    const selectedEventTypes = this.getNodeParameter('eventTypes') as string[];
-    const expectedSpaceId = String(this.getNodeParameter('expectedSpaceId', '')).trim();
-    const expectedModelKey = String(this.getNodeParameter('expectedModelKey', '')).trim();
 
-    if (eventType !== 'subscription.test' && !selectedEventTypes.includes(eventType)) {
+    if (eventType === 'endpoint.test') {
+      return {
+        workflowData: [this.helpers.returnJsonArray(bodyData)],
+      };
+    }
+
+    const selectedEventTypes = this.getNodeParameter('eventTypes') as string[];
+    const selectedSpaceId = String(this.getNodeParameter('spaceId', '')).trim();
+    const selectedRecordTypeKeys = this.getNodeParameter('recordTypeKeys', []) as string[];
+
+    if (!selectedEventTypes.includes(eventType)) {
       response.status(204).end();
       return { noWebhookResponse: true };
     }
 
     if (
-      (expectedSpaceId && String(bodyData.spaceId ?? '') !== expectedSpaceId) ||
-      (expectedModelKey && String(bodyData.modelKey ?? '') !== expectedModelKey)
+      String(bodyData.spaceId ?? '') !== selectedSpaceId ||
+      !selectedRecordTypeKeys.includes(String(bodyData.modelKey ?? ''))
     ) {
       response.status(204).end();
       return { noWebhookResponse: true };

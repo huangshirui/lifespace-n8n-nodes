@@ -8,69 +8,36 @@ import type {
   INodePropertyOptions,
   INodeType,
   INodeTypeDescription,
-  JsonObject,
   ResourceMapperFields,
 } from 'n8n-workflow';
-import { NodeApiError, NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
+import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
+import {
+  discoveryModel,
+  discoverySpace,
+  humanizeKey,
+  loadExecutionRuntimeDiscovery,
+  loadRuntimeDiscovery,
+  normalizeBaseUrl,
+  type DiscoveryAccess,
+  type DiscoveryAction,
+  type DiscoveryField,
+  type DiscoveryModel,
+} from '../lifespaceDiscovery';
 
-type DiscoveryAccess = 'read' | 'write' | 'manage';
-type DiscoveryField = {
-  key: string;
-  type: 'string' | 'text' | 'integer' | 'number' | 'boolean' | 'date' | 'datetime' | 'timezone' | 'enum' | 'person' | 'person_list' | 'record' | 'record_list';
-  description?: string;
-  required?: boolean;
-  nullable?: boolean;
-  immutable?: boolean;
-  readOnly?: boolean;
-  minLength?: number;
-  maxLength?: number;
-  minimum?: number;
-  maximum?: number;
-  values?: string[];
-  targetModel?: string;
-};
-type DiscoveryActionConcurrency = {
-  strategy: string;
-  required: boolean;
-  transport: {
-    in: string;
-    name: string;
-  };
-};
-type DiscoveryAction = {
-  key: string;
-  access: DiscoveryAccess;
-  kind: 'workflow' | 'capability';
-  input: { fields: DiscoveryField[] };
-  concurrency?: DiscoveryActionConcurrency;
-};
-type DiscoveryQuery = {
-  searchable: string[];
-  filterable: string[];
-  sortable: string[];
-};
-type DiscoveryModel = {
-  key: string;
-  route: string;
-  version: number;
-  schemaHash: string;
-  display: { singular: string; plural: string };
-  description: string | null;
-  access: DiscoveryAccess[];
-  fields: DiscoveryField[];
-  query: DiscoveryQuery;
-  actions: DiscoveryAction[];
-};
-type DiscoveryResponse = {
-  data: {
-    spaceId: string;
-    models: DiscoveryModel[];
-  };
-};
 type QueryFilter = {
   field?: string;
   operator?: 'exact' | 'from' | 'to';
   value?: string;
+};
+
+type QuerySort = {
+  field?: string;
+  direction?: 'asc' | 'desc';
+};
+
+type QueryPage = {
+  items: IDataObject[];
+  nextCursor: string | null;
 };
 
 function parseJsonObject(
@@ -91,17 +58,43 @@ function mappedValue(context: IExecuteFunctions, itemIndex: number, parameterNam
   return value && typeof value === 'object' && !Array.isArray(value) ? value as IDataObject : {};
 }
 
-function queryParameters(context: IExecuteFunctions, itemIndex: number): IDataObject {
+function queryParameters(
+  context: IExecuteFunctions,
+  itemIndex: number,
+  limit: number,
+  cursorOverride?: string,
+): IDataObject {
   const qs: IDataObject = {};
   const search = String(context.getNodeParameter('search', itemIndex, '')).trim();
-  const sortField = String(context.getNodeParameter('sortField', itemIndex, 'createdAt')).trim();
-  const sortDirection = String(context.getNodeParameter('sortDirection', itemIndex, 'desc')).trim();
-  const cursor = String(context.getNodeParameter('cursor', itemIndex, '')).trim();
-  const limit = context.getNodeParameter('limit', itemIndex, 50) as number;
+  const options = context.getNodeParameter('options', itemIndex, {}) as IDataObject;
+  const configuredSorts = context.getNodeParameter('sorts.sort', itemIndex, []) as QuerySort[];
+  const legacySortField = String(options.sortField ?? '').trim();
+  const legacySortDirection = String(options.sortDirection ?? 'desc').trim();
+  const configuredCursor = String(options.cursor ?? '').trim();
+  const cursor = cursorOverride ?? configuredCursor;
   const filters = context.getNodeParameter('filters.filter', itemIndex, []) as QueryFilter[];
 
   if (search) qs.q = search;
-  if (sortField) qs.sort = `${sortField}:${sortDirection}`;
+
+  const orderedSorts: string[] = [];
+  const usedSortFields = new Set<string>();
+  for (const sort of configuredSorts) {
+    const field = String(sort.field ?? '').trim();
+    if (!field) continue;
+    const direction = String(sort.direction ?? 'asc').trim();
+    if (direction !== 'asc' && direction !== 'desc') {
+      throw new NodeOperationError(context.getNode(), `Sort direction for ${field} must be asc or desc`, { itemIndex });
+    }
+    if (usedSortFields.has(field)) {
+      throw new NodeOperationError(context.getNode(), `Sort field ${field} may be supplied only once`, { itemIndex });
+    }
+    usedSortFields.add(field);
+    orderedSorts.push(`${field}:${direction}`);
+  }
+
+  if (orderedSorts.length === 1) qs.sort = orderedSorts[0];
+  if (orderedSorts.length > 1) qs.sort = orderedSorts;
+  if (orderedSorts.length === 0 && legacySortField) qs.sort = `${legacySortField}:${legacySortDirection}`;
   qs.limit = limit;
   if (cursor) qs.cursor = cursor;
 
@@ -122,47 +115,23 @@ function queryParameters(context: IExecuteFunctions, itemIndex: number): IDataOb
   return qs;
 }
 
-async function loadDiscovery(this: ILoadOptionsFunctions): Promise<DiscoveryResponse> {
-  const credentials = await this.getCredentials('lifeSpaceApi');
-  const baseUrl = String(credentials.baseUrl).replace(/\/$/, '');
-  const options: IHttpRequestOptions = {
-    method: 'GET',
-    url: `${baseUrl}/_discovery`,
-    json: true,
+function queryPage(context: IExecuteFunctions, itemIndex: number, response: unknown): QueryPage {
+  if (!response || typeof response !== 'object' || Array.isArray(response)) {
+    throw new NodeOperationError(context.getNode(), 'LifeSpace query returned an invalid response', { itemIndex });
+  }
+  const data = (response as { data?: unknown }).data;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new NodeOperationError(context.getNode(), 'LifeSpace query response is missing data', { itemIndex });
+  }
+  const items = (data as { items?: unknown }).items;
+  if (!Array.isArray(items)) {
+    throw new NodeOperationError(context.getNode(), 'LifeSpace query response is missing data.items', { itemIndex });
+  }
+  const nextCursorValue = (data as { nextCursor?: unknown }).nextCursor;
+  return {
+    items: items.filter((entry): entry is IDataObject => Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry)),
+    nextCursor: typeof nextCursorValue === 'string' && nextCursorValue ? nextCursorValue : null,
   };
-
-  try {
-    return await this.helpers.httpRequestWithAuthentication.call(
-      this,
-      'lifeSpaceApi',
-      options,
-    ) as DiscoveryResponse;
-  } catch (error) {
-    throw new NodeApiError(this.getNode(), error as JsonObject);
-  }
-}
-
-async function loadExecutionDiscovery(
-  context: IExecuteFunctions,
-  baseUrl: string,
-): Promise<DiscoveryResponse> {
-  try {
-    return await context.helpers.httpRequestWithAuthentication.call(
-      context,
-      'lifeSpaceApi',
-      {
-        method: 'GET',
-        url: `${baseUrl}/_discovery`,
-        json: true,
-      },
-    ) as DiscoveryResponse;
-  } catch (error) {
-    throw new NodeApiError(context.getNode(), error as JsonObject);
-  }
-}
-
-function selectedModel(discovery: DiscoveryResponse, route: string): DiscoveryModel | undefined {
-  return discovery.data.models.find((entry) => entry.route === route);
 }
 
 function requiredAccessForOperation(operation: string): DiscoveryAccess {
@@ -184,8 +153,6 @@ function resourceMapperType(field: DiscoveryField): FieldType {
     case 'enum':
       return 'options';
     default:
-      // Date-only values intentionally remain strings so n8n does not convert
-      // YYYY-MM-DD business dates into timezone-bearing instants.
       return 'string';
   }
 }
@@ -193,7 +160,7 @@ function resourceMapperType(field: DiscoveryField): FieldType {
 function mapperField(field: DiscoveryField, required: boolean) {
   return {
     id: field.key,
-    displayName: field.key,
+    displayName: field.title?.trim() || humanizeKey(field.key),
     required,
     defaultMatch: false,
     canBeUsedToMatch: false,
@@ -205,14 +172,63 @@ function mapperField(field: DiscoveryField, required: boolean) {
   };
 }
 
-async function actionBodyWithConcurrency(
+function hasServerDefault(model: DiscoveryModel, fieldKey: string): boolean {
+  return Object.prototype.hasOwnProperty.call(model.defaults ?? {}, fieldKey);
+}
+
+async function currentRecordVersion(
   context: IExecuteFunctions,
   itemIndex: number,
   baseUrl: string,
   recordPath: string,
-  action: DiscoveryAction,
+): Promise<number> {
+  const response = await context.helpers.httpRequestWithAuthentication.call(
+    context,
+    'lifeSpaceApi',
+    { method: 'GET', url: `${baseUrl}${recordPath}`, json: true },
+  ) as { data?: IDataObject };
+  const version = response.data?.version;
+  if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
+    throw new NodeOperationError(
+      context.getNode(),
+      'LifeSpace record did not expose a usable version for optimistic concurrency',
+      { itemIndex },
+    );
+  }
+  return version;
+}
+
+async function mutationVersion(
+  context: IExecuteFunctions,
+  itemIndex: number,
+  baseUrl: string,
+  recordPath: string,
+): Promise<number> {
+  const options = context.getNodeParameter('mutationOptions', itemIndex, {}) as IDataObject;
+  const configuredVersion = options.version;
+  if (typeof configuredVersion === 'number' && Number.isInteger(configuredVersion) && configuredVersion >= 1) {
+    return configuredVersion;
+  }
+  return currentRecordVersion(context, itemIndex, baseUrl, recordPath);
+}
+
+async function actionBodyWithConcurrency(
+  context: IExecuteFunctions,
+  itemIndex: number,
+  baseUrl: string,
+  spaceId: string,
+  modelRoute: string,
+  recordPath: string,
+  actionKey: string,
   semanticInput: IDataObject,
 ): Promise<IDataObject> {
+  const discovery = await loadExecutionRuntimeDiscovery(context, baseUrl);
+  const model = discoveryModel(discovery, spaceId, modelRoute);
+  const action = model?.actions.find((entry) => entry.key === actionKey);
+  if (!action) {
+    throw new NodeOperationError(context.getNode(), `LifeSpace Action ${actionKey} is not available`, { itemIndex });
+  }
+
   const concurrency = action.concurrency;
   if (!concurrency || !concurrency.required) return semanticInput;
 
@@ -224,23 +240,17 @@ async function actionBodyWithConcurrency(
     );
   }
 
-  const response = await context.helpers.httpRequestWithAuthentication.call(
-    context,
-    'lifeSpaceApi',
-    { method: 'GET', url: `${baseUrl}${recordPath}`, json: true },
-  ) as { data?: IDataObject };
-  const concurrencyValue = response.data?.[concurrency.transport.name];
-  if (typeof concurrencyValue !== 'number' || !Number.isInteger(concurrencyValue) || concurrencyValue < 1) {
-    throw new NodeOperationError(
-      context.getNode(),
-      `LifeSpace record did not expose usable ${concurrency.strategy} evidence`,
-      { itemIndex },
-    );
-  }
-
   return {
     ...semanticInput,
-    [concurrency.transport.name]: concurrencyValue,
+    [concurrency.transport.name]: await currentRecordVersion(context, itemIndex, baseUrl, recordPath),
+  };
+}
+
+function actionOption(action: DiscoveryAction): INodePropertyOptions {
+  return {
+    name: humanizeKey(action.key),
+    value: action.key,
+    description: `${action.kind} action · ${action.access} access`,
   };
 }
 
@@ -254,8 +264,8 @@ export class LifeSpace implements INodeType {
     },
     group: ['transform'],
     version: 1,
-    subtitle: '={{$parameter["resource"] + ": " + $parameter["operation"]}}',
-    description: 'Use LifeSpace in n8n workflows',
+    subtitle: '={{$parameter["resource"] === "modelRecord" ? $parameter["operation"] : "API Request"}}',
+    description: 'Use LifeSpace records and APIs in n8n workflows',
     defaults: {
       name: 'LifeSpace',
     },
@@ -276,7 +286,7 @@ export class LifeSpace implements INodeType {
         noDataExpression: true,
         options: [
           {
-            name: 'Model Record',
+            name: 'Record',
             value: 'modelRecord',
           },
           {
@@ -296,48 +306,62 @@ export class LifeSpace implements INodeType {
           {
             name: 'Create',
             value: 'create',
-            action: 'Create a model record',
+            action: 'Create a record',
             description: 'Create a record through the LifeSpace Generic Runtime',
           },
           {
             name: 'Delete',
             value: 'delete',
-            action: 'Delete a model record',
+            action: 'Delete a record',
             description: 'Delete a record using optimistic concurrency',
           },
           {
             name: 'Execute Action',
             value: 'executeAction',
-            action: 'Execute a model action',
-            description: 'Execute a published Capability or workflow action on a record',
+            action: 'Execute a record action',
+            description: 'Execute a published LifeSpace Record Action or Capability action',
           },
           {
             name: 'Get',
             value: 'get',
-            action: 'Get a model record',
-            description: 'Get one model record by ID',
+            action: 'Get a record',
+            description: 'Get one record by ID',
           },
           {
             name: 'List / Query',
             value: 'list',
-            action: 'List or query model records',
-            description: 'Query a model collection using its published query contract',
+            action: 'List or query records',
+            description: 'Query a record collection using its published query contract',
           },
           {
             name: 'Update',
             value: 'update',
-            action: 'Update a model record',
+            action: 'Update a record',
             description: 'Update a record using optimistic concurrency',
           },
         ],
         default: 'list',
       },
       {
-        displayName: 'Model Name or ID',
+        displayName: 'Space Name or ID',
+        name: 'spaceId',
+        type: 'options',
+        typeOptions: {
+          loadOptionsMethod: 'getSpaces',
+        },
+        options: [],
+        default: '',
+        required: true,
+        displayOptions: { show: { resource: ['modelRecord'] } },
+        description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+      },
+      {
+        displayName: 'Record Type Name or ID',
         name: 'modelRoute',
         type: 'options',
         typeOptions: {
-          loadOptionsMethod: 'getModels',
+          loadOptionsMethod: 'getRecordTypes',
+          loadOptionsDependsOn: ['spaceId', 'operation'],
         },
         options: [],
         default: '',
@@ -369,9 +393,9 @@ export class LifeSpace implements INodeType {
         noDataExpression: true,
         required: true,
         typeOptions: {
-          loadOptionsDependsOn: ['modelRoute', 'operation'],
+          loadOptionsDependsOn: ['spaceId', 'modelRoute', 'operation'],
           resourceMapper: {
-            resourceMapperMethod: 'getModelFields',
+            resourceMapperMethod: 'getRecordFields',
             mode: 'add',
             fieldWords: {
               singular: 'field',
@@ -379,7 +403,7 @@ export class LifeSpace implements INodeType {
             },
             addAllFields: true,
             supportAutoMap: false,
-            noFieldsError: 'The selected LifeSpace model has no writable fields for this operation.',
+            noFieldsError: 'The selected LifeSpace Record Type has no writable fields for this operation.',
           },
         },
         displayOptions: {
@@ -388,22 +412,7 @@ export class LifeSpace implements INodeType {
             operation: ['create', 'update'],
           },
         },
-        description: 'Writable fields loaded from the selected model through LifeSpace Runtime Discovery',
-      },
-      {
-        displayName: 'Version',
-        name: 'version',
-        type: 'number',
-        typeOptions: { minValue: 1, numberPrecision: 0 },
-        default: 1,
-        required: true,
-        displayOptions: {
-          show: {
-            resource: ['modelRecord'],
-            operation: ['update', 'delete'],
-          },
-        },
-        description: 'Current record version used for optimistic concurrency',
+        description: 'Writable fields loaded from LifeSpace Runtime Discovery. Server-defaulted required fields are not required from the n8n user.',
       },
       {
         displayName: 'Search',
@@ -411,7 +420,7 @@ export class LifeSpace implements INodeType {
         type: 'string',
         default: '',
         displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
-        description: 'Full-text search across the selected model fields declared searchable by LifeSpace. Leave empty to disable search.',
+        description: 'Full-text search across fields declared searchable by LifeSpace. Leave empty to disable search.',
       },
       {
         displayName: 'Filters',
@@ -446,7 +455,7 @@ export class LifeSpace implements INodeType {
                   { name: 'To / Less Than or Equal', value: 'to' },
                 ],
                 default: 'exact',
-                description: 'Range operators are supported by LifeSpace only for date, datetime, integer and number fields',
+                description: 'Range operators are supported only for date, datetime, integer and number fields',
               },
               {
                 displayName: 'Value',
@@ -454,33 +463,19 @@ export class LifeSpace implements INodeType {
                 type: 'string',
                 default: '',
                 required: true,
-                description: 'For enum equality filters, comma-separated values select any of the listed values. Relation fields use LifeSpace IDs.',
+                description: 'For enum equality filters, comma-separated values select any listed value. Relation fields use LifeSpace IDs.',
               },
             ],
           },
         ],
       },
       {
-        displayName: 'Sort Field Name or ID',
-        name: 'sortField',
-        type: 'options',
-        typeOptions: { loadOptionsMethod: 'getSortableFields' },
-        options: [],
-        default: 'createdAt',
-        required: true,
+        displayName: 'Return All',
+        name: 'returnAll',
+        type: 'boolean',
+        default: false,
         displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
-        description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
-      },
-      {
-        displayName: 'Sort Direction',
-        name: 'sortDirection',
-        type: 'options',
-        options: [
-          { name: 'Ascending', value: 'asc' },
-          { name: 'Descending', value: 'desc' },
-        ],
-        default: 'desc',
-        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+        description: 'Whether to return all results or only up to a given limit',
       },
       {
         displayName: 'Limit',
@@ -488,16 +483,81 @@ export class LifeSpace implements INodeType {
         type: 'number',
         typeOptions: { minValue: 1, maxValue: 200, numberPrecision: 0 },
         default: 50,
-        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'], returnAll: [false] } },
         description: 'Max number of results to return',
       },
       {
-        displayName: 'Cursor',
-        name: 'cursor',
-        type: 'string',
-        default: '',
+        displayName: 'Sorts',
+        name: 'sorts',
+        type: 'fixedCollection',
+        default: {},
+        placeholder: 'Add Sort',
+        typeOptions: { multipleValues: true },
         displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
-        description: 'Opaque nextCursor returned by a previous query. Leave empty for the first page.',
+        options: [
+          {
+            displayName: 'Sort',
+            name: 'sort',
+            values: [
+              {
+                displayName: 'Field Name or ID',
+                name: 'field',
+                type: 'options',
+                typeOptions: { loadOptionsMethod: 'getSortableFields' },
+                options: [],
+                default: '',
+                required: true,
+                description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+              },
+              {
+                displayName: 'Direction',
+                name: 'direction',
+                type: 'options',
+                options: [
+                  { name: 'Ascending', value: 'asc' },
+                  { name: 'Descending', value: 'desc' },
+                ],
+                default: 'asc',
+              },
+            ],
+          },
+        ],
+        description: 'Add sort criteria in priority order. If omitted, LifeSpace applies the server-declared default order.',
+      },
+      {
+        displayName: 'Options',
+        name: 'options',
+        type: 'collection',
+        placeholder: 'Add Option',
+        default: {},
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+        options: [
+          {
+            displayName: 'Cursor',
+            name: 'cursor',
+            type: 'string',
+            default: '',
+            description: 'Advanced manual pagination. Normally leave empty and use Return All or Limit.',
+          },
+        ],
+      },
+      {
+        displayName: 'Concurrency Options',
+        name: 'mutationOptions',
+        type: 'collection',
+        placeholder: 'Add Option',
+        default: {},
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['update', 'delete'] } },
+        options: [
+          {
+            displayName: 'Version',
+            name: 'version',
+            type: 'number',
+            typeOptions: { minValue: 1, numberPrecision: 0 },
+            default: 1,
+            description: 'Optional known record version. If omitted, the node reads the current record version immediately before the mutation.',
+          },
+        ],
       },
       {
         displayName: 'Action Name or ID',
@@ -527,7 +587,7 @@ export class LifeSpace implements INodeType {
         },
         noDataExpression: true,
         typeOptions: {
-          loadOptionsDependsOn: ['modelRoute', 'actionKey'],
+          loadOptionsDependsOn: ['spaceId', 'modelRoute', 'actionKey'],
           resourceMapper: {
             resourceMapperMethod: 'getActionInputFields',
             mode: 'add',
@@ -537,7 +597,7 @@ export class LifeSpace implements INodeType {
             },
             addAllFields: true,
             supportAutoMap: false,
-            noFieldsError: 'This LifeSpace action has no semantic input fields. Required concurrency metadata is handled separately.',
+            noFieldsError: 'This LifeSpace Action has no semantic input fields.',
           },
         },
         displayOptions: {
@@ -546,7 +606,7 @@ export class LifeSpace implements INodeType {
             operation: ['executeAction'],
           },
         },
-        description: 'Semantic Action input loaded from LifeSpace Runtime Discovery. Technical concurrency metadata is resolved separately.',
+        description: 'Only semantic/domain inputs from Runtime Discovery are shown. Concurrency metadata is resolved automatically.',
       },
       {
         displayName: 'Operation',
@@ -559,7 +619,7 @@ export class LifeSpace implements INodeType {
             name: 'API Request',
             value: 'apiRequest',
             action: 'Make an API request',
-            description: 'Call a path relative to the configured LifeSpace Connection Base URL',
+            description: 'Call a path relative to the configured LifeSpace API Base URL',
           },
         ],
         default: 'apiRequest',
@@ -585,7 +645,7 @@ export class LifeSpace implements INodeType {
         default: '/',
         required: true,
         displayOptions: { show: { resource: ['apiRequest'] } },
-        description: 'Path relative to the configured LifeSpace Connection Base URL',
+        description: 'Path relative to the configured LifeSpace API Base URL, for example /me/_discovery',
       },
       {
         displayName: 'JSON Body',
@@ -604,11 +664,23 @@ export class LifeSpace implements INodeType {
 
   methods = {
     loadOptions: {
-      async getModels(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-        const discovery = await loadDiscovery.call(this);
+      async getSpaces(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const discovery = await loadRuntimeDiscovery.call(this);
+        return discovery.data.spaces.map((space) => ({
+          name: space.spaceId,
+          value: space.spaceId,
+          description: `${space.models.length} available Record Type${space.models.length === 1 ? '' : 's'}`,
+        }));
+      },
+      async getRecordTypes(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
+        if (!spaceId) return [];
+        const discovery = await loadRuntimeDiscovery.call(this);
+        const space = discoverySpace(discovery, spaceId);
+        if (!space) return [];
         const operation = String(this.getNodeParameter('operation', 'list'));
 
-        return discovery.data.models
+        return space.models
           .filter((model) => operation === 'executeAction'
             ? model.actions.length > 0
             : model.access.includes(requiredAccessForOperation(operation)))
@@ -619,71 +691,80 @@ export class LifeSpace implements INodeType {
           }));
       },
       async getActions(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
         const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
-        if (!modelRoute) return [];
+        if (!spaceId || !modelRoute) return [];
 
-        const discovery = await loadDiscovery.call(this);
-        const model = selectedModel(discovery, modelRoute);
+        const discovery = await loadRuntimeDiscovery.call(this);
+        const model = discoveryModel(discovery, spaceId, modelRoute);
         if (!model) return [];
 
-        return model.actions.map((action) => ({
-          name: action.key,
-          value: action.key,
-          description: `${action.kind} action · ${action.access} access`,
-        }));
+        return model.actions.map(actionOption);
       },
       async getFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
         const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
-        if (!modelRoute) return [];
-        const discovery = await loadDiscovery.call(this);
-        const model = selectedModel(discovery, modelRoute);
+        if (!spaceId || !modelRoute) return [];
+        const discovery = await loadRuntimeDiscovery.call(this);
+        const model = discoveryModel(discovery, spaceId, modelRoute);
         if (!model) return [];
         return model.query.filterable.map((fieldKey) => {
           const field = model.fields.find((entry) => entry.key === fieldKey);
           const rangeSupported = field && ['date', 'datetime', 'integer', 'number'].includes(field.type);
           return {
-            name: fieldKey,
+            name: field?.title?.trim() || humanizeKey(fieldKey),
             value: fieldKey,
             description: rangeSupported ? `${field?.type ?? 'field'} · equality and range filters` : `${field?.type ?? 'field'} · equality filter`,
           };
         });
       },
       async getSortableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
         const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
-        if (!modelRoute) return [];
-        const discovery = await loadDiscovery.call(this);
-        const model = selectedModel(discovery, modelRoute);
+        if (!spaceId || !modelRoute) return [];
+        const discovery = await loadRuntimeDiscovery.call(this);
+        const model = discoveryModel(discovery, spaceId, modelRoute);
         if (!model) return [];
         return [
-          { name: 'Created At', value: 'createdAt' },
-          { name: 'Updated At', value: 'updatedAt' },
-          ...model.query.sortable.map((fieldKey) => ({ name: fieldKey, value: fieldKey })),
+          ...model.query.sort.envelopeFields.map((fieldKey) => ({
+            name: humanizeKey(fieldKey),
+            value: fieldKey,
+          })),
+          ...model.query.sortable.map((fieldKey) => {
+            const field = model.fields.find((entry) => entry.key === fieldKey);
+            return { name: field?.title?.trim() || humanizeKey(fieldKey), value: fieldKey };
+          }),
         ];
       },
     },
     resourceMapping: {
-      async getModelFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
+      async getRecordFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
+        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
         const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
-        if (!modelRoute) return { fields: [] };
+        if (!spaceId || !modelRoute) return { fields: [] };
 
         const operation = String(this.getNodeParameter('operation', 'create'));
-        const discovery = await loadDiscovery.call(this);
-        const model = selectedModel(discovery, modelRoute);
+        const discovery = await loadRuntimeDiscovery.call(this);
+        const model = discoveryModel(discovery, spaceId, modelRoute);
         if (!model) return { fields: [] };
 
         const fields = model.fields
           .filter((field) => !field.readOnly && (operation !== 'update' || !field.immutable))
-          .map((field) => mapperField(field, operation === 'create' && field.required === true));
+          .map((field) => mapperField(
+            field,
+            operation === 'create' && field.required === true && !hasServerDefault(model, field.key),
+          ));
 
         return { fields };
       },
       async getActionInputFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
+        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
         const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
         const actionKey = String(this.getNodeParameter('actionKey', '')).trim();
-        if (!modelRoute || !actionKey) return { fields: [] };
+        if (!spaceId || !modelRoute || !actionKey) return { fields: [] };
 
-        const discovery = await loadDiscovery.call(this);
-        const model = selectedModel(discovery, modelRoute);
+        const discovery = await loadRuntimeDiscovery.call(this);
+        const model = discoveryModel(discovery, spaceId, modelRoute);
         const action = model?.actions.find((entry) => entry.key === actionKey);
         if (!action) return { fields: [] };
 
@@ -698,37 +779,87 @@ export class LifeSpace implements INodeType {
     const items = this.getInputData();
     const output: INodeExecutionData[] = [];
     const credentials = await this.getCredentials('lifeSpaceApi');
-    const baseUrl = String(credentials.baseUrl).replace(/\/$/, '');
-    let executionDiscovery: DiscoveryResponse | undefined;
+    const baseUrl = normalizeBaseUrl(credentials.baseUrl);
 
     for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
       try {
         const resource = this.getNodeParameter('resource', itemIndex) as string;
-        let options: IHttpRequestOptions;
+        let response: unknown;
 
         if (resource === 'modelRecord') {
           const operation = this.getNodeParameter('operation', itemIndex) as string;
-          const modelRouteValue = String(this.getNodeParameter('modelRoute', itemIndex));
-          const modelRoute = encodeURIComponent(modelRouteValue);
-          const collectionPath = `/${modelRoute}`;
+          const rawSpaceId = String(this.getNodeParameter('spaceId', itemIndex));
+          const rawModelRoute = String(this.getNodeParameter('modelRoute', itemIndex));
+          const spaceId = encodeURIComponent(rawSpaceId);
+          const modelRoute = encodeURIComponent(rawModelRoute);
+          const collectionPath = `/spaces/${spaceId}/${modelRoute}`;
 
           if (operation === 'list') {
-            options = {
-              method: 'GET',
-              url: `${baseUrl}${collectionPath}`,
-              qs: queryParameters(this, itemIndex),
-              json: true,
-            };
+            const returnAll = this.getNodeParameter('returnAll', itemIndex, false) as boolean;
+            if (!returnAll) {
+              const limit = this.getNodeParameter('limit', itemIndex, 50) as number;
+              const qs = queryParameters(this, itemIndex, limit);
+              const requestOptions: IHttpRequestOptions = {
+                method: 'GET',
+                url: `${baseUrl}${collectionPath}`,
+                qs,
+                json: true,
+              };
+              if (Array.isArray(qs.sort)) requestOptions.arrayFormat = 'repeat';
+              response = await this.helpers.httpRequestWithAuthentication.call(
+                this,
+                'lifeSpaceApi',
+                requestOptions,
+              );
+            } else {
+              const allItems: IDataObject[] = [];
+              const seenCursors = new Set<string>();
+              let cursor: string | undefined;
+
+              do {
+                const qs = queryParameters(this, itemIndex, 200, cursor);
+                const requestOptions: IHttpRequestOptions = {
+                  method: 'GET',
+                  url: `${baseUrl}${collectionPath}`,
+                  qs,
+                  json: true,
+                };
+                if (Array.isArray(qs.sort)) requestOptions.arrayFormat = 'repeat';
+                const pageResponse = await this.helpers.httpRequestWithAuthentication.call(
+                  this,
+                  'lifeSpaceApi',
+                  requestOptions,
+                );
+                const page = queryPage(this, itemIndex, pageResponse);
+                allItems.push(...page.items);
+                if (!page.nextCursor) {
+                  cursor = undefined;
+                  break;
+                }
+                if (seenCursors.has(page.nextCursor)) {
+                  throw new NodeOperationError(this.getNode(), 'LifeSpace returned the same nextCursor more than once', { itemIndex });
+                }
+                seenCursors.add(page.nextCursor);
+                cursor = page.nextCursor;
+              } while (cursor);
+
+              response = { data: { items: allItems, nextCursor: null } };
+            }
           } else if (operation === 'create') {
-            options = {
-              method: 'POST',
-              url: `${baseUrl}${collectionPath}`,
-              body: mappedValue(this, itemIndex, 'fields'),
-              json: true,
-            };
+            response = await this.helpers.httpRequestWithAuthentication.call(
+              this,
+              'lifeSpaceApi',
+              {
+                method: 'POST',
+                url: `${baseUrl}${collectionPath}`,
+                body: mappedValue(this, itemIndex, 'fields'),
+                json: true,
+              },
+            );
           } else {
             const recordId = encodeURIComponent(String(this.getNodeParameter('recordId', itemIndex)));
             const recordPath = `${collectionPath}/${recordId}`;
+            let options: IHttpRequestOptions;
 
             if (operation === 'get') {
               options = { method: 'GET', url: `${baseUrl}${recordPath}`, json: true };
@@ -736,49 +867,49 @@ export class LifeSpace implements INodeType {
               options = {
                 method: 'PATCH',
                 url: `${baseUrl}${recordPath}`,
-                body: { ...mappedValue(this, itemIndex, 'fields'), version: this.getNodeParameter('version', itemIndex) },
+                body: {
+                  ...mappedValue(this, itemIndex, 'fields'),
+                  version: await mutationVersion(this, itemIndex, baseUrl, recordPath),
+                },
                 json: true,
               };
             } else if (operation === 'delete') {
               options = {
                 method: 'DELETE',
                 url: `${baseUrl}${recordPath}`,
-                body: { version: this.getNodeParameter('version', itemIndex) },
+                body: { version: await mutationVersion(this, itemIndex, baseUrl, recordPath) },
                 json: true,
               };
             } else {
-              const actionKeyValue = String(this.getNodeParameter('actionKey', itemIndex));
-              const actionKey = encodeURIComponent(actionKeyValue);
-              executionDiscovery ??= await loadExecutionDiscovery(this, baseUrl);
-              const model = selectedModel(executionDiscovery, modelRouteValue);
-              const action = model?.actions.find((entry) => entry.key === actionKeyValue);
-              if (!action) {
-                throw new NodeOperationError(
-                  this.getNode(),
-                  `LifeSpace Action ${actionKeyValue} is not available for model ${modelRouteValue}`,
-                  { itemIndex },
-                );
-              }
-              const body = await actionBodyWithConcurrency(
-                this,
-                itemIndex,
-                baseUrl,
-                recordPath,
-                action,
-                mappedValue(this, itemIndex, 'actionInput'),
-              );
+              const rawActionKey = String(this.getNodeParameter('actionKey', itemIndex));
+              const actionKey = encodeURIComponent(rawActionKey);
               options = {
                 method: 'POST',
                 url: `${baseUrl}${recordPath}/actions/${actionKey}`,
-                body,
+                body: await actionBodyWithConcurrency(
+                  this,
+                  itemIndex,
+                  baseUrl,
+                  rawSpaceId,
+                  rawModelRoute,
+                  recordPath,
+                  rawActionKey,
+                  mappedValue(this, itemIndex, 'actionInput'),
+                ),
                 json: true,
               };
             }
+
+            response = await this.helpers.httpRequestWithAuthentication.call(
+              this,
+              'lifeSpaceApi',
+              options,
+            );
           }
         } else {
           const method = this.getNodeParameter('method', itemIndex) as IHttpRequestOptions['method'];
           const path = String(this.getNodeParameter('path', itemIndex));
-          options = {
+          const options: IHttpRequestOptions = {
             method,
             url: `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`,
             json: true,
@@ -792,13 +923,13 @@ export class LifeSpace implements INodeType {
               'JSON Body',
             );
           }
-        }
 
-        const response = await this.helpers.httpRequestWithAuthentication.call(
-          this,
-          'lifeSpaceApi',
-          options,
-        );
+          response = await this.helpers.httpRequestWithAuthentication.call(
+            this,
+            'lifeSpaceApi',
+            options,
+          );
+        }
 
         const json = typeof response === 'object' && response !== null
           ? response as IDataObject
