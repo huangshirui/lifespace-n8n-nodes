@@ -37,15 +37,6 @@ export class LifeSpaceApi implements ICredentialType {
       required: true,
       description: 'Opaque LifeSpace Service API Token used by n8n for API calls and Runtime Discovery',
     },
-    {
-      displayName: 'Webhook Signing Secret',
-      name: 'webhookSigningSecret',
-      type: 'string',
-      typeOptions: { password: true },
-      default: '',
-      placeholder: '64-character hexadecimal secret',
-      description: 'Optional for normal LifeSpace nodes; required by LifeSpace Trigger to verify signed webhook deliveries',
-    },
   ];
 
   authenticate: IAuthenticateGeneric = {
