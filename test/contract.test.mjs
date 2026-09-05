@@ -580,3 +580,123 @@ test('LifeSpace Trigger denies a webhook with an invalid signature', async () =>
   assert.equal(state.body, 'Unauthorized');
   assert.equal(state.ended, true);
 });
+
+test('LifeSpace 0.23 Person relations render canonical target labels instead of raw IDs', async () => {
+  const node = new LifeSpace();
+  const discovery = discoveryFixture();
+  const task = discovery.data.spaces[0].models[0];
+  const lookup = {
+    supported: true,
+    method: 'GET',
+    pathTemplate: '/api/v1/spaces/{spaceId}/_relation-targets/{modelKey}/{fieldKey}',
+    searchParameter: 'q',
+    cursorParameter: 'cursor',
+    limitParameter: 'limit',
+  };
+  task.fields.push(
+    {
+      key: 'ownerPersonId',
+      type: 'person',
+      title: 'Owner',
+      relation: { targetModel: 'person', cardinality: 'one', lookup },
+    },
+    {
+      key: 'assigneePersonIds',
+      type: 'person_list',
+      title: 'Assignees',
+      relation: { targetModel: 'person', cardinality: 'many', lookup },
+    },
+    {
+      key: 'parentTaskId',
+      type: 'record',
+      title: 'Parent Task',
+      targetModel: 'task',
+      relation: {
+        targetModel: 'task',
+        cardinality: 'one',
+        lookup: { supported: false, reason: 'reference-label-unavailable' },
+      },
+    },
+  );
+
+  const calls = [];
+  const context = loadOptionsContext(discovery, {
+    spaceId: 'spc_test',
+    modelRoute: 'tasks',
+    operation: 'create',
+  });
+  context.helpers = {
+    async httpRequestWithAuthentication(_credentialName, options) {
+      calls.push(options);
+      if (options.url === `${BASE_URL}/me/_discovery`) return discovery;
+      assert.equal(options.method, 'GET');
+      assert.match(options.url, new RegExp(`${BASE_URL}/spaces/spc_test/_relation-targets/task/(ownerPersonId|assigneePersonIds)$`));
+      assert.deepEqual(options.qs, { limit: 100 });
+      return {
+        data: {
+          items: [
+            { id: 'per_alpha', label: 'Alpha Person' },
+            { id: 'per_beta', label: 'Beta Person' },
+          ],
+          nextCursor: null,
+        },
+      };
+    },
+  };
+
+  const fields = await node.methods.resourceMapping.getRecordFields.call(context);
+  const owner = fields.fields.find((field) => field.id === 'ownerPersonId');
+  const assignees = fields.fields.find((field) => field.id === 'assigneePersonIds');
+  const parent = fields.fields.find((field) => field.id === 'parentTaskId');
+
+  assert.equal(owner.type, 'options');
+  assert.deepEqual(owner.options, [
+    { name: 'Alpha Person', value: 'per_alpha' },
+    { name: 'Beta Person', value: 'per_beta' },
+  ]);
+  assert.equal(assignees.type, 'array');
+  assert.deepEqual(assignees.options, owner.options);
+  assert.equal(parent.type, 'string');
+  assert.equal(parent.options, undefined);
+  assert.equal(calls.filter((call) => call.url.includes('/_relation-targets/')).length, 2);
+});
+
+test('Person relation fields keep raw-ID fallback when Runtime Discovery has no lookup contract', async () => {
+  const node = new LifeSpace();
+  const discovery = discoveryFixture();
+  discovery.data.spaces[0].models[0].fields.push({
+    key: 'assigneePersonIds',
+    type: 'person_list',
+    title: 'Assignees',
+  });
+
+  const fields = await node.methods.resourceMapping.getRecordFields.call(
+    loadOptionsContext(discovery, { spaceId: 'spc_test', modelRoute: 'tasks', operation: 'create' }),
+  );
+  const assignees = fields.fields.find((field) => field.id === 'assigneePersonIds');
+  assert.equal(assignees.type, 'array');
+  assert.equal(assignees.options, undefined);
+});
+
+test('Create preserves selected LifeSpace Person IDs in the resource payload', async () => {
+  const node = new LifeSpace();
+  const context = executeContext(
+    {
+      resource: 'modelRecord',
+      operation: 'create',
+      spaceId: 'spc_test',
+      modelRoute: 'tasks',
+      'fields.value': {
+        name: 'Shared task',
+        assigneePersonIds: ['per_alpha', 'per_beta'],
+      },
+    },
+    () => ({ data: { id: 'tsk_created', version: 1 } }),
+  );
+
+  await node.execute.call(context);
+  assert.deepEqual(context.calls[0].options.body, {
+    name: 'Shared task',
+    assigneePersonIds: ['per_alpha', 'per_beta'],
+  });
+});

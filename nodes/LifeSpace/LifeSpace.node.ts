@@ -16,12 +16,14 @@ import {
   discoverySpace,
   humanizeKey,
   loadExecutionRuntimeDiscovery,
+  loadRelationTargets,
   loadRuntimeDiscovery,
   normalizeBaseUrl,
   type DiscoveryAccess,
   type DiscoveryAction,
   type DiscoveryField,
   type DiscoveryModel,
+  type RelationTarget,
 } from '../lifespaceDiscovery';
 
 type QueryFilter = {
@@ -157,7 +159,8 @@ function resourceMapperType(field: DiscoveryField): FieldType {
   }
 }
 
-function mapperField(field: DiscoveryField, required: boolean) {
+function mapperField(field: DiscoveryField, required: boolean, relationTargets?: RelationTarget[]) {
+  const relationOptions = relationTargets?.map((target) => ({ name: target.label, value: target.id }));
   return {
     id: field.key,
     displayName: field.title?.trim() || humanizeKey(field.key),
@@ -165,10 +168,12 @@ function mapperField(field: DiscoveryField, required: boolean) {
     defaultMatch: false,
     canBeUsedToMatch: false,
     display: true,
-    type: resourceMapperType(field),
-    options: field.type === 'enum'
-      ? (field.values ?? []).map((value) => ({ name: value, value }))
-      : undefined,
+    type: relationTargets !== undefined && field.type === 'person' ? 'options' : resourceMapperType(field),
+    options: relationTargets !== undefined
+      ? relationOptions
+      : field.type === 'enum'
+        ? (field.values ?? []).map((value) => ({ name: value, value }))
+        : undefined,
   };
 }
 
@@ -748,12 +753,16 @@ export class LifeSpace implements INodeType {
         const model = discoveryModel(discovery, spaceId, modelRoute);
         if (!model) return { fields: [] };
 
-        const fields = model.fields
-          .filter((field) => !field.readOnly && (operation !== 'update' || !field.immutable))
-          .map((field) => mapperField(
+        const writableFields = model.fields
+          .filter((field) => !field.readOnly && (operation !== 'update' || !field.immutable));
+        const fields = await Promise.all(writableFields.map(async (field) => {
+          const relationTargets = await loadRelationTargets(this, spaceId, model.key, field);
+          return mapperField(
             field,
             operation === 'create' && field.required === true && !hasServerDefault(model, field.key),
-          ));
+            relationTargets ?? undefined,
+          );
+        }));
 
         return { fields };
       },
