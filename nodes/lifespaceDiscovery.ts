@@ -4,9 +4,29 @@ import type {
   ILoadOptionsFunctions,
   JsonObject,
 } from 'n8n-workflow';
-import { NodeApiError } from 'n8n-workflow';
+import { NodeApiError, NodeOperationError } from 'n8n-workflow';
 
 export type DiscoveryAccess = 'read' | 'write' | 'manage';
+
+export type DiscoveryRelationLookup =
+  | {
+      supported: true;
+      method: 'GET';
+      pathTemplate: string;
+      searchParameter: string;
+      cursorParameter: string;
+      limitParameter: string;
+    }
+  | {
+      supported: false;
+      reason: string;
+    };
+
+export type DiscoveryRelation = {
+  targetModel: string;
+  cardinality: 'one' | 'many';
+  lookup: DiscoveryRelationLookup;
+};
 
 export type DiscoveryField = {
   key: string;
@@ -23,6 +43,7 @@ export type DiscoveryField = {
   maximum?: number;
   values?: string[];
   targetModel?: string;
+  relation?: DiscoveryRelation;
 };
 
 export type DiscoveryActionConcurrency = {
@@ -80,6 +101,21 @@ export type DiscoveryResponse = {
   };
 };
 
+export type RelationTarget = {
+  id: string;
+  label: string;
+};
+
+type RelationTargetResponse = {
+  data?: {
+    items?: unknown;
+    nextCursor?: unknown;
+  };
+};
+
+const RELATION_TARGET_PAGE_SIZE = 100;
+const RELATION_TARGET_OPTION_LIMIT = 1000;
+
 export function normalizeBaseUrl(value: unknown): string {
   return String(value ?? '').replace(/\/$/, '');
 }
@@ -103,6 +139,104 @@ async function requestRuntimeDiscovery(
   } catch (error) {
     throw new NodeApiError(context.getNode(), error as JsonObject);
   }
+}
+
+function relationTargetUrl(
+  baseUrl: string,
+  pathTemplate: string,
+  spaceId: string,
+  modelKey: string,
+  fieldKey: string,
+): string {
+  let path = pathTemplate
+    .replace('{spaceId}', encodeURIComponent(spaceId))
+    .replace('{modelKey}', encodeURIComponent(modelKey))
+    .replace('{fieldKey}', encodeURIComponent(fieldKey));
+
+  if (baseUrl.endsWith('/api/v1') && path.startsWith('/api/v1/')) {
+    path = path.slice('/api/v1'.length);
+  }
+  if (!path.startsWith('/')) path = `/${path}`;
+  return `${baseUrl}${path}`;
+}
+
+function parseRelationTargets(
+  context: ILoadOptionsFunctions,
+  response: RelationTargetResponse,
+): { items: RelationTarget[]; nextCursor: string | null } {
+  const rawItems = response.data?.items;
+  if (!Array.isArray(rawItems)) {
+    throw new NodeOperationError(context.getNode(), 'LifeSpace relation target lookup returned an invalid response');
+  }
+
+  const items: RelationTarget[] = [];
+  for (const item of rawItems) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new NodeOperationError(context.getNode(), 'LifeSpace relation target lookup returned an invalid target');
+    }
+    const id = (item as { id?: unknown }).id;
+    const label = (item as { label?: unknown }).label;
+    if (typeof id !== 'string' || !id || typeof label !== 'string' || !label) {
+      throw new NodeOperationError(context.getNode(), 'LifeSpace relation target lookup returned an invalid target');
+    }
+    items.push({ id, label });
+  }
+
+  const rawCursor = response.data?.nextCursor;
+  return {
+    items,
+    nextCursor: typeof rawCursor === 'string' && rawCursor ? rawCursor : null,
+  };
+}
+
+export async function loadRelationTargets(
+  context: ILoadOptionsFunctions,
+  spaceId: string,
+  modelKey: string,
+  field: DiscoveryField,
+): Promise<RelationTarget[] | null> {
+  const lookup = field.relation?.lookup;
+  if (!lookup?.supported) return null;
+  if (lookup.method !== 'GET' || !lookup.pathTemplate) {
+    throw new NodeOperationError(context.getNode(), `LifeSpace relation lookup for ${field.key} uses an unsupported contract`);
+  }
+
+  const credentials = await context.getCredentials('lifeSpaceApi');
+  const baseUrl = normalizeBaseUrl(credentials.baseUrl);
+  const url = relationTargetUrl(baseUrl, lookup.pathTemplate, spaceId, modelKey, field.key);
+  const targets: RelationTarget[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const qs: Record<string, string | number> = {
+      [lookup.limitParameter]: RELATION_TARGET_PAGE_SIZE,
+    };
+    if (cursor) qs[lookup.cursorParameter] = cursor;
+
+    let response: RelationTargetResponse;
+    try {
+      response = await context.helpers.httpRequestWithAuthentication.call(
+        context,
+        'lifeSpaceApi',
+        { method: 'GET', url, qs, json: true },
+      ) as RelationTargetResponse;
+    } catch (error) {
+      throw new NodeApiError(context.getNode(), error as JsonObject);
+    }
+
+    const page = parseRelationTargets(context, response);
+    targets.push(...page.items);
+    cursor = page.nextCursor;
+
+    if (cursor && targets.length >= RELATION_TARGET_OPTION_LIMIT) {
+      throw new NodeOperationError(
+        context.getNode(),
+        `LifeSpace relation field ${field.title?.trim() || humanizeKey(field.key)} has more than ${RELATION_TARGET_OPTION_LIMIT} selectable targets. Use an expression with stable IDs until searchable Resource Mapper relation options are supported by n8n.`,
+      );
+    }
+  } while (cursor);
+
+  return targets;
 }
 
 export async function loadRuntimeDiscovery(this: ILoadOptionsFunctions): Promise<DiscoveryResponse> {
