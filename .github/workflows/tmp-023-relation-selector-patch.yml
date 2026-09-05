@@ -20,7 +20,9 @@ jobs:
         with:
           node-version: '22.22.0'
       - name: Apply adapter patch
-        run: python3 scripts/tmp-023-relation-selector-patch.py
+        run: |
+          python3 scripts/tmp-023-relation-selector-patch.py
+          perl -0pi -e 's/\n+\z/\n/' test/contract.test.mjs
       - name: Install
         run: npm install
       - name: Lint
