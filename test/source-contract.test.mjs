@@ -47,6 +47,29 @@ test('Runtime Discovery UX is cross-Space and Record-facing', async () => {
   assert.match(node, /field\.title\?\.trim\(\) \|\| humanizeKey/u);
 });
 
+test('runtime node inputs remain expression-capable except structural controls', async () => {
+  const node = await text('nodes/LifeSpace/LifeSpace.node.ts');
+  const trigger = await text('nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.ts');
+
+  // n8n parameters accept expressions unless noDataExpression is set. Keep that
+  // escape hatch limited to controls that define the node schema itself plus the
+  // resourceMapper containers whose individual mapped values remain expression-capable.
+  assert.equal((node.match(/noDataExpression: true/gu) ?? []).length, 5);
+  assert.match(node, /name: 'resource',[\s\S]{0,80}noDataExpression: true/u);
+  assert.match(node, /name: 'operation',[\s\S]{0,80}noDataExpression: true/u);
+  assert.match(node, /name: 'fields',[\s\S]{0,140}noDataExpression: true/u);
+  assert.match(node, /name: 'actionInput',[\s\S]{0,140}noDataExpression: true/u);
+  assert.doesNotMatch(trigger, /noDataExpression: true/u);
+
+  // Discovery-backed selectors must retain the standard n8n "select or expression"
+  // path so workflows can pass IDs/keys from variables or previous item data.
+  assert.match(node, /name: 'spaceId'[\s\S]{0,360}specify an ID using an <a href=/u);
+  assert.match(node, /name: 'modelRoute'[\s\S]{0,420}specify an ID using an <a href=/u);
+  assert.match(node, /name: 'actionKey'[\s\S]{0,420}specify an ID using an <a href=/u);
+  assert.match(trigger, /name: 'spaceId'[\s\S]{0,360}specify an ID using an <a href=/u);
+  assert.match(trigger, /name: 'recordTypeKeys'[\s\S]{0,460}specify IDs using an <a href=/u);
+});
+
 test('Trigger supports multiple Record Types and current endpoint test event', async () => {
   const trigger = await text('nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.ts');
   assert.match(trigger, /name: 'recordTypeKeys'[\s\S]*type: 'multiOptions'/u);
