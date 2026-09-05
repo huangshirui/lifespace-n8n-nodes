@@ -79,6 +79,35 @@ The UX depends on these Kernel capabilities:
 
 Ordinary Record CRUD/Action routes remain model-contract surfaces derived from published Model Definitions; the n8n adapter does not maintain a second copy of those schemas.
 
+## Expressions and variables
+
+Runtime/business inputs follow normal n8n expression behavior. A value that can be entered or selected in the node can also be supplied through an n8n expression unless it is deliberately a structural control.
+
+Examples:
+
+```text
+{{$json.spaceId}}
+{{$json.recordId}}
+{{$vars.lifeSpaceRecordType}}
+```
+
+Discovery-backed selectors such as **Space**, **Record Type**, **Filter Field**, **Sort Field** and **Action** support the normal n8n pattern: choose a value from the list, or switch the parameter to an expression and provide the corresponding stable ID/key.
+
+The same applies to ordinary values such as Record ID, Search, Filter Value, Return All, Limit, Sort Direction, Cursor, explicit Version, API Method, API Path and JSON Body.
+
+Two boundaries are intentional:
+
+- **Resource** and **Operation** are structural node controls and do not accept expressions because they determine which parameter schema and execution path the node has.
+- **Fields** and **Action Input** use n8n's `resourceMapper`. The mapper container is structural, but each generated field value inside it remains expression-capable. This includes relation-backed field values: the UI can offer authorized Person options while an expression can still supply a stable Person ID or ID list.
+
+For **Filters** and **Sorts**, add the required rows in the node UI and use expressions inside each row's Field/Operator/Value or Field/Direction inputs. The number of rows is treated as workflow structure rather than per-item data. This avoids relying on whole-array expressions for n8n `fixedCollection` parameters.
+
+If **Record Type** itself varies per input item and those Record Types have different schemas, one discovery-generated mapper cannot safely represent every possible schema at design time. In that case, branch to separate LifeSpace nodes per schema or use **API Request** for a deliberately fully dynamic request.
+
+A Trigger has no upstream input item. Trigger parameters can still use stable n8n variables/expressions, but should not rely on previous-item `$json` data. Because LifeSpace Webhook Endpoint/Event Subscription configuration is external to the Trigger today, variable-driven Trigger filters should remain stable with that external subscription configuration.
+
+Credentials are intentionally static secure configuration and are not workflow-expression inputs.
+
 ## Use the LifeSpace node
 
 The normal n8n-facing resource is **Record**. LifeSpace still owns **Model** semantics internally; the adapter uses **Record Type** for the workflow-facing selection.
