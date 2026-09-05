@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-lifespace",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Official n8n community nodes for integrating workflows and AI agents with LifeSpace.",
   "license": "MIT",
   "homepage": "https://github.com/huangshirui/lifespace-n8n-nodes#readme",
