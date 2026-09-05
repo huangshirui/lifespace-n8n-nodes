@@ -74,8 +74,17 @@ test('runtime node inputs remain expression-capable except structural controls',
   assert.match(trigger, /name: 'recordTypeKeys'[\s\S]{0,460}specify IDs using an <a href=/u);
 });
 
-test('npm releases use GitHub OIDC Trusted Publishing without a long-lived write token', async () => {
+test('npm releases use a committed lockfile and GitHub OIDC Trusted Publishing', async () => {
   const workflow = await text('.github/workflows/publish.yml');
+  const ci = await text('.github/workflows/ci.yml');
+  const packageJson = JSON.parse(await text('package.json'));
+  const lockfile = JSON.parse(await text('package-lock.json'));
+
+  assert.equal(lockfile.lockfileVersion, 3);
+  assert.equal(lockfile.name, packageJson.name);
+  assert.equal(lockfile.version, packageJson.version);
+  assert.equal(lockfile.packages[''].name, packageJson.name);
+  assert.equal(lockfile.packages[''].version, packageJson.version);
 
   assert.match(workflow, /id-token: write/u);
   assert.match(workflow, /node-version: '22\.22\.0'/u);
@@ -83,9 +92,10 @@ test('npm releases use GitHub OIDC Trusted Publishing without a long-lived write
   assert.match(workflow, /npm install --global npm@11\.15\.0/u);
   assert.match(workflow, /ACTIONS_ID_TOKEN_REQUEST_URL/u);
   assert.match(workflow, /ACTIONS_ID_TOKEN_REQUEST_TOKEN/u);
-  assert.match(workflow, /run: npm install/u);
-  assert.doesNotMatch(workflow, /run: npm ci/u);
+  assert.match(workflow, /run: npm ci/u);
   assert.match(workflow, /run: npm run release/u);
+  assert.match(ci, /npm install --global npm@11\.15\.0/u);
+  assert.match(ci, /run: npm ci/u);
   assert.doesNotMatch(workflow, /NPM_TOKEN/u);
   assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN/u);
   assert.doesNotMatch(workflow, /_authToken/u);
