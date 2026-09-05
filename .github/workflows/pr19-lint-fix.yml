@@ -1,0 +1,34 @@
+name: PR19 lint autofix
+
+on:
+  push:
+    branches:
+      - fix/typed-runtime-ux
+    paths:
+      - .github/workflows/pr19-lint-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.22.0'
+          package-manager-cache: false
+      - run: npm install --global npm@11.15.0
+      - run: npm ci
+      - name: Apply n8n lint autofixes
+        run: npm run lint:fix
+      - name: Commit autofixes and remove bootstrap workflow
+        run: |
+          rm .github/workflows/pr19-lint-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "style: apply n8n parameter lint autofixes"
+          git push
