@@ -6,6 +6,7 @@ on:
       - fix/typed-runtime-ux
     paths:
       - .github/typed-runtime-ux-bootstrap.mjs
+      - .github/workflows/typed-runtime-ux-bootstrap.yml
 
 permissions:
   contents: write
@@ -19,7 +20,9 @@ jobs:
         with:
           node-version: '22.22.0'
       - name: Apply typed Runtime Discovery UX patch
-        run: node .github/typed-runtime-ux-bootstrap.mjs
+        run: |
+          sed -i "s/const marker = '## Compatibility';/const marker = '## LifeSpace contract compatibility';/" .github/typed-runtime-ux-bootstrap.mjs
+          node .github/typed-runtime-ux-bootstrap.mjs
       - name: Commit patch and remove bootstrap files
         run: |
           rm .github/typed-runtime-ux-bootstrap.mjs
