@@ -1,0 +1,36 @@
+name: Bootstrap package lock
+
+on:
+  pull_request:
+    paths:
+      - package.json
+      - .github/workflows/lockfile-bootstrap.yml
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22.22.0'
+
+      - name: Install pinned npm
+        run: npm install --global npm@11.15.0
+
+      - name: Generate package lock
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+
+      - name: Upload package lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-lock-bootstrap
+          path: package-lock.json
+          if-no-files-found: error
+          retention-days: 1
