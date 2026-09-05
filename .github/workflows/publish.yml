@@ -40,9 +40,7 @@ jobs:
           test -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" || { echo 'Missing GitHub Actions OIDC request token; ensure id-token: write is enabled.' >&2; exit 1; }
 
       - name: Install dependencies
-        # This repository does not currently commit package-lock.json, so npm ci
-        # cannot be used until a lockfile is introduced as a separate change.
-        run: npm install
+        run: npm ci
 
       - name: Release with provenance
         run: npm run release
