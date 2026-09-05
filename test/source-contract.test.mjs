@@ -65,7 +65,7 @@ test('runtime node inputs remain expression-capable except structural controls',
   assert.match(node, /name: 'actionInput',[\s\S]{0,140}noDataExpression: true/u);
   assert.doesNotMatch(trigger, /noDataExpression: true/u);
 
-  // Discovery-backed selectors keep the standard n8n "select or expression"
+  // Discovery-backed runtime selectors keep the standard n8n "select or expression"
   // path so workflows can pass stable IDs/keys from variables or previous item data.
   assert.match(node, /name: 'spaceId'[\s\S]{0,360}specify an ID using an <a href=/u);
   assert.match(node, /name: 'modelRoute'[\s\S]{0,420}specify an ID using an <a href=/u);
