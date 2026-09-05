@@ -74,6 +74,22 @@ test('runtime node inputs remain expression-capable except structural controls',
   assert.match(trigger, /name: 'recordTypeKeys'[\s\S]{0,460}specify IDs using an <a href=/u);
 });
 
+test('npm releases use GitHub OIDC Trusted Publishing without a long-lived write token', async () => {
+  const workflow = await text('.github/workflows/publish.yml');
+
+  assert.match(workflow, /id-token: write/u);
+  assert.match(workflow, /node-version: '22\.22\.0'/u);
+  assert.match(workflow, /package-manager-cache: false/u);
+  assert.match(workflow, /npm install --global npm@11\.15\.0/u);
+  assert.match(workflow, /ACTIONS_ID_TOKEN_REQUEST_URL/u);
+  assert.match(workflow, /ACTIONS_ID_TOKEN_REQUEST_TOKEN/u);
+  assert.match(workflow, /run: npm ci/u);
+  assert.match(workflow, /run: npm run release/u);
+  assert.doesNotMatch(workflow, /NPM_TOKEN/u);
+  assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN/u);
+  assert.doesNotMatch(workflow, /_authToken/u);
+});
+
 test('Trigger supports multiple Record Types and current endpoint test event', async () => {
   const trigger = await text('nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.ts');
   assert.match(trigger, /name: 'recordTypeKeys'[\s\S]*type: 'multiOptions'/u);
