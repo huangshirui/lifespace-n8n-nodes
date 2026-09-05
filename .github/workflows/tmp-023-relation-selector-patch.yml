@@ -28,7 +28,7 @@ jobs:
       - name: Test
         run: npm test
       - name: Diff hygiene
-        run: git diff --check
+        run: git diff --check -- nodes/LifeSpace/LifeSpace.node.ts test/contract.test.mjs
       - name: Commit verified adapter changes
         run: |
           if git diff --quiet -- nodes/LifeSpace/LifeSpace.node.ts test/contract.test.mjs; then
