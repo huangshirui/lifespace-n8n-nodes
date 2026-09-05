@@ -62,11 +62,11 @@ The token is shown only when it is created or rotated. Store it in n8n immediate
 
 A **LifeSpace Trigger** additionally uses a **LifeSpace Webhook Signing** credential containing the endpoint-scoped HMAC signing secret. This is deliberately separate from the API credential: the Service API Token authenticates outbound n8n → LifeSpace calls, while the signing secret verifies inbound LifeSpace → n8n deliveries and rotates with its Webhook Endpoint. The Trigger still reuses the LifeSpace API credential for Space/Record Type discovery, so API context is not duplicated.
 
-Runtime Discovery determines which Spaces, Record Types, fields, queries and Actions the current API credential can use. Execution authorization is still enforced by LifeSpace from the current principal, credential scope, Application × Model Access and current Space/Data Grant authority.
+Runtime Discovery determines which Spaces, Record Types, fields, queries, Actions and relation lookup capabilities the current API credential can use. Execution authorization is still enforced by LifeSpace from the current principal, credential scope, Application × Model Access and current Space/Data Grant authority.
 
 ## LifeSpace contract compatibility
 
-This package follows the current LifeSpace Core Kernel `0.22.0` contract family.
+This package follows the current LifeSpace Core Kernel `0.23.0` contract family.
 
 The UX depends on these Kernel capabilities:
 
@@ -74,7 +74,8 @@ The UX depends on these Kernel capabilities:
 - `0.19.0`: authoritative server defaults exposed in Runtime Discovery;
 - `0.20.0`: Action semantic input separated from optimistic-concurrency metadata;
 - `0.21.0`: invitation-token transport hardening retained by the current baseline;
-- `0.22.0`: authoritative field `title` metadata plus ordered repeatable Generic Query sort metadata.
+- `0.22.0`: authoritative field `title` metadata plus ordered repeatable Generic Query sort metadata;
+- `0.23.0`: authorized source-field-aware Relation Target Lookup for `person` / `person_list` fields.
 
 Ordinary Record CRUD/Action routes remain model-contract surfaces derived from published Model Definitions; the n8n adapter does not maintain a second copy of those schemas.
 
@@ -108,6 +109,12 @@ Writable fields are generated from Runtime Discovery.
 LifeSpace server defaults are authoritative. A field that is `required` but has a declared server default is not required from the n8n user. Read-only state owned by a LifeSpace Action/Capability is not exposed as a normal Create/Update field.
 
 For example, lifecycle state such as Task status can remain server/Action-owned instead of being manually entered by the workflow author.
+
+When Runtime Discovery advertises supported Relation Target Lookup, `person` and `person_list` fields are rendered from the current authorized `{ id, label }` target projection instead of asking the workflow author to type raw `per_*` identifiers. The displayed value is the LifeSpace Person label, while the workflow payload still stores and submits the stable Person ID.
+
+Older compatible Discovery responses without relation lookup metadata retain the raw-ID field behavior. `record` / `record_list` fields also retain raw-ID behavior until LifeSpace defines canonical generic Record reference-label semantics; the adapter does not guess labels from fields such as `name`, `title` or `summary`.
+
+The current n8n Resource Mapper loads bounded relation options when the field schema is requested. Very large target sets should use expressions with stable IDs until n8n exposes a searchable per-field Resource Mapper option surface that can consume LifeSpace's paginated/searchable lookup directly.
 
 ### Update and Delete
 
@@ -187,9 +194,9 @@ Webhook Endpoint / Event Subscription creation is intentionally not performed by
 - **LifeSpace Webhook Signing** credential for endpoint-scoped inbound HMAC verification;
 - **LifeSpace** node with discovery-driven Record operations plus advanced API Request;
 - **LifeSpace Trigger** with signed multi-Record-Type Domain Event filtering;
-- dynamic Space, Record Type, field, query, Action and Action Input UI based on Runtime Discovery.
+- dynamic Space, Record Type, field, relation target, query, Action and Action Input UI based on Runtime Discovery.
 
-LifeSpace remains authoritative for validation, authorization, defaults, Mutation Authority, Action semantics and event contracts. Runtime Discovery is a current capability/UX projection, not an execution-authorization proof.
+LifeSpace remains authoritative for validation, authorization, defaults, Mutation Authority, Action semantics, relation semantics and event contracts. Runtime Discovery and Relation Target Lookup are current capability/reference projections, not execution-authorization proofs.
 
 ## Architecture boundary
 
@@ -235,9 +242,7 @@ The package intentionally has no runtime `dependencies`. It must not read enviro
 
 ## Remaining upstream-dependent UX
 
-The adapter deliberately does not invent missing platform semantics. Remaining improvements include:
-
-- richer relation selectors when LifeSpace exposes an authorized generic lookup surface appropriate for generated clients.
+The adapter deliberately does not invent missing platform semantics. Remaining relation work is limited to `record` / `record_list` selectors after LifeSpace defines canonical generic Record reference-label semantics. Person relation selection already consumes the LifeSpace 0.23 Runtime/Discovery contract.
 
 ## License
 
