@@ -6,6 +6,14 @@ async function text(path) {
   return readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 }
 
+function sourceBlock(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  assert.notEqual(start, -1, `missing source marker: ${startMarker}`);
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  assert.notEqual(end, -1, `missing source marker: ${endMarker}`);
+  return source.slice(start, end);
+}
+
 test('public LifeSpace adapter surfaces use neutral examples', async () => {
   const paths = [
     'README.md',
@@ -40,6 +48,7 @@ test('Runtime Discovery UX is cross-Space and Record-facing', async () => {
   assert.match(discovery, /title\?: string/u);
   assert.match(discovery, /repeatable: true/u);
   assert.match(discovery, /envelopeFields: string\[\]/u);
+  assert.match(discovery, /spaceName\?: string \| null/u);
   assert.match(discovery, /relation\?: DiscoveryRelation/u);
   assert.match(discovery, /lookup: DiscoveryRelationLookup/u);
   assert.match(discovery, /export async function loadRelationTargets/u);
@@ -48,7 +57,20 @@ test('Runtime Discovery UX is cross-Space and Record-facing', async () => {
   assert.match(node, /displayName: 'Return All'/u);
   assert.match(node, /name: 'sorts'/u);
   assert.match(node, /field\.title\?\.trim\(\) \|\| humanizeKey/u);
+
+  const dateFields = sourceBlock(node, "name: 'dateFields'", "name: 'singleRelations'");
+  assert.match(dateFields, /loadOptionsMethod: 'getWritableDateFields'/u);
+  assert.match(dateFields, /name: 'value'[\s\S]*type: 'dateTime'/u);
+
+  const multiRelations = sourceBlock(node, "name: 'multiRelations'", "name: 'search'");
+  assert.match(multiRelations, /name: 'targets'[\s\S]*type: 'multiOptions'/u);
+  assert.match(multiRelations, /loadOptionsMethod: 'getRelationTargetsForCurrentField'/u);
+
+  assert.match(node, /getCurrentNodeParameter\('&field'\)/u);
   assert.match(node, /loadRelationTargets\(this, spaceId, model\.key, field\)/u);
+
+  const actionKey = sourceBlock(node, "name: 'actionKey'", "name: 'actionInput'");
+  assert.match(actionKey, /loadOptionsDependsOn: \['spaceId', 'modelRoute'\]/u);
 });
 
 test('runtime node inputs remain expression-capable except structural controls', async () => {
@@ -69,7 +91,8 @@ test('runtime node inputs remain expression-capable except structural controls',
   // path so workflows can pass stable IDs/keys from variables or previous item data.
   assert.match(node, /name: 'spaceId'[\s\S]{0,360}specify an ID using an <a href=/u);
   assert.match(node, /name: 'modelRoute'[\s\S]{0,420}specify an ID using an <a href=/u);
-  assert.match(node, /name: 'actionKey'[\s\S]{0,420}specify an ID using an <a href=/u);
+  const actionKey = sourceBlock(node, "name: 'actionKey'", "name: 'actionInput'");
+  assert.match(actionKey, /specify an ID using an <a href=/u);
   assert.match(trigger, /name: 'spaceId'[\s\S]{0,360}specify an ID using an <a href=/u);
   assert.match(trigger, /name: 'recordTypeKeys'[\s\S]{0,460}specify IDs using an <a href=/u);
 });

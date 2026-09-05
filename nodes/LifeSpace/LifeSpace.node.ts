@@ -60,6 +60,102 @@ function mappedValue(context: IExecuteFunctions, itemIndex: number, parameterNam
   return value && typeof value === 'object' && !Array.isArray(value) ? value as IDataObject : {};
 }
 
+function dateOnlyValue(context: IExecuteFunctions, itemIndex: number, value: unknown, fieldName: string): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  const raw = String(value).trim();
+  const match = /^(\d{4}-\d{2}-\d{2})(?:$|T)/u.exec(raw);
+  if (!match) {
+    throw new NodeOperationError(context.getNode(), `${fieldName} must be a calendar date`, { itemIndex });
+  }
+  return match[1];
+}
+
+function mergeMappedValues(
+  context: IExecuteFunctions,
+  itemIndex: number,
+  ...values: IDataObject[]
+): IDataObject {
+  const result: IDataObject = {};
+  for (const value of values) {
+    for (const [key, entry] of Object.entries(value)) {
+      if (Object.prototype.hasOwnProperty.call(result, key)) {
+        throw new NodeOperationError(context.getNode(), `Field ${key} is configured more than once`, { itemIndex });
+      }
+      result[key] = entry;
+    }
+  }
+  return result;
+}
+
+function dateMappedValues(context: IExecuteFunctions, itemIndex: number): IDataObject {
+  const rows = context.getNodeParameter('dateFields.date', itemIndex, []) as Array<{ field?: unknown; value?: unknown }>;
+  const result: IDataObject = {};
+  for (const row of rows) {
+    const field = String(row.field ?? '').trim();
+    if (!field) continue;
+    if (Object.prototype.hasOwnProperty.call(result, field)) {
+      throw new NodeOperationError(context.getNode(), `Date field ${field} is configured more than once`, { itemIndex });
+    }
+    result[field] = dateOnlyValue(context, itemIndex, row.value, field);
+  }
+  return result;
+}
+
+function relationMappedValues(context: IExecuteFunctions, itemIndex: number): IDataObject {
+  const singles = context.getNodeParameter('singleRelations.relation', itemIndex, []) as Array<{ field?: unknown; target?: unknown }>;
+  const multiples = context.getNodeParameter('multiRelations.relation', itemIndex, []) as Array<{ field?: unknown; targets?: unknown }>;
+  const result: IDataObject = {};
+  for (const row of singles) {
+    const field = String(row.field ?? '').trim();
+    if (!field) continue;
+    if (Object.prototype.hasOwnProperty.call(result, field)) {
+      throw new NodeOperationError(context.getNode(), `Relation field ${field} is configured more than once`, { itemIndex });
+    }
+    const target = row.target === null || row.target === undefined ? '' : String(row.target).trim();
+    result[field] = target || null;
+  }
+  for (const row of multiples) {
+    const field = String(row.field ?? '').trim();
+    if (!field) continue;
+    if (Object.prototype.hasOwnProperty.call(result, field)) {
+      throw new NodeOperationError(context.getNode(), `Relation field ${field} is configured more than once`, { itemIndex });
+    }
+    const raw = row.targets;
+    const targets = Array.isArray(raw)
+      ? raw.map((value) => String(value).trim()).filter(Boolean)
+      : raw === null || raw === undefined || raw === ''
+        ? []
+        : [String(raw).trim()].filter(Boolean);
+    result[field] = targets;
+  }
+  return result;
+}
+
+function mutationMappedValues(context: IExecuteFunctions, itemIndex: number): IDataObject {
+  return mergeMappedValues(
+    context,
+    itemIndex,
+    mappedValue(context, itemIndex, 'fields'),
+    dateMappedValues(context, itemIndex),
+    relationMappedValues(context, itemIndex),
+  );
+}
+
+function normalizeActionInput(
+  context: IExecuteFunctions,
+  itemIndex: number,
+  value: IDataObject,
+  fields: DiscoveryField[],
+): IDataObject {
+  const result = { ...value };
+  for (const field of fields) {
+    if (field.type === 'date' && Object.prototype.hasOwnProperty.call(result, field.key)) {
+      result[field.key] = dateOnlyValue(context, itemIndex, result[field.key], field.key);
+    }
+  }
+  return result;
+}
+
 function queryParameters(
   context: IExecuteFunctions,
   itemIndex: number,
@@ -101,17 +197,55 @@ function queryParameters(
   if (cursor) qs.cursor = cursor;
 
   const usedKeys = new Set<string>();
-  for (const filter of filters) {
-    const field = String(filter.field ?? '').trim();
-    const value = String(filter.value ?? '');
-    const operator = filter.operator ?? 'exact';
-    if (!field || value === '') continue;
+  const setFilter = (field: string, operator: 'exact' | 'from' | 'to', value: string | number | boolean) => {
     const key = operator === 'from' ? `${field}From` : operator === 'to' ? `${field}To` : field;
     if (usedKeys.has(key)) {
       throw new NodeOperationError(context.getNode(), `Query filter ${key} may be supplied only once`, { itemIndex });
     }
     usedKeys.add(key);
-    qs[key] = value;
+    qs[key] = typeof value === 'boolean' ? String(value) : value;
+  };
+
+  for (const filter of filters) {
+    const field = String(filter.field ?? '').trim();
+    const value = String(filter.value ?? '');
+    const operator = filter.operator ?? 'exact';
+    if (field && value !== '') setFilter(field, operator, value);
+  }
+
+  const typedFilters = context.getNodeParameter('filters', itemIndex, {}) as IDataObject;
+  for (const row of (typedFilters.text ?? []) as Array<{ field?: unknown; value?: unknown }>) {
+    const field = String(row.field ?? '').trim();
+    if (field && row.value !== undefined && row.value !== '') setFilter(field, 'exact', String(row.value));
+  }
+  for (const row of (typedFilters.enum ?? []) as Array<{ field?: unknown; values?: unknown }>) {
+    const field = String(row.field ?? '').trim();
+    const values = Array.isArray(row.values) ? row.values.map(String).filter(Boolean) : [];
+    if (field && values.length) setFilter(field, 'exact', values.join(','));
+  }
+  for (const row of (typedFilters.boolean ?? []) as Array<{ field?: unknown; value?: unknown }>) {
+    const field = String(row.field ?? '').trim();
+    if (field) setFilter(field, 'exact', Boolean(row.value));
+  }
+  for (const row of (typedFilters.number ?? []) as Array<{ field?: unknown; operator?: 'exact' | 'from' | 'to'; value?: unknown }>) {
+    const field = String(row.field ?? '').trim();
+    const value = Number(row.value);
+    if (field && Number.isFinite(value)) setFilter(field, row.operator ?? 'exact', value);
+  }
+  for (const row of (typedFilters.temporal ?? []) as Array<{ field?: unknown; operator?: 'exact' | 'from' | 'to'; value?: unknown }>) {
+    const encoded = String(row.field ?? '').trim();
+    if (!encoded || row.value === undefined || row.value === '') continue;
+    const separator = encoded.indexOf(':');
+    const fieldType = separator > 0 ? encoded.slice(0, separator) : 'datetime';
+    const field = separator > 0 ? encoded.slice(separator + 1) : encoded;
+    const raw = String(row.value);
+    const value = fieldType === 'date' ? dateOnlyValue(context, itemIndex, raw, field) : raw;
+    if (value !== null) setFilter(field, row.operator ?? 'exact', value);
+  }
+  for (const row of (typedFilters.person ?? []) as Array<{ field?: unknown; target?: unknown }>) {
+    const field = String(row.field ?? '').trim();
+    const target = String(row.target ?? '').trim();
+    if (field && target) setFilter(field, 'exact', target);
   }
 
   return qs;
@@ -147,6 +281,7 @@ function resourceMapperType(field: DiscoveryField): FieldType {
       return 'number';
     case 'boolean':
       return 'boolean';
+    case 'date':
     case 'datetime':
       return 'dateTime';
     case 'person_list':
@@ -234,8 +369,9 @@ async function actionBodyWithConcurrency(
     throw new NodeOperationError(context.getNode(), `LifeSpace Action ${actionKey} is not available`, { itemIndex });
   }
 
+  const normalizedInput = normalizeActionInput(context, itemIndex, semanticInput, action.input.fields);
   const concurrency = action.concurrency;
-  if (!concurrency || !concurrency.required) return semanticInput;
+  if (!concurrency || !concurrency.required) return normalizedInput;
 
   if (concurrency.strategy !== 'record-version' || concurrency.transport.in !== 'body' || !concurrency.transport.name) {
     throw new NodeOperationError(
@@ -246,7 +382,7 @@ async function actionBodyWithConcurrency(
   }
 
   return {
-    ...semanticInput,
+    ...normalizedInput,
     [concurrency.transport.name]: await currentRecordVersion(context, itemIndex, baseUrl, recordPath),
   };
 }
@@ -257,6 +393,49 @@ function actionOption(action: DiscoveryAction): INodePropertyOptions {
     value: action.key,
     description: `${action.kind} action · ${action.access} access`,
   };
+}
+
+async function optionModel(context: ILoadOptionsFunctions): Promise<{ model: DiscoveryModel; spaceId: string } | null> {
+  const spaceId = String(context.getNodeParameter('spaceId', '')).trim();
+  const modelRoute = String(context.getNodeParameter('modelRoute', '')).trim();
+  if (!spaceId || !modelRoute) return null;
+  const discovery = await loadRuntimeDiscovery.call(context);
+  const model = discoveryModel(discovery, spaceId, modelRoute);
+  return model ? { model, spaceId } : null;
+}
+
+async function filterFieldOptions(
+  context: ILoadOptionsFunctions,
+  types: DiscoveryField['type'][],
+  encodeType = false,
+): Promise<INodePropertyOptions[]> {
+  const selected = await optionModel(context);
+  if (!selected) return [];
+  const allowed = new Set(selected.model.query.filterable);
+  return selected.model.fields
+    .filter((field) => allowed.has(field.key) && types.includes(field.type))
+    .map((field) => ({
+      name: field.title?.trim() || humanizeKey(field.key),
+      value: encodeType ? `${field.type}:${field.key}` : field.key,
+      description: field.description,
+    }));
+}
+
+async function relationFieldOptions(
+  context: ILoadOptionsFunctions,
+  cardinality?: 'one' | 'many',
+  filterableOnly = false,
+): Promise<INodePropertyOptions[]> {
+  const selected = await optionModel(context);
+  if (!selected) return [];
+  const operation = String(context.getNodeParameter('operation', 'create'));
+  const filterable = new Set(selected.model.query.filterable);
+  return selected.model.fields
+    .filter((field) => field.relation?.lookup.supported === true)
+    .filter((field) => cardinality === undefined || field.relation?.cardinality === cardinality)
+    .filter((field) => !filterableOnly || filterable.has(field.key))
+    .filter((field) => filterableOnly || (!field.readOnly && (operation !== 'update' || !field.immutable)))
+    .map((field) => ({ name: field.title?.trim() || humanizeKey(field.key), value: field.key, description: field.description }));
 }
 
 export class LifeSpace implements INodeType {
@@ -420,6 +599,127 @@ export class LifeSpace implements INodeType {
         description: 'Writable fields loaded from LifeSpace Runtime Discovery. Server-defaulted required fields are not required from the n8n user.',
       },
       {
+        displayName: 'Date Fields',
+        name: 'dateFields',
+        type: 'fixedCollection',
+        default: {},
+        placeholder: 'Add Date Field',
+        typeOptions: { multipleValues: true },
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['create', 'update'] } },
+        options: [
+          {
+            displayName: 'Date',
+            name: 'date',
+            values: [
+              {
+                displayName: 'Field Name or ID',
+                name: 'field',
+                type: 'options',
+                typeOptions: {
+                  loadOptionsMethod: 'getWritableDateFields',
+                  loadOptionsDependsOn: ['spaceId', 'modelRoute', 'operation'],
+                },
+                options: [],
+                default: '',
+                required: true,
+                description: 'Choose a LifeSpace date field. The node submits calendar-date YYYY-MM-DD values. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+              },
+              {
+                displayName: 'Date',
+                name: 'value',
+                type: 'dateTime',
+                default: '',
+                description: 'Calendar date. Expressions remain supported; empty values clear nullable fields.',
+              },
+            ],
+          },
+        ],
+      },
+      {
+        displayName: 'Single Relations',
+        name: 'singleRelations',
+        type: 'fixedCollection',
+        default: {},
+        placeholder: 'Add Single Relation',
+        typeOptions: { multipleValues: true },
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['create', 'update'] } },
+        options: [
+          {
+            displayName: 'Relation',
+            name: 'relation',
+            values: [
+              {
+                displayName: 'Field Name or ID',
+                name: 'field',
+                type: 'options',
+																description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+                typeOptions: {
+                  loadOptionsMethod: 'getSingleRelationFields',
+                  loadOptionsDependsOn: ['spaceId', 'modelRoute', 'operation'],
+                },
+                options: [],
+                default: '',
+                required: true,
+              },
+              {
+                displayName: 'Target Name or ID',
+                name: 'target',
+                type: 'options',
+                typeOptions: {
+                  loadOptionsMethod: 'getRelationTargetsForCurrentField',
+                  loadOptionsDependsOn: ['spaceId', 'modelRoute', '&field'],
+                },
+                options: [],
+                default: '',
+                description: 'Choose an authorized relation target, or use an expression with a stable LifeSpace ID. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+              },
+            ],
+          },
+        ],
+      },
+      {
+        displayName: 'Multi Relations',
+        name: 'multiRelations',
+        type: 'fixedCollection',
+        default: {},
+        placeholder: 'Add Multi Relation',
+        typeOptions: { multipleValues: true },
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['create', 'update'] } },
+        options: [
+          {
+            displayName: 'Relation',
+            name: 'relation',
+            values: [
+              {
+                displayName: 'Field Name or ID',
+                name: 'field',
+                type: 'options',
+																description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+                typeOptions: {
+                  loadOptionsMethod: 'getMultiRelationFields',
+                  loadOptionsDependsOn: ['spaceId', 'modelRoute', 'operation'],
+                },
+                options: [],
+                default: '',
+                required: true,
+              },
+              {
+                displayName: 'Targets Names or IDs',
+                name: 'targets',
+                type: 'multiOptions',
+                typeOptions: {
+                  loadOptionsMethod: 'getRelationTargetsForCurrentField',
+                  loadOptionsDependsOn: ['spaceId', 'modelRoute', '&field'],
+                },
+                options: [],
+                default: [],
+                description: 'Choose authorized relation targets, or use an expression with stable LifeSpace IDs. Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+              },
+            ],
+          },
+        ],
+      },
+      {
         displayName: 'Search',
         name: 'search',
         type: 'string',
@@ -437,39 +737,70 @@ export class LifeSpace implements INodeType {
         displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
         options: [
           {
-            displayName: 'Filter',
+            displayName: 'Text Filter',
+            name: 'text',
+            values: [
+              { displayName: 'Field Name or ID', name: 'field', type: 'options',
+																																																																description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getTextFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
+              { displayName: 'Value', name: 'value', type: 'string', default: '', required: true },
+            ],
+          },
+          {
+            displayName: 'Enum Filter',
+            name: 'enum',
+            values: [
+              { displayName: 'Field Name or ID', name: 'field', type: 'options',
+																																																																description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getEnumFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
+              { displayName: 'Value Names or IDs', name: 'values', type: 'multiOptions',
+																																																							description: 'Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getEnumValuesForCurrentFilter', loadOptionsDependsOn: ['spaceId', 'modelRoute', '&field'] }, options: [], default: [], required: true },
+            ],
+          },
+          {
+            displayName: 'Boolean Filter',
+            name: 'boolean',
+            values: [
+              { displayName: 'Field Name or ID', name: 'field', type: 'options',
+																																																																description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getBooleanFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
+              { displayName: 'Value', name: 'value', type: 'boolean', default: true },
+            ],
+          },
+          {
+            displayName: 'Number Filter',
+            name: 'number',
+            values: [
+              { displayName: 'Field Name or ID', name: 'field', type: 'options',
+																																																																description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getNumericFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
+              { displayName: 'Operator', name: 'operator', type: 'options', options: [{ name: 'Equals', value: 'exact' }, { name: 'From / Greater Than or Equal', value: 'from' }, { name: 'To / Less Than or Equal', value: 'to' }], default: 'exact' },
+              { displayName: 'Value', name: 'value', type: 'number', default: 0, required: true },
+            ],
+          },
+          {
+            displayName: 'Date / Time Filter',
+            name: 'temporal',
+            values: [
+              { displayName: 'Field Name or ID', name: 'field', type: 'options',
+																																																																description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getTemporalFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
+              { displayName: 'Operator', name: 'operator', type: 'options', options: [{ name: 'Equals', value: 'exact' }, { name: 'From / Greater Than or Equal', value: 'from' }, { name: 'To / Less Than or Equal', value: 'to' }], default: 'exact' },
+              { displayName: 'Value', name: 'value', type: 'dateTime', default: '', required: true },
+            ],
+          },
+          {
+            displayName: 'Person Filter',
+            name: 'person',
+            values: [
+              { displayName: 'Field Name or ID', name: 'field', type: 'options',
+																																																																description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getPersonFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
+              { displayName: 'Person Name or ID', name: 'target', type: 'options',
+																																																																		description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getRelationTargetsForCurrentField', loadOptionsDependsOn: ['spaceId', 'modelRoute', '&field'] }, options: [], default: '', required: true },
+            ],
+          },
+          {
+            displayName: 'Raw / Legacy Filter',
             name: 'filter',
             values: [
-              {
-                displayName: 'Field Name or ID',
-                name: 'field',
-                type: 'options',
-                typeOptions: { loadOptionsMethod: 'getFilterableFields' },
-                options: [],
-                default: '',
-                required: true,
-                description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
-              },
-              {
-                displayName: 'Operator',
-                name: 'operator',
-                type: 'options',
-                options: [
-                  { name: 'Equals', value: 'exact' },
-                  { name: 'From / Greater Than or Equal', value: 'from' },
-                  { name: 'To / Less Than or Equal', value: 'to' },
-                ],
-                default: 'exact',
-                description: 'Range operators are supported only for date, datetime, integer and number fields',
-              },
-              {
-                displayName: 'Value',
-                name: 'value',
-                type: 'string',
-                default: '',
-                required: true,
-                description: 'For enum equality filters, comma-separated values select any listed value. Relation fields use LifeSpace IDs.',
-              },
+              { displayName: 'Field Name or ID', name: 'field', type: 'options', typeOptions: { loadOptionsMethod: 'getFilterableFields' }, options: [], default: '', required: true, description: 'Compatibility and unsupported relation escape hatch. Prefer the typed filter variants above. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.' },
+              { displayName: 'Operator', name: 'operator', type: 'options', options: [{ name: 'Equals', value: 'exact' }, { name: 'From / Greater Than or Equal', value: 'from' }, { name: 'To / Less Than or Equal', value: 'to' }], default: 'exact' },
+              { displayName: 'Value', name: 'value', type: 'string', default: '', required: true },
             ],
           },
         ],
@@ -570,6 +901,7 @@ export class LifeSpace implements INodeType {
         type: 'options',
         typeOptions: {
           loadOptionsMethod: 'getActions',
+          loadOptionsDependsOn: ['spaceId', 'modelRoute'],
         },
         options: [],
         default: '',
@@ -672,9 +1004,9 @@ export class LifeSpace implements INodeType {
       async getSpaces(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const discovery = await loadRuntimeDiscovery.call(this);
         return discovery.data.spaces.map((space) => ({
-          name: space.spaceId,
+          name: space.spaceName?.trim() || space.spaceId,
           value: space.spaceId,
-          description: `${space.models.length} available Record Type${space.models.length === 1 ? '' : 's'}`,
+          description: `${space.spaceId} · ${space.models.length} available Record Type${space.models.length === 1 ? '' : 's'}`,
         }));
       },
       async getRecordTypes(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
@@ -723,6 +1055,63 @@ export class LifeSpace implements INodeType {
           };
         });
       },
+      async getWritableDateFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
+        const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
+        if (!spaceId || !modelRoute) return [];
+        const operation = String(this.getNodeParameter('operation', 'create'));
+        const discovery = await loadRuntimeDiscovery.call(this);
+        const model = discoveryModel(discovery, spaceId, modelRoute);
+        if (!model) return [];
+        return model.fields
+          .filter((field) => field.type === 'date' && !field.readOnly && (operation !== 'update' || !field.immutable))
+          .map((field) => ({ name: field.title?.trim() || humanizeKey(field.key), value: field.key, description: field.description }));
+      },
+      async getSingleRelationFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        return relationFieldOptions(this, 'one', false);
+      },
+      async getMultiRelationFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        return relationFieldOptions(this, 'many', false);
+      },
+      async getRelationTargetsForCurrentField(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
+        const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
+        const fieldKey = String(this.getCurrentNodeParameter('&field') ?? '').trim();
+        if (!spaceId || !modelRoute || !fieldKey) return [];
+        const discovery = await loadRuntimeDiscovery.call(this);
+        const model = discoveryModel(discovery, spaceId, modelRoute);
+        const field = model?.fields.find((entry) => entry.key === fieldKey);
+        if (!model || !field) return [];
+        const targets = await loadRelationTargets(this, spaceId, model.key, field);
+        return (targets ?? []).map((target) => ({ name: target.label, value: target.id }));
+      },
+      async getTextFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        return filterFieldOptions(this, ['string', 'text', 'timezone']);
+      },
+      async getEnumFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        return filterFieldOptions(this, ['enum']);
+      },
+      async getBooleanFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        return filterFieldOptions(this, ['boolean']);
+      },
+      async getNumericFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        return filterFieldOptions(this, ['integer', 'number']);
+      },
+      async getTemporalFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        return filterFieldOptions(this, ['date', 'datetime'], true);
+      },
+      async getPersonFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        return relationFieldOptions(this, undefined, true);
+      },
+      async getEnumValuesForCurrentFilter(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
+        const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
+        const fieldKey = String(this.getCurrentNodeParameter('&field') ?? '').trim();
+        if (!spaceId || !modelRoute || !fieldKey) return [];
+        const discovery = await loadRuntimeDiscovery.call(this);
+        const field = discoveryModel(discovery, spaceId, modelRoute)?.fields.find((entry) => entry.key === fieldKey);
+        return field?.type === 'enum' ? (field.values ?? []).map((value) => ({ name: value, value })) : [];
+      },
       async getSortableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
         const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
@@ -754,15 +1143,13 @@ export class LifeSpace implements INodeType {
         if (!model) return { fields: [] };
 
         const writableFields = model.fields
-          .filter((field) => !field.readOnly && (operation !== 'update' || !field.immutable));
-        const fields = await Promise.all(writableFields.map(async (field) => {
-          const relationTargets = await loadRelationTargets(this, spaceId, model.key, field);
-          return mapperField(
-            field,
-            operation === 'create' && field.required === true && !hasServerDefault(model, field.key),
-            relationTargets ?? undefined,
-          );
-        }));
+          .filter((field) => !field.readOnly && (operation !== 'update' || !field.immutable))
+          .filter((field) => field.type !== 'date')
+          .filter((field) => field.relation?.lookup.supported !== true);
+        const fields = writableFields.map((field) => mapperField(
+          field,
+          operation === 'create' && field.required === true && !hasServerDefault(model, field.key),
+        ));
 
         return { fields };
       },
@@ -861,7 +1248,7 @@ export class LifeSpace implements INodeType {
               {
                 method: 'POST',
                 url: `${baseUrl}${collectionPath}`,
-                body: mappedValue(this, itemIndex, 'fields'),
+                body: mutationMappedValues(this, itemIndex),
                 json: true,
               },
             );
@@ -877,7 +1264,7 @@ export class LifeSpace implements INodeType {
                 method: 'PATCH',
                 url: `${baseUrl}${recordPath}`,
                 body: {
-                  ...mappedValue(this, itemIndex, 'fields'),
+                  ...mutationMappedValues(this, itemIndex),
                   version: await mutationVersion(this, itemIndex, baseUrl, recordPath),
                 },
                 json: true,

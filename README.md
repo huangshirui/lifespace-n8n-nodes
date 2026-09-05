@@ -64,9 +64,15 @@ A **LifeSpace Trigger** additionally uses a **LifeSpace Webhook Signing** creden
 
 Runtime Discovery determines which Spaces, Record Types, fields, queries, Actions and relation lookup capabilities the current API credential can use. Execution authorization is still enforced by LifeSpace from the current principal, credential scope, Application × Model Access and current Space/Data Grant authority.
 
+## Generated Record UX
+
+Create/Update now keep scalar fields in n8n Resource Mapper while using native n8n controls for LifeSpace calendar-date fields and supported relations. Single Person relations use a selector; multi-Person relations use multi-select. List / Query offers typed filter variants for text, enum, boolean, number, date/time and authorized Person relations, while retaining the raw legacy filter as an expression/compatibility escape hatch.
+
+Core Kernel 0.24 adds the optional human-readable `spaceName` Runtime Discovery projection. The node displays it when present and continues to submit the stable `spc_*` ID; Core 0.23 remains compatible and falls back to displaying the raw Space ID.
+
 ## LifeSpace contract compatibility
 
-This package follows the current LifeSpace Core Kernel `0.23.0` contract family.
+This package follows the current LifeSpace Core Kernel `0.24.0` contract family.
 
 The UX depends on these Kernel capabilities:
 
@@ -75,7 +81,8 @@ The UX depends on these Kernel capabilities:
 - `0.20.0`: Action semantic input separated from optimistic-concurrency metadata;
 - `0.21.0`: invitation-token transport hardening retained by the current baseline;
 - `0.22.0`: authoritative field `title` metadata plus ordered repeatable Generic Query sort metadata;
-- `0.23.0`: authorized source-field-aware Relation Target Lookup for `person` / `person_list` fields.
+- `0.23.0`: authorized source-field-aware Relation Target Lookup for `person` / `person_list` fields;
+- `0.24.0`: authorized human-readable `spaceName` projection in Runtime Discovery while `spaceId` remains the stable identifier.
 
 Ordinary Record CRUD/Action routes remain model-contract surfaces derived from published Model Definitions; the n8n adapter does not maintain a second copy of those schemas.
 
@@ -143,7 +150,7 @@ When Runtime Discovery advertises supported Relation Target Lookup, `person` and
 
 Older compatible Discovery responses without relation lookup metadata retain the raw-ID field behavior. `record` / `record_list` fields also retain raw-ID behavior until LifeSpace defines canonical generic Record reference-label semantics; the adapter does not guess labels from fields such as `name`, `title` or `summary`.
 
-The current n8n Resource Mapper loads bounded relation options when the field schema is requested. Very large target sets should use expressions with stable IDs until n8n exposes a searchable per-field Resource Mapper option surface that can consume LifeSpace's paginated/searchable lookup directly.
+The current n8n UI loads bounded relation options when the relevant field is configured. Very large target sets should use expressions with stable IDs until n8n exposes a searchable dynamic relation option surface that can consume LifeSpace's paginated/searchable lookup directly.
 
 ### Update and Delete
 
@@ -271,7 +278,7 @@ The package intentionally has no runtime `dependencies`. It must not read enviro
 
 ## Remaining upstream-dependent UX
 
-The adapter deliberately does not invent missing platform semantics. Remaining relation work is limited to `record` / `record_list` selectors after LifeSpace defines canonical generic Record reference-label semantics. Person relation selection already consumes the LifeSpace 0.23 Runtime/Discovery contract.
+The adapter deliberately does not invent missing platform semantics. Remaining relation work is limited to `record` / `record_list` selectors after LifeSpace defines canonical generic Record reference-label semantics. Person relation selection consumes the LifeSpace 0.23 relation lookup contract, and Space labels consume the 0.24 Runtime Discovery projection.
 
 ## License
 

@@ -92,6 +92,7 @@ export type DiscoveryModel = {
 
 export type DiscoverySpace = {
   spaceId: string;
+  spaceName?: string | null;
   models: DiscoveryModel[];
 };
 
