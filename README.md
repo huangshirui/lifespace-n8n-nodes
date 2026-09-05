@@ -64,6 +64,12 @@ A **LifeSpace Trigger** additionally uses a **LifeSpace Webhook Signing** creden
 
 Runtime Discovery determines which Spaces, Record Types, fields, queries, Actions and relation lookup capabilities the current API credential can use. Execution authorization is still enforced by LifeSpace from the current principal, credential scope, Application × Model Access and current Space/Data Grant authority.
 
+## Generated Record UX
+
+Create/Update now keep scalar fields in n8n Resource Mapper while using native n8n controls for LifeSpace calendar-date fields and supported relations. Single Person relations use a selector; multi-Person relations use multi-select. List / Query offers typed filter variants for text, enum, boolean, number, date/time and authorized Person relations, while retaining the raw legacy filter as an expression/compatibility escape hatch.
+
+Core Kernel 0.24 adds the optional human-readable `spaceName` Runtime Discovery projection. The node displays it when present and continues to submit the stable `spc_*` ID; Core 0.23 remains compatible and falls back to displaying the raw Space ID.
+
 ## LifeSpace contract compatibility
 
 This package follows the current LifeSpace Core Kernel `0.23.0` contract family.

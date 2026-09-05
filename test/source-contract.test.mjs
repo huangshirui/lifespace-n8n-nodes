@@ -40,6 +40,7 @@ test('Runtime Discovery UX is cross-Space and Record-facing', async () => {
   assert.match(discovery, /title\?: string/u);
   assert.match(discovery, /repeatable: true/u);
   assert.match(discovery, /envelopeFields: string\[\]/u);
+  assert.match(discovery, /spaceName\?: string \| null/u);
   assert.match(discovery, /relation\?: DiscoveryRelation/u);
   assert.match(discovery, /lookup: DiscoveryRelationLookup/u);
   assert.match(discovery, /export async function loadRelationTargets/u);
@@ -48,7 +49,11 @@ test('Runtime Discovery UX is cross-Space and Record-facing', async () => {
   assert.match(node, /displayName: 'Return All'/u);
   assert.match(node, /name: 'sorts'/u);
   assert.match(node, /field\.title\?\.trim\(\) \|\| humanizeKey/u);
+  assert.match(node, /name: 'dateFields'[\s\S]{0,900}type: 'dateTime'/u);
+  assert.match(node, /name: 'multiRelations'[\s\S]{0,1400}type: 'multiOptions'/u);
+  assert.match(node, /getCurrentNodeParameter\('&field'\)/u);
   assert.match(node, /loadRelationTargets\(this, spaceId, model\.key, field\)/u);
+  assert.match(node, /name: 'actionKey'[\s\S]{0,260}loadOptionsDependsOn: \['spaceId', 'modelRoute'\]/u);
 });
 
 test('runtime node inputs remain expression-capable except structural controls', async () => {

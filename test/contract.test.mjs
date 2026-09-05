@@ -15,6 +15,7 @@ function discoveryFixture({ legacyAction = false } = {}) {
       spaces: [
         {
           spaceId: 'spc_test',
+          spaceName: 'Test Space',
           models: [
             {
               key: 'task',
@@ -112,6 +113,9 @@ function loadOptionsContext(discovery, parameters = {}) {
     getNodeParameter(name, defaultValue) {
       return Object.prototype.hasOwnProperty.call(parameters, name) ? parameters[name] : defaultValue;
     },
+    getCurrentNodeParameter(name) {
+      return Object.prototype.hasOwnProperty.call(parameters, name) ? parameters[name] : undefined;
+    },
     getNode: () => ({ name: 'LifeSpace' }),
     helpers: {
       async httpRequestWithAuthentication(_credentialName, options) {
@@ -167,7 +171,10 @@ test('Runtime Discovery drives Space and Record Type selection', async () => {
   const discovery = discoveryFixture();
 
   const spaces = await node.methods.loadOptions.getSpaces.call(loadOptionsContext(discovery));
-  assert.deepEqual(spaces.map((item) => item.value), ['spc_test', 'spc_read_only']);
+  assert.deepEqual(spaces.map((item) => [item.name, item.value]), [
+    ['Test Space', 'spc_test'],
+    ['spc_read_only', 'spc_read_only'],
+  ]);
 
   const createRecordTypes = await node.methods.loadOptions.getRecordTypes.call(
     loadOptionsContext(discovery, { spaceId: 'spc_test', operation: 'create' }),
@@ -193,8 +200,12 @@ test('Create field mapping respects LifeSpace server defaults and Mutation Autho
   assert.deepEqual(fields.fields.map((field) => [field.id, field.required]), [
     ['name', true],
     ['priority', false],
-    ['dueDate', false],
   ]);
+
+  const dates = await node.methods.loadOptions.getWritableDateFields.call(
+    loadOptionsContext(discoveryFixture(), { spaceId: 'spc_test', modelRoute: 'tasks', operation: 'create' }),
+  );
+  assert.deepEqual(dates.map((field) => field.value), ['dueDate']);
 });
 
 test('Action Input contains semantic fields only when Discovery separates concurrency metadata', async () => {
@@ -267,6 +278,31 @@ test('List omits sort and cursor unless the user configures them', async () => {
       dueDateFrom: '2026-09-01',
     },
     json: true,
+  });
+});
+
+test('Typed filters serialize enum, boolean, number and calendar-date values through the Generic Query contract', async () => {
+  const node = new LifeSpace();
+  const discovery = discoveryFixture();
+  const task = discovery.data.spaces[0].models[0];
+  task.fields.push({ key: 'flagged', type: 'boolean', title: 'Flagged' }, { key: 'score', type: 'number', title: 'Score' });
+  task.query.filterable.push('flagged', 'score');
+  const context = executeContext(
+    {
+      resource: 'modelRecord', operation: 'list', spaceId: 'spc_test', modelRoute: 'tasks', search: '',
+      returnAll: false, limit: 10, options: {}, 'filters.filter': [],
+      filters: {
+        enum: [{ field: 'status', values: ['pending', 'completed'] }],
+        boolean: [{ field: 'flagged', value: false }],
+        number: [{ field: 'score', operator: 'from', value: 3.5 }],
+        temporal: [{ field: 'date:dueDate', operator: 'to', value: '2026-09-30T00:00:00.000+08:00' }],
+      },
+    },
+    () => ({ data: { items: [], nextCursor: null } }),
+  );
+  await node.execute.call(context);
+  assert.deepEqual(context.calls[0].options.qs, {
+    limit: 10, status: 'pending,completed', flagged: 'false', scoreFrom: 3.5, dueDateTo: '2026-09-30',
   });
 });
 
@@ -581,84 +617,35 @@ test('LifeSpace Trigger denies a webhook with an invalid signature', async () =>
   assert.equal(state.ended, true);
 });
 
-test('LifeSpace 0.23 Person relations render canonical target labels instead of raw IDs', async () => {
+test('LifeSpace Person relations use native single/multi selectors backed by source-field-aware lookup', async () => {
   const node = new LifeSpace();
   const discovery = discoveryFixture();
   const task = discovery.data.spaces[0].models[0];
-  const lookup = {
-    supported: true,
-    method: 'GET',
-    pathTemplate: '/api/v1/spaces/{spaceId}/_relation-targets/{modelKey}/{fieldKey}',
-    searchParameter: 'q',
-    cursorParameter: 'cursor',
-    limitParameter: 'limit',
-  };
+  const lookup = { supported: true, method: 'GET', pathTemplate: '/api/v1/spaces/{spaceId}/_relation-targets/{modelKey}/{fieldKey}', searchParameter: 'q', cursorParameter: 'cursor', limitParameter: 'limit' };
   task.fields.push(
-    {
-      key: 'ownerPersonId',
-      type: 'person',
-      title: 'Owner',
-      relation: { targetModel: 'person', cardinality: 'one', lookup },
-    },
-    {
-      key: 'assigneePersonIds',
-      type: 'person_list',
-      title: 'Assignees',
-      relation: { targetModel: 'person', cardinality: 'many', lookup },
-    },
-    {
-      key: 'parentTaskId',
-      type: 'record',
-      title: 'Parent Task',
-      targetModel: 'task',
-      relation: {
-        targetModel: 'task',
-        cardinality: 'one',
-        lookup: { supported: false, reason: 'reference-label-unavailable' },
-      },
-    },
+    { key: 'ownerPersonId', type: 'person', title: 'Owner', relation: { targetModel: 'person', cardinality: 'one', lookup } },
+    { key: 'assigneePersonIds', type: 'person_list', title: 'Assignees', relation: { targetModel: 'person', cardinality: 'many', lookup } },
+    { key: 'parentTaskId', type: 'record', title: 'Parent Task', targetModel: 'task', relation: { targetModel: 'task', cardinality: 'one', lookup: { supported: false, reason: 'reference-label-unavailable' } } },
   );
-
-  const calls = [];
-  const context = loadOptionsContext(discovery, {
-    spaceId: 'spc_test',
-    modelRoute: 'tasks',
-    operation: 'create',
-  });
+  const parameters = { spaceId: 'spc_test', modelRoute: 'tasks', operation: 'create', '&field': 'assigneePersonIds' };
+  const context = loadOptionsContext(discovery, parameters);
   context.helpers = {
     async httpRequestWithAuthentication(_credentialName, options) {
-      calls.push(options);
       if (options.url === `${BASE_URL}/me/_discovery`) return discovery;
-      assert.equal(options.method, 'GET');
-      assert.match(options.url, new RegExp(`${BASE_URL}/spaces/spc_test/_relation-targets/task/(ownerPersonId|assigneePersonIds)$`));
-      assert.deepEqual(options.qs, { limit: 100 });
-      return {
-        data: {
-          items: [
-            { id: 'per_alpha', label: 'Alpha Person' },
-            { id: 'per_beta', label: 'Beta Person' },
-          ],
-          nextCursor: null,
-        },
-      };
+      assert.equal(options.url, `${BASE_URL}/spaces/spc_test/_relation-targets/task/assigneePersonIds`);
+      return { data: { items: [{ id: 'per_alpha', label: 'Alpha Person' }, { id: 'per_beta', label: 'Beta Person' }], nextCursor: null } };
     },
   };
-
+  const singles = await node.methods.loadOptions.getSingleRelationFields.call(context);
+  const multiples = await node.methods.loadOptions.getMultiRelationFields.call(context);
+  const targets = await node.methods.loadOptions.getRelationTargetsForCurrentField.call(context);
   const fields = await node.methods.resourceMapping.getRecordFields.call(context);
-  const owner = fields.fields.find((field) => field.id === 'ownerPersonId');
-  const assignees = fields.fields.find((field) => field.id === 'assigneePersonIds');
-  const parent = fields.fields.find((field) => field.id === 'parentTaskId');
-
-  assert.equal(owner.type, 'options');
-  assert.deepEqual(owner.options, [
-    { name: 'Alpha Person', value: 'per_alpha' },
-    { name: 'Beta Person', value: 'per_beta' },
-  ]);
-  assert.equal(assignees.type, 'array');
-  assert.deepEqual(assignees.options, owner.options);
-  assert.equal(parent.type, 'string');
-  assert.equal(parent.options, undefined);
-  assert.equal(calls.filter((call) => call.url.includes('/_relation-targets/')).length, 2);
+  assert.deepEqual(singles.map((entry) => entry.value), ['ownerPersonId']);
+  assert.deepEqual(multiples.map((entry) => entry.value), ['assigneePersonIds']);
+  assert.deepEqual(targets, [{ name: 'Alpha Person', value: 'per_alpha' }, { name: 'Beta Person', value: 'per_beta' }]);
+  assert.equal(fields.fields.some((field) => field.id === 'ownerPersonId'), false);
+  assert.equal(fields.fields.some((field) => field.id === 'assigneePersonIds'), false);
+  assert.equal(fields.fields.find((field) => field.id === 'parentTaskId').type, 'string');
 });
 
 test('Person relation fields keep raw-ID fallback when Runtime Discovery has no lookup contract', async () => {
@@ -686,10 +673,9 @@ test('Create preserves selected LifeSpace Person IDs in the resource payload', a
       operation: 'create',
       spaceId: 'spc_test',
       modelRoute: 'tasks',
-      'fields.value': {
-        name: 'Shared task',
-        assigneePersonIds: ['per_alpha', 'per_beta'],
-      },
+      'fields.value': { name: 'Shared task' },
+      'dateFields.date': [{ field: 'dueDate', value: '2026-09-30T00:00:00.000+08:00' }],
+      'multiRelations.relation': [{ field: 'assigneePersonIds', targets: ['per_alpha', 'per_beta'] }],
     },
     () => ({ data: { id: 'tsk_created', version: 1 } }),
   );
@@ -697,6 +683,7 @@ test('Create preserves selected LifeSpace Person IDs in the resource payload', a
   await node.execute.call(context);
   assert.deepEqual(context.calls[0].options.body, {
     name: 'Shared task',
+    dueDate: '2026-09-30',
     assigneePersonIds: ['per_alpha', 'per_beta'],
   });
 });
