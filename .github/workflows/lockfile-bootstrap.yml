@@ -1,20 +1,25 @@
 name: Bootstrap package lock
 
 on:
-  pull_request:
+  push:
+    branches:
+      - chore/package-lock-reproducibility
     paths:
       - package.json
+      - package-lock.json
       - .github/workflows/lockfile-bootstrap.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   generate:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout branch
         uses: actions/checkout@v5
+        with:
+          ref: chore/package-lock-reproducibility
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -27,10 +32,16 @@ jobs:
       - name: Generate package lock
         run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
 
-      - name: Upload package lock
-        uses: actions/upload-artifact@v4
-        with:
-          name: package-lock-bootstrap
-          path: package-lock.json
-          if-no-files-found: error
-          retention-days: 1
+      - name: Commit generated package lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          if git diff --cached --quiet; then
+            echo "package-lock.json is already up to date"
+            exit 0
+          fi
+          git commit -m "chore: generate package lock with npm 11.15.0"
+          git push origin HEAD:chore/package-lock-reproducibility
