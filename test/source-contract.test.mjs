@@ -83,7 +83,8 @@ test('npm releases use GitHub OIDC Trusted Publishing without a long-lived write
   assert.match(workflow, /npm install --global npm@11\.15\.0/u);
   assert.match(workflow, /ACTIONS_ID_TOKEN_REQUEST_URL/u);
   assert.match(workflow, /ACTIONS_ID_TOKEN_REQUEST_TOKEN/u);
-  assert.match(workflow, /run: npm ci/u);
+  assert.match(workflow, /run: npm install/u);
+  assert.doesNotMatch(workflow, /run: npm ci/u);
   assert.match(workflow, /run: npm run release/u);
   assert.doesNotMatch(workflow, /NPM_TOKEN/u);
   assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN/u);
