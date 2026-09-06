@@ -49,6 +49,8 @@ test('Runtime Discovery UX is cross-Space and Record-facing', async () => {
   assert.match(discovery, /repeatable: true/u);
   assert.match(discovery, /envelopeFields: string\[\]/u);
   assert.match(discovery, /spaceName\?: string \| null/u);
+  assert.match(discovery, /capabilityBindings\?: DiscoveryCapabilityBindings/u);
+  assert.match(discovery, /calendar\?: DiscoveryCalendarCapabilityBinding/u);
   assert.match(discovery, /relation\?: DiscoveryRelation/u);
   assert.match(discovery, /lookup: DiscoveryRelationLookup/u);
   assert.match(discovery, /export async function loadRelationTargets/u);
@@ -57,6 +59,10 @@ test('Runtime Discovery UX is cross-Space and Record-facing', async () => {
   assert.match(node, /displayName: 'Return All'/u);
   assert.match(node, /name: 'sorts'/u);
   assert.match(node, /field\.title\?\.trim\(\) \|\| humanizeKey/u);
+  assert.match(node, /calendarFieldKind\(model: DiscoveryModel \| undefined, fieldKey: string\)/u);
+  assert.match(node, /All-Day Only/u);
+  assert.match(node, /All-day Calendar input cannot include timed fields/u);
+  assert.doesNotMatch(node, /field\.type !== 'date'/u);
 
   const dateFields = sourceBlock(node, "name: 'dateFields'", "name: 'singleRelations'");
   assert.match(dateFields, /loadOptionsMethod: 'getWritableDateFields'/u);

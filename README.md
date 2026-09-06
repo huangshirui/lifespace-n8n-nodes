@@ -70,9 +70,11 @@ Create/Update now keep scalar fields in n8n Resource Mapper while using native n
 
 Core Kernel 0.24 adds the optional human-readable `spaceName` Runtime Discovery projection. The node displays it when present and continues to submit the stable `spc_*` ID; Core 0.23 remains compatible and falls back to displaying the raw Space ID.
 
+Core Kernel 0.25 adds `capabilityBindings.calendar`. The node uses those canonical field roles—not Event-specific field names—to label timed versus all-day inputs, normalize `date` fields to `YYYY-MM-DD`, and reject contradictory Calendar branches before a mutation is sent. The older **Date Fields (Compatibility)** section remains for existing workflows.
+
 ## LifeSpace contract compatibility
 
-This package follows the current LifeSpace Core Kernel `0.24.0` contract family.
+This package follows the current LifeSpace Core Kernel `0.25.0` contract family.
 
 The UX depends on these Kernel capabilities:
 
@@ -83,6 +85,7 @@ The UX depends on these Kernel capabilities:
 - `0.22.0`: authoritative field `title` metadata plus ordered repeatable Generic Query sort metadata;
 - `0.23.0`: authorized source-field-aware Relation Target Lookup for `person` / `person_list` fields;
 - `0.24.0`: authorized human-readable `spaceName` projection in Runtime Discovery while `spaceId` remains the stable identifier.
+- `0.25.0`: bounded standard Capability field-role bindings in Runtime Discovery, beginning with Calendar timed/all-day semantics.
 
 Ordinary Record CRUD/Action routes remain model-contract surfaces derived from published Model Definitions; the n8n adapter does not maintain a second copy of those schemas.
 

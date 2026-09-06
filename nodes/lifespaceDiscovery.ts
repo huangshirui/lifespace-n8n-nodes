@@ -63,6 +63,21 @@ export type DiscoveryAction = {
   concurrency?: DiscoveryActionConcurrency;
 };
 
+export type DiscoveryCalendarCapabilityBinding = {
+  allDayField: string;
+  timedStartField: string;
+  timedEndField: string;
+  startTimezoneField: string;
+  endTimezoneField: string;
+  allDayStartField: string;
+  allDayEndExclusiveField: string;
+  attendeePersonField?: string;
+};
+
+export type DiscoveryCapabilityBindings = {
+  calendar?: DiscoveryCalendarCapabilityBinding;
+};
+
 export type DiscoveryModel = {
   key: string;
   route: string;
@@ -88,6 +103,8 @@ export type DiscoveryModel = {
     };
   };
   actions: DiscoveryAction[];
+  capabilityBindings?: DiscoveryCapabilityBindings;
+  capabilities?: string[];
 };
 
 export type DiscoverySpace = {

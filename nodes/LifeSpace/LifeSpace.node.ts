@@ -131,14 +131,121 @@ function relationMappedValues(context: IExecuteFunctions, itemIndex: number): ID
   return result;
 }
 
-function mutationMappedValues(context: IExecuteFunctions, itemIndex: number): IDataObject {
-  return mergeMappedValues(
+function hasMeaningfulValue(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'string') return value.trim() !== '';
+  if (Array.isArray(value)) return value.length > 0;
+  return true;
+}
+
+function booleanValue(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string' && value.trim().toLowerCase() === 'true') return true;
+  if (typeof value === 'string' && value.trim().toLowerCase() === 'false') return false;
+  return undefined;
+}
+
+function fieldLabel(model: DiscoveryModel, fieldKey: string): string {
+  const field = model.fields.find((entry) => entry.key === fieldKey);
+  return field?.title?.trim() || humanizeKey(fieldKey);
+}
+
+function validateCalendarMutation(
+  context: IExecuteFunctions,
+  itemIndex: number,
+  values: IDataObject,
+  model: DiscoveryModel,
+  operation: 'create' | 'update',
+): void {
+  const calendar = model.capabilityBindings?.calendar;
+  if (!calendar) return;
+
+  const timedFields = [
+    calendar.timedStartField,
+    calendar.timedEndField,
+    calendar.startTimezoneField,
+    calendar.endTimezoneField,
+  ];
+  const allDayFields = [calendar.allDayStartField, calendar.allDayEndExclusiveField];
+  const configuredTimed = timedFields.filter((fieldKey) => hasMeaningfulValue(values[fieldKey]));
+  const configuredAllDay = allDayFields.filter((fieldKey) => hasMeaningfulValue(values[fieldKey]));
+  const configuredMode = booleanValue(values[calendar.allDayField]);
+  const createDefaultMode = operation === 'create' ? booleanValue(model.defaults?.[calendar.allDayField]) : undefined;
+  const allDay = configuredMode ?? createDefaultMode;
+
+  const labels = (fieldKeys: string[]) => fieldKeys.map((fieldKey) => fieldLabel(model, fieldKey)).join(', ');
+  if (allDay === true) {
+    if (configuredTimed.length > 0) {
+      throw new NodeOperationError(
+        context.getNode(),
+        `All-day Calendar input cannot include timed fields: ${labels(configuredTimed)}. Clear them and use ${labels(allDayFields)}.`,
+        { itemIndex },
+      );
+    }
+    if (operation === 'create') {
+      const missing = allDayFields.filter((fieldKey) => !hasMeaningfulValue(values[fieldKey]));
+      if (missing.length > 0) {
+        throw new NodeOperationError(
+          context.getNode(),
+          `All Day is enabled. Set ${labels(missing)} using calendar-date values.`,
+          { itemIndex },
+        );
+      }
+    }
+    return;
+  }
+
+  if (allDay === false) {
+    if (configuredAllDay.length > 0) {
+      throw new NodeOperationError(
+        context.getNode(),
+        `Timed Calendar input cannot include all-day fields: ${labels(configuredAllDay)}. Clear them and use ${labels(timedFields)}.`,
+        { itemIndex },
+      );
+    }
+    if (operation === 'create') {
+      const missing = timedFields.filter((fieldKey) => !hasMeaningfulValue(values[fieldKey]));
+      if (missing.length > 0) {
+        throw new NodeOperationError(
+          context.getNode(),
+          `All Day is disabled. Set ${labels(missing)} for the timed Calendar resource.`,
+          { itemIndex },
+        );
+      }
+    }
+    return;
+  }
+
+  if (configuredTimed.length > 0 && configuredAllDay.length > 0) {
+    throw new NodeOperationError(
+      context.getNode(),
+      `Calendar timed fields (${labels(configuredTimed)}) and all-day fields (${labels(configuredAllDay)}) are mutually exclusive.`,
+      { itemIndex },
+    );
+  }
+}
+
+function mutationMappedValues(
+  context: IExecuteFunctions,
+  itemIndex: number,
+  model: DiscoveryModel,
+  operation: 'create' | 'update',
+): IDataObject {
+  const result = mergeMappedValues(
     context,
     itemIndex,
     mappedValue(context, itemIndex, 'fields'),
     dateMappedValues(context, itemIndex),
     relationMappedValues(context, itemIndex),
   );
+
+  for (const field of model.fields) {
+    if (field.type === 'date' && Object.prototype.hasOwnProperty.call(result, field.key)) {
+      result[field.key] = dateOnlyValue(context, itemIndex, result[field.key], field.title?.trim() || field.key);
+    }
+  }
+  validateCalendarMutation(context, itemIndex, result, model, operation);
+  return result;
 }
 
 function normalizeActionInput(
@@ -294,11 +401,34 @@ function resourceMapperType(field: DiscoveryField): FieldType {
   }
 }
 
-function mapperField(field: DiscoveryField, required: boolean, relationTargets?: RelationTarget[]) {
+function calendarFieldKind(model: DiscoveryModel | undefined, fieldKey: string): 'mode' | 'timed' | 'all-day' | undefined {
+  const calendar = model?.capabilityBindings?.calendar;
+  if (!calendar) return undefined;
+  if (fieldKey === calendar.allDayField) return 'mode';
+  if ([calendar.timedStartField, calendar.timedEndField, calendar.startTimezoneField, calendar.endTimezoneField].includes(fieldKey)) return 'timed';
+  if ([calendar.allDayStartField, calendar.allDayEndExclusiveField].includes(fieldKey)) return 'all-day';
+  return undefined;
+}
+
+function mapperDisplayName(field: DiscoveryField, model?: DiscoveryModel): string {
+  const base = field.title?.trim() || humanizeKey(field.key);
+  const kind = calendarFieldKind(model, field.key);
+  if (kind === 'timed') return `${base} (Timed Only)`;
+  if (kind === 'all-day') return `${base} (All-Day Only)`;
+  if (kind === 'mode') return `${base} (Calendar Mode)`;
+  return base;
+}
+
+function mapperField(
+  field: DiscoveryField,
+  required: boolean,
+  relationTargets?: RelationTarget[],
+  model?: DiscoveryModel,
+) {
   const relationOptions = relationTargets?.map((target) => ({ name: target.label, value: target.id }));
   return {
     id: field.key,
-    displayName: field.title?.trim() || humanizeKey(field.key),
+    displayName: mapperDisplayName(field, model),
     required,
     defaultMatch: false,
     canBeUsedToMatch: false,
@@ -435,7 +565,7 @@ async function relationFieldOptions(
     .filter((field) => cardinality === undefined || field.relation?.cardinality === cardinality)
     .filter((field) => !filterableOnly || filterable.has(field.key))
     .filter((field) => filterableOnly || (!field.readOnly && (operation !== 'update' || !field.immutable)))
-    .map((field) => ({ name: field.title?.trim() || humanizeKey(field.key), value: field.key, description: field.description }));
+    .map((field) => ({ name: mapperDisplayName(field, model), value: field.key, description: field.description }));
 }
 
 export class LifeSpace implements INodeType {
@@ -596,10 +726,10 @@ export class LifeSpace implements INodeType {
             operation: ['create', 'update'],
           },
         },
-        description: 'Writable fields loaded from LifeSpace Runtime Discovery. Server-defaulted required fields are not required from the n8n user.',
+        description: 'Writable fields loaded from LifeSpace Runtime Discovery. LifeSpace date fields are normalized to YYYY-MM-DD at execution. Calendar timed/all-day roles are labeled from Capability metadata.',
       },
       {
-        displayName: 'Date Fields',
+        displayName: 'Date Fields (Compatibility)',
         name: 'dateFields',
         type: 'fixedCollection',
         default: {},
@@ -1144,11 +1274,12 @@ export class LifeSpace implements INodeType {
 
         const writableFields = model.fields
           .filter((field) => !field.readOnly && (operation !== 'update' || !field.immutable))
-          .filter((field) => field.type !== 'date')
           .filter((field) => field.relation?.lookup.supported !== true);
         const fields = writableFields.map((field) => mapperField(
           field,
           operation === 'create' && field.required === true && !hasServerDefault(model, field.key),
+          undefined,
+          model,
         ));
 
         return { fields };
@@ -1242,13 +1373,18 @@ export class LifeSpace implements INodeType {
               response = { data: { items: allItems, nextCursor: null } };
             }
           } else if (operation === 'create') {
+            const discovery = await loadExecutionRuntimeDiscovery(this, baseUrl);
+            const model = discoveryModel(discovery, rawSpaceId, rawModelRoute);
+            if (!model) {
+              throw new NodeOperationError(this.getNode(), 'The selected LifeSpace Record Type is not available at execution time', { itemIndex });
+            }
             response = await this.helpers.httpRequestWithAuthentication.call(
               this,
               'lifeSpaceApi',
               {
                 method: 'POST',
                 url: `${baseUrl}${collectionPath}`,
-                body: mutationMappedValues(this, itemIndex),
+                body: mutationMappedValues(this, itemIndex, model, 'create'),
                 json: true,
               },
             );
@@ -1260,11 +1396,16 @@ export class LifeSpace implements INodeType {
             if (operation === 'get') {
               options = { method: 'GET', url: `${baseUrl}${recordPath}`, json: true };
             } else if (operation === 'update') {
+              const discovery = await loadExecutionRuntimeDiscovery(this, baseUrl);
+              const model = discoveryModel(discovery, rawSpaceId, rawModelRoute);
+              if (!model) {
+                throw new NodeOperationError(this.getNode(), 'The selected LifeSpace Record Type is not available at execution time', { itemIndex });
+              }
               options = {
                 method: 'PATCH',
                 url: `${baseUrl}${recordPath}`,
                 body: {
-                  ...mutationMappedValues(this, itemIndex),
+                  ...mutationMappedValues(this, itemIndex, model, 'update'),
                   version: await mutationVersion(this, itemIndex, baseUrl, recordPath),
                 },
                 json: true,

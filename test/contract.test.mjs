@@ -200,6 +200,7 @@ test('Create field mapping respects LifeSpace server defaults and Mutation Autho
   assert.deepEqual(fields.fields.map((field) => [field.id, field.required]), [
     ['name', true],
     ['priority', false],
+    ['dueDate', false],
   ]);
 
   const dates = await node.methods.loadOptions.getWritableDateFields.call(
@@ -231,18 +232,120 @@ test('Create sends only mapped semantic fields and leaves defaults authoritative
       modelRoute: 'tasks',
       'fields.value': { name: 'Buy milk' },
     },
-    () => ({ data: { id: 'tsk_created', name: 'Buy milk', priority: 'normal', status: 'pending', version: 1 } }),
+    (options) => options.url.endsWith('/me/_discovery')
+      ? discoveryFixture()
+      : { data: { id: 'tsk_created', name: 'Buy milk', priority: 'normal', status: 'pending', version: 1 } },
   );
 
   await node.execute.call(context);
 
-  assert.equal(context.calls.length, 1);
-  assert.deepEqual(context.calls[0].options, {
+  assert.equal(context.calls.length, 2);
+  assert.equal(context.calls[0].options.url, `${BASE_URL}/me/_discovery`);
+  assert.deepEqual(context.calls[1].options, {
     method: 'POST',
     url: `${BASE_URL}/spaces/spc_test/tasks`,
     body: { name: 'Buy milk' },
     json: true,
   });
+});
+
+function calendarDiscoveryFixture() {
+  const discovery = discoveryFixture();
+  const model = discovery.data.spaces[0].models[0];
+  model.capabilities = ['calendar'];
+  model.capabilityBindings = {
+    calendar: {
+      allDayField: 'calendarMode',
+      timedStartField: 'beginsAt',
+      timedEndField: 'endsAt',
+      startTimezoneField: 'beginZone',
+      endTimezoneField: 'endZone',
+      allDayStartField: 'calendarDate',
+      allDayEndExclusiveField: 'calendarEndExclusive',
+    },
+  };
+  model.fields.push(
+    { key: 'calendarMode', type: 'boolean', title: 'All Day', required: true },
+    { key: 'beginsAt', type: 'datetime', title: 'Begin', nullable: true },
+    { key: 'endsAt', type: 'datetime', title: 'End', nullable: true },
+    { key: 'beginZone', type: 'timezone', title: 'Begin Time Zone', nullable: true },
+    { key: 'endZone', type: 'timezone', title: 'End Time Zone', nullable: true },
+    { key: 'calendarDate', type: 'date', title: 'Calendar Date', nullable: true },
+    { key: 'calendarEndExclusive', type: 'date', title: 'Calendar End (Exclusive)', nullable: true },
+  );
+  return discovery;
+}
+
+test('Core 0.25 Calendar bindings label timed/all-day fields and keep date fields in the primary mapper', async () => {
+  const node = new LifeSpace();
+  const fields = await node.methods.resourceMapping.getRecordFields.call(
+    loadOptionsContext(calendarDiscoveryFixture(), { spaceId: 'spc_test', modelRoute: 'tasks', operation: 'create' }),
+  );
+  const byId = Object.fromEntries(fields.fields.map((field) => [field.id, field]));
+  assert.equal(byId.calendarMode.displayName, 'All Day (Calendar Mode)');
+  assert.equal(byId.beginsAt.displayName, 'Begin (Timed Only)');
+  assert.equal(byId.calendarDate.displayName, 'Calendar Date (All-Day Only)');
+  assert.equal(byId.calendarEndExclusive.displayName, 'Calendar End (Exclusive) (All-Day Only)');
+});
+
+test('Create normalizes discovered all-day Calendar date fields and omits any timed inference', async () => {
+  const node = new LifeSpace();
+  const discovery = calendarDiscoveryFixture();
+  const context = executeContext(
+    {
+      resource: 'modelRecord', operation: 'create', spaceId: 'spc_test', modelRoute: 'tasks',
+      'fields.value': {
+        name: 'All-day example',
+        calendarMode: true,
+        calendarDate: '2026-09-09T00:00:00.000+08:00',
+        calendarEndExclusive: '2026-09-10T00:00:00.000+08:00',
+      },
+    },
+    (options) => options.url.endsWith('/me/_discovery')
+      ? discovery
+      : { data: { id: 'rec_calendar', version: 1 } },
+  );
+  await node.execute.call(context);
+  assert.equal(context.calls.length, 2);
+  assert.deepEqual(context.calls[1].options.body, {
+    name: 'All-day example', calendarMode: true, calendarDate: '2026-09-09', calendarEndExclusive: '2026-09-10',
+  });
+});
+
+test('Create accepts a discovered timed Calendar shape without model-specific field names', async () => {
+  const node = new LifeSpace();
+  const discovery = calendarDiscoveryFixture();
+  const body = {
+    name: 'Timed example', calendarMode: false,
+    beginsAt: '2026-09-09T02:00:00.000Z', endsAt: '2026-09-09T03:00:00.000Z',
+    beginZone: 'Asia/Shanghai', endZone: 'Asia/Shanghai',
+  };
+  const context = executeContext(
+    { resource: 'modelRecord', operation: 'create', spaceId: 'spc_test', modelRoute: 'tasks', 'fields.value': body },
+    (options) => options.url.endsWith('/me/_discovery') ? discovery : { data: { id: 'rec_timed', version: 1 } },
+  );
+  await node.execute.call(context);
+  assert.deepEqual(context.calls[1].options.body, body);
+});
+
+test('Create rejects contradictory Calendar branches locally before sending the mutation', async () => {
+  const node = new LifeSpace();
+  const discovery = calendarDiscoveryFixture();
+  const context = executeContext(
+    {
+      resource: 'modelRecord', operation: 'create', spaceId: 'spc_test', modelRoute: 'tasks',
+      'fields.value': {
+        name: 'Invalid example', calendarMode: true, beginsAt: '2026-09-09T02:00:00.000Z',
+        calendarDate: '2026-09-09', calendarEndExclusive: '2026-09-10',
+      },
+    },
+    (options) => {
+      if (options.url.endsWith('/me/_discovery')) return discovery;
+      throw new Error(`Mutation should not be sent: ${options.method} ${options.url}`);
+    },
+  );
+  await assert.rejects(() => node.execute.call(context), /All-day Calendar input cannot include timed fields: Begin/);
+  assert.equal(context.calls.length, 1);
 });
 
 test('List omits sort and cursor unless the user configures them', async () => {
@@ -416,6 +519,7 @@ test('Update fetches current version by default and sends it with the mutation',
       'fields.value': { name: 'Updated' },
     },
     (options) => {
+      if (options.url.endsWith('/me/_discovery')) return discoveryFixture();
       if (options.method === 'GET') return { data: { id: 'tsk_test', version: 7 } };
       return { data: { id: 'tsk_test', name: 'Updated', version: 8 } };
     },
@@ -424,10 +528,11 @@ test('Update fetches current version by default and sends it with the mutation',
   await node.execute.call(context);
 
   assert.deepEqual(context.calls.map((call) => [call.options.method, call.options.url]), [
+    ['GET', `${BASE_URL}/me/_discovery`],
     ['GET', `${BASE_URL}/spaces/spc_test/tasks/tsk_test`],
     ['PATCH', `${BASE_URL}/spaces/spc_test/tasks/tsk_test`],
   ]);
-  assert.deepEqual(context.calls[1].options.body, { name: 'Updated', version: 7 });
+  assert.deepEqual(context.calls[2].options.body, { name: 'Updated', version: 7 });
 });
 
 test('Update accepts an explicit advanced version without an extra read', async () => {
@@ -442,14 +547,16 @@ test('Update accepts an explicit advanced version without an extra read', async 
       mutationOptions: { version: 5 },
       'fields.value': { name: 'Updated' },
     },
-    () => ({ data: { id: 'tsk_test', name: 'Updated', version: 6 } }),
+    (options) => options.url.endsWith('/me/_discovery')
+      ? discoveryFixture()
+      : { data: { id: 'tsk_test', name: 'Updated', version: 6 } },
   );
 
   await node.execute.call(context);
 
-  assert.equal(context.calls.length, 1);
-  assert.equal(context.calls[0].options.method, 'PATCH');
-  assert.deepEqual(context.calls[0].options.body, { name: 'Updated', version: 5 });
+  assert.equal(context.calls.length, 2);
+  assert.equal(context.calls[1].options.method, 'PATCH');
+  assert.deepEqual(context.calls[1].options.body, { name: 'Updated', version: 5 });
 });
 
 test('Execute Action resolves record-version concurrency from cross-Space Discovery', async () => {
