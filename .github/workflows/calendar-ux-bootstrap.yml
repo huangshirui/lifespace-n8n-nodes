@@ -1,0 +1,167 @@
+name: Bootstrap Calendar Capability UX patch
+
+on:
+  push:
+    branches: [fix/calendar-capability-ux]
+    paths:
+      - '.github/workflows/calendar-ux-bootstrap.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/calendar-capability-ux
+      - name: Apply Runtime Discovery Calendar UX patch
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one match, found {count}: {old[:100]!r}')
+              p.write_text(text.replace(old, new, 1))
+
+          # Discovery types: Core 0.25 adds bounded Capability field-role bindings.
+          p = Path('nodes/lifespaceDiscovery.ts')
+          text = p.read_text()
+          marker = 'export type DiscoveryModel = {'
+          if text.count(marker) != 1:
+              raise SystemExit('DiscoveryModel marker missing')
+          types = '''export type DiscoveryCalendarCapabilityBinding = {\n  allDayField: string;\n  timedStartField: string;\n  timedEndField: string;\n  startTimezoneField: string;\n  endTimezoneField: string;\n  allDayStartField: string;\n  allDayEndExclusiveField: string;\n  attendeePersonField?: string;\n};\n\nexport type DiscoveryCapabilityBindings = {\n  calendar?: DiscoveryCalendarCapabilityBinding;\n};\n\n'''
+          text = text.replace(marker, types + marker, 1)
+          old = '  actions: DiscoveryAction[];\n};'
+          new = '  actions: DiscoveryAction[];\n  capabilityBindings?: DiscoveryCapabilityBindings;\n  capabilities?: string[];\n};'
+          if text.count(old) != 1:
+              raise SystemExit('DiscoveryModel actions marker missing')
+          p.write_text(text.replace(old, new, 1))
+
+          node_path = Path('nodes/LifeSpace/LifeSpace.node.ts')
+          node = node_path.read_text()
+
+          # Mutation payload normalization and Calendar shape preflight are model-agnostic.
+          old = '''function mutationMappedValues(context: IExecuteFunctions, itemIndex: number): IDataObject {\n  return mergeMappedValues(\n    context,\n    itemIndex,\n    mappedValue(context, itemIndex, 'fields'),\n    dateMappedValues(context, itemIndex),\n    relationMappedValues(context, itemIndex),\n  );\n}\n'''
+          new = '''function hasMeaningfulValue(value: unknown): boolean {\n  if (value === null || value === undefined) return false;\n  if (typeof value === 'string') return value.trim() !== '';\n  if (Array.isArray(value)) return value.length > 0;\n  return true;\n}\n\nfunction booleanValue(value: unknown): boolean | undefined {\n  if (typeof value === 'boolean') return value;\n  if (typeof value === 'string' && value.trim().toLowerCase() === 'true') return true;\n  if (typeof value === 'string' && value.trim().toLowerCase() === 'false') return false;\n  return undefined;\n}\n\nfunction fieldLabel(model: DiscoveryModel, fieldKey: string): string {\n  const field = model.fields.find((entry) => entry.key === fieldKey);\n  return field?.title?.trim() || humanizeKey(fieldKey);\n}\n\nfunction validateCalendarMutation(\n  context: IExecuteFunctions,\n  itemIndex: number,\n  values: IDataObject,\n  model: DiscoveryModel,\n  operation: 'create' | 'update',\n): void {\n  const calendar = model.capabilityBindings?.calendar;\n  if (!calendar) return;\n\n  const timedFields = [\n    calendar.timedStartField,\n    calendar.timedEndField,\n    calendar.startTimezoneField,\n    calendar.endTimezoneField,\n  ];\n  const allDayFields = [calendar.allDayStartField, calendar.allDayEndExclusiveField];\n  const configuredTimed = timedFields.filter((fieldKey) => hasMeaningfulValue(values[fieldKey]));\n  const configuredAllDay = allDayFields.filter((fieldKey) => hasMeaningfulValue(values[fieldKey]));\n  const configuredMode = booleanValue(values[calendar.allDayField]);\n  const createDefaultMode = operation === 'create' ? booleanValue(model.defaults?.[calendar.allDayField]) : undefined;\n  const allDay = configuredMode ?? createDefaultMode;\n\n  const labels = (fieldKeys: string[]) => fieldKeys.map((fieldKey) => fieldLabel(model, fieldKey)).join(', ');\n  if (allDay === true) {\n    if (configuredTimed.length > 0) {\n      throw new NodeOperationError(\n        context.getNode(),\n        `All-day Calendar input cannot include timed fields: ${labels(configuredTimed)}. Clear them and use ${labels(allDayFields)}.`,\n        { itemIndex },\n      );\n    }\n    if (operation === 'create') {\n      const missing = allDayFields.filter((fieldKey) => !hasMeaningfulValue(values[fieldKey]));\n      if (missing.length > 0) {\n        throw new NodeOperationError(\n          context.getNode(),\n          `All Day is enabled. Set ${labels(missing)} using calendar-date values.`,\n          { itemIndex },\n        );\n      }\n    }\n    return;\n  }\n\n  if (allDay === false) {\n    if (configuredAllDay.length > 0) {\n      throw new NodeOperationError(\n        context.getNode(),\n        `Timed Calendar input cannot include all-day fields: ${labels(configuredAllDay)}. Clear them and use ${labels(timedFields)}.`,\n        { itemIndex },\n      );\n    }\n    if (operation === 'create') {\n      const missing = timedFields.filter((fieldKey) => !hasMeaningfulValue(values[fieldKey]));\n      if (missing.length > 0) {\n        throw new NodeOperationError(\n          context.getNode(),\n          `All Day is disabled. Set ${labels(missing)} for the timed Calendar resource.`,\n          { itemIndex },\n        );\n      }\n    }\n    return;\n  }\n\n  if (configuredTimed.length > 0 && configuredAllDay.length > 0) {\n    throw new NodeOperationError(\n      context.getNode(),\n      `Calendar timed fields (${labels(configuredTimed)}) and all-day fields (${labels(configuredAllDay)}) are mutually exclusive.`,\n      { itemIndex },\n    );\n  }\n}\n\nfunction mutationMappedValues(\n  context: IExecuteFunctions,\n  itemIndex: number,\n  model: DiscoveryModel,\n  operation: 'create' | 'update',\n): IDataObject {\n  const result = mergeMappedValues(\n    context,\n    itemIndex,\n    mappedValue(context, itemIndex, 'fields'),\n    dateMappedValues(context, itemIndex),\n    relationMappedValues(context, itemIndex),\n  );\n\n  for (const field of model.fields) {\n    if (field.type === 'date' && Object.prototype.hasOwnProperty.call(result, field.key)) {\n      result[field.key] = dateOnlyValue(context, itemIndex, result[field.key], field.title?.trim() || field.key);\n    }\n  }\n  validateCalendarMutation(context, itemIndex, result, model, operation);\n  return result;\n}\n'''
+          if node.count(old) != 1:
+              raise SystemExit('mutationMappedValues marker missing')
+          node = node.replace(old, new, 1)
+
+          # Capability-aware labels stay presentation-only and are derived from standard field roles.
+          old = '''function mapperField(field: DiscoveryField, required: boolean, relationTargets?: RelationTarget[]) {\n  const relationOptions = relationTargets?.map((target) => ({ name: target.label, value: target.id }));\n  return {\n    id: field.key,\n    displayName: field.title?.trim() || humanizeKey(field.key),'''
+          new = '''function calendarFieldKind(model: DiscoveryModel | undefined, fieldKey: string): 'mode' | 'timed' | 'all-day' | undefined {\n  const calendar = model?.capabilityBindings?.calendar;\n  if (!calendar) return undefined;\n  if (fieldKey === calendar.allDayField) return 'mode';\n  if ([calendar.timedStartField, calendar.timedEndField, calendar.startTimezoneField, calendar.endTimezoneField].includes(fieldKey)) return 'timed';\n  if ([calendar.allDayStartField, calendar.allDayEndExclusiveField].includes(fieldKey)) return 'all-day';\n  return undefined;\n}\n\nfunction mapperDisplayName(field: DiscoveryField, model?: DiscoveryModel): string {\n  const base = field.title?.trim() || humanizeKey(field.key);\n  const kind = calendarFieldKind(model, field.key);\n  if (kind === 'timed') return `${base} (Timed Only)`;\n  if (kind === 'all-day') return `${base} (All-Day Only)`;\n  if (kind === 'mode') return `${base} (Calendar Mode)`;\n  return base;\n}\n\nfunction mapperField(\n  field: DiscoveryField,\n  required: boolean,\n  relationTargets?: RelationTarget[],\n  model?: DiscoveryModel,\n) {\n  const relationOptions = relationTargets?.map((target) => ({ name: target.label, value: target.id }));\n  return {\n    id: field.key,\n    displayName: mapperDisplayName(field, model),'''
+          if node.count(old) != 1:
+              raise SystemExit('mapperField marker missing')
+          node = node.replace(old, new, 1)
+
+          # Keep compatibility Date Fields but put date fields in the primary Resource Mapper too.
+          old = '''        const writableFields = model.fields\n          .filter((field) => !field.readOnly && (operation !== 'update' || !field.immutable))\n          .filter((field) => field.type !== 'date')\n          .filter((field) => field.relation?.lookup.supported !== true);\n        const fields = writableFields.map((field) => mapperField(\n          field,\n          operation === 'create' && field.required === true && !hasServerDefault(model, field.key),\n        ));'''
+          new = '''        const writableFields = model.fields\n          .filter((field) => !field.readOnly && (operation !== 'update' || !field.immutable))\n          .filter((field) => field.relation?.lookup.supported !== true);\n        const fields = writableFields.map((field) => mapperField(\n          field,\n          operation === 'create' && field.required === true && !hasServerDefault(model, field.key),\n          undefined,\n          model,\n        ));'''
+          if node.count(old) != 1:
+              raise SystemExit('getRecordFields writableFields marker missing')
+          node = node.replace(old, new, 1)
+
+          old = ".map((field) => ({ name: field.title?.trim() || humanizeKey(field.key), value: field.key, description: field.description }));"
+          if node.count(old) < 1:
+              raise SystemExit('getWritableDateFields map marker missing')
+          # Only replace the first matching occurrence, which belongs to getWritableDateFields.
+          node = node.replace(old, ".map((field) => ({ name: mapperDisplayName(field, model), value: field.key, description: field.description }));", 1)
+
+          node = node.replace("displayName: 'Date Fields',\n        name: 'dateFields',", "displayName: 'Date Fields (Compatibility)',\n        name: 'dateFields',", 1)
+          node = node.replace(
+              "description: 'Writable fields loaded from LifeSpace Runtime Discovery. Server-defaulted required fields are not required from the n8n user.',",
+              "description: 'Writable fields loaded from LifeSpace Runtime Discovery. LifeSpace date fields are normalized to YYYY-MM-DD at execution. Calendar timed/all-day roles are labeled from Capability metadata.',",
+              1,
+          )
+
+          # Resolve current Discovery before create/update so expressions and stale design-time metadata cannot bypass semantics.
+          old = '''          } else if (operation === 'create') {\n            response = await this.helpers.httpRequestWithAuthentication.call(\n              this,\n              'lifeSpaceApi',\n              {\n                method: 'POST',\n                url: `${baseUrl}${collectionPath}`,\n                body: mutationMappedValues(this, itemIndex),\n                json: true,\n              },\n            );\n          } else {'''
+          new = '''          } else if (operation === 'create') {\n            const discovery = await loadExecutionRuntimeDiscovery(this, baseUrl);\n            const model = discoveryModel(discovery, rawSpaceId, rawModelRoute);\n            if (!model) {\n              throw new NodeOperationError(this.getNode(), 'The selected LifeSpace Record Type is not available at execution time', { itemIndex });\n            }\n            response = await this.helpers.httpRequestWithAuthentication.call(\n              this,\n              'lifeSpaceApi',\n              {\n                method: 'POST',\n                url: `${baseUrl}${collectionPath}`,\n                body: mutationMappedValues(this, itemIndex, model, 'create'),\n                json: true,\n              },\n            );\n          } else {'''
+          if node.count(old) != 1:
+              raise SystemExit('create execution marker missing')
+          node = node.replace(old, new, 1)
+
+          old = '''            } else if (operation === 'update') {\n              options = {\n                method: 'PATCH',\n                url: `${baseUrl}${recordPath}`,\n                body: {\n                  ...mutationMappedValues(this, itemIndex),\n                  version: await mutationVersion(this, itemIndex, baseUrl, recordPath),\n                },\n                json: true,\n              };'''
+          new = '''            } else if (operation === 'update') {\n              const discovery = await loadExecutionRuntimeDiscovery(this, baseUrl);\n              const model = discoveryModel(discovery, rawSpaceId, rawModelRoute);\n              if (!model) {\n                throw new NodeOperationError(this.getNode(), 'The selected LifeSpace Record Type is not available at execution time', { itemIndex });\n              }\n              options = {\n                method: 'PATCH',\n                url: `${baseUrl}${recordPath}`,\n                body: {\n                  ...mutationMappedValues(this, itemIndex, model, 'update'),\n                  version: await mutationVersion(this, itemIndex, baseUrl, recordPath),\n                },\n                json: true,\n              };'''
+          if node.count(old) != 1:
+              raise SystemExit('update execution marker missing')
+          node = node.replace(old, new, 1)
+          node_path.write_text(node)
+
+          # Contract tests use generic field names on purpose to prevent Event-specific heuristics.
+          test_path = Path('test/contract.test.mjs')
+          test = test_path.read_text()
+          old = '''  assert.deepEqual(fields.fields.map((field) => [field.id, field.required]), [\n    ['name', true],\n    ['priority', false],\n  ]);'''
+          new = '''  assert.deepEqual(fields.fields.map((field) => [field.id, field.required]), [\n    ['name', true],\n    ['priority', false],\n    ['dueDate', false],\n  ]);'''
+          if test.count(old) != 1:
+              raise SystemExit('Create field mapping expected fields marker missing')
+          test = test.replace(old, new, 1)
+
+          old = '''    () => ({ data: { id: 'tsk_created', name: 'Buy milk', priority: 'normal', status: 'pending', version: 1 } }),\n  );\n\n  await node.execute.call(context);\n\n  assert.equal(context.calls.length, 1);\n  assert.deepEqual(context.calls[0].options, {\n    method: 'POST',\n    url: `${BASE_URL}/spaces/spc_test/tasks`,\n    body: { name: 'Buy milk' },\n    json: true,\n  });'''
+          new = '''    (options) => options.url.endsWith('/me/_discovery')\n      ? discoveryFixture()\n      : { data: { id: 'tsk_created', name: 'Buy milk', priority: 'normal', status: 'pending', version: 1 } },\n  );\n\n  await node.execute.call(context);\n\n  assert.equal(context.calls.length, 2);\n  assert.equal(context.calls[0].options.url, `${BASE_URL}/me/_discovery`);\n  assert.deepEqual(context.calls[1].options, {\n    method: 'POST',\n    url: `${BASE_URL}/spaces/spc_test/tasks`,\n    body: { name: 'Buy milk' },\n    json: true,\n  });'''
+          if test.count(old) != 1:
+              raise SystemExit('Create execution test marker missing')
+          test = test.replace(old, new, 1)
+
+          insertion_marker = "test('List omits sort and cursor unless the user configures them', async () => {"
+          if test.count(insertion_marker) != 1:
+              raise SystemExit('calendar test insertion marker missing')
+          calendar_tests = '''function calendarDiscoveryFixture() {\n  const discovery = discoveryFixture();\n  const model = discovery.data.spaces[0].models[0];\n  model.capabilities = ['calendar'];\n  model.capabilityBindings = {\n    calendar: {\n      allDayField: 'calendarMode',\n      timedStartField: 'beginsAt',\n      timedEndField: 'endsAt',\n      startTimezoneField: 'beginZone',\n      endTimezoneField: 'endZone',\n      allDayStartField: 'calendarDate',\n      allDayEndExclusiveField: 'calendarEndExclusive',\n    },\n  };\n  model.fields.push(\n    { key: 'calendarMode', type: 'boolean', title: 'All Day', required: true },\n    { key: 'beginsAt', type: 'datetime', title: 'Begin', nullable: true },\n    { key: 'endsAt', type: 'datetime', title: 'End', nullable: true },\n    { key: 'beginZone', type: 'timezone', title: 'Begin Time Zone', nullable: true },\n    { key: 'endZone', type: 'timezone', title: 'End Time Zone', nullable: true },\n    { key: 'calendarDate', type: 'date', title: 'Calendar Date', nullable: true },\n    { key: 'calendarEndExclusive', type: 'date', title: 'Calendar End (Exclusive)', nullable: true },\n  );\n  return discovery;\n}\n\ntest('Core 0.25 Calendar bindings label timed/all-day fields and keep date fields in the primary mapper', async () => {\n  const node = new LifeSpace();\n  const fields = await node.methods.resourceMapping.getRecordFields.call(\n    loadOptionsContext(calendarDiscoveryFixture(), { spaceId: 'spc_test', modelRoute: 'tasks', operation: 'create' }),\n  );\n  const byId = Object.fromEntries(fields.fields.map((field) => [field.id, field]));\n  assert.equal(byId.calendarMode.displayName, 'All Day (Calendar Mode)');\n  assert.equal(byId.beginsAt.displayName, 'Begin (Timed Only)');\n  assert.equal(byId.calendarDate.displayName, 'Calendar Date (All-Day Only)');\n  assert.equal(byId.calendarEndExclusive.displayName, 'Calendar End (Exclusive) (All-Day Only)');\n});\n\ntest('Create normalizes discovered all-day Calendar date fields and omits any timed inference', async () => {\n  const node = new LifeSpace();\n  const discovery = calendarDiscoveryFixture();\n  const context = executeContext(\n    {\n      resource: 'modelRecord', operation: 'create', spaceId: 'spc_test', modelRoute: 'tasks',\n      'fields.value': {\n        name: 'All-day example',\n        calendarMode: true,\n        calendarDate: '2026-09-09T00:00:00.000+08:00',\n        calendarEndExclusive: '2026-09-10T00:00:00.000+08:00',\n      },\n    },\n    (options) => options.url.endsWith('/me/_discovery')\n      ? discovery\n      : { data: { id: 'rec_calendar', version: 1 } },\n  );\n  await node.execute.call(context);\n  assert.equal(context.calls.length, 2);\n  assert.deepEqual(context.calls[1].options.body, {\n    name: 'All-day example', calendarMode: true, calendarDate: '2026-09-09', calendarEndExclusive: '2026-09-10',\n  });\n});\n\ntest('Create accepts a discovered timed Calendar shape without model-specific field names', async () => {\n  const node = new LifeSpace();\n  const discovery = calendarDiscoveryFixture();\n  const body = {\n    name: 'Timed example', calendarMode: false,\n    beginsAt: '2026-09-09T02:00:00.000Z', endsAt: '2026-09-09T03:00:00.000Z',\n    beginZone: 'Asia/Shanghai', endZone: 'Asia/Shanghai',\n  };\n  const context = executeContext(\n    { resource: 'modelRecord', operation: 'create', spaceId: 'spc_test', modelRoute: 'tasks', 'fields.value': body },\n    (options) => options.url.endsWith('/me/_discovery') ? discovery : { data: { id: 'rec_timed', version: 1 } },\n  );\n  await node.execute.call(context);\n  assert.deepEqual(context.calls[1].options.body, body);\n});\n\ntest('Create rejects contradictory Calendar branches locally before sending the mutation', async () => {\n  const node = new LifeSpace();\n  const discovery = calendarDiscoveryFixture();\n  const context = executeContext(\n    {\n      resource: 'modelRecord', operation: 'create', spaceId: 'spc_test', modelRoute: 'tasks',\n      'fields.value': {\n        name: 'Invalid example', calendarMode: true, beginsAt: '2026-09-09T02:00:00.000Z',\n        calendarDate: '2026-09-09', calendarEndExclusive: '2026-09-10',\n      },\n    },\n    (options) => {\n      if (options.url.endsWith('/me/_discovery')) return discovery;\n      throw new Error(`Mutation should not be sent: ${options.method} ${options.url}`);\n    },\n  );\n  await assert.rejects(() => node.execute.call(context), /All-day Calendar input cannot include timed fields: Begin/);\n  assert.equal(context.calls.length, 1);\n});\n\n'''
+          test = test.replace(insertion_marker, calendar_tests + insertion_marker, 1)
+
+          # Update execution tests now include one current Runtime Discovery read.
+          old = '''    (options) => {\n      if (options.method === 'GET') return { data: { id: 'tsk_test', version: 7 } };\n      return { data: { id: 'tsk_test', name: 'Updated', version: 8 } };\n    },\n  );\n\n  await node.execute.call(context);\n\n  assert.deepEqual(context.calls.map((call) => [call.options.method, call.options.url]), [\n    ['GET', `${BASE_URL}/spaces/spc_test/tasks/tsk_test`],\n    ['PATCH', `${BASE_URL}/spaces/spc_test/tasks/tsk_test`],\n  ]);\n  assert.deepEqual(context.calls[1].options.body, { name: 'Updated', version: 7 });'''
+          new = '''    (options) => {\n      if (options.url.endsWith('/me/_discovery')) return discoveryFixture();\n      if (options.method === 'GET') return { data: { id: 'tsk_test', version: 7 } };\n      return { data: { id: 'tsk_test', name: 'Updated', version: 8 } };\n    },\n  );\n\n  await node.execute.call(context);\n\n  assert.deepEqual(context.calls.map((call) => [call.options.method, call.options.url]), [\n    ['GET', `${BASE_URL}/me/_discovery`],\n    ['GET', `${BASE_URL}/spaces/spc_test/tasks/tsk_test`],\n    ['PATCH', `${BASE_URL}/spaces/spc_test/tasks/tsk_test`],\n  ]);\n  assert.deepEqual(context.calls[2].options.body, { name: 'Updated', version: 7 });'''
+          if test.count(old) != 1:
+              raise SystemExit('default-version update test marker missing')
+          test = test.replace(old, new, 1)
+
+          old = '''    () => ({ data: { id: 'tsk_test', name: 'Updated', version: 6 } }),\n  );\n\n  await node.execute.call(context);\n\n  assert.equal(context.calls.length, 1);\n  assert.equal(context.calls[0].options.method, 'PATCH');\n  assert.deepEqual(context.calls[0].options.body, { name: 'Updated', version: 5 });'''
+          new = '''    (options) => options.url.endsWith('/me/_discovery')\n      ? discoveryFixture()\n      : { data: { id: 'tsk_test', name: 'Updated', version: 6 } },\n  );\n\n  await node.execute.call(context);\n\n  assert.equal(context.calls.length, 2);\n  assert.equal(context.calls[1].options.method, 'PATCH');\n  assert.deepEqual(context.calls[1].options.body, { name: 'Updated', version: 5 });'''
+          if test.count(old) != 1:
+              raise SystemExit('explicit-version update test marker missing')
+          test_path.write_text(test.replace(old, new, 1))
+
+          # Source contract guards the no-hardcode boundary.
+          source_path = Path('test/source-contract.test.mjs')
+          source = source_path.read_text()
+          marker = "  assert.match(discovery, /spaceName\\?: string \\| null/u);\n"
+          if source.count(marker) != 1:
+              raise SystemExit('source-contract spaceName marker missing')
+          source = source.replace(marker, marker + "  assert.match(discovery, /capabilityBindings\\?: DiscoveryCapabilityBindings/u);\n  assert.match(discovery, /calendar\\?: DiscoveryCalendarCapabilityBinding/u);\n", 1)
+          marker = "  assert.match(node, /field\\.title\\?\\.trim\\(\\) \\|\\| humanizeKey/u);\n"
+          if source.count(marker) != 1:
+              raise SystemExit('source-contract mapper title marker missing')
+          source = source.replace(marker, marker + "  assert.match(node, /calendarFieldKind\\(model: DiscoveryModel \\| undefined, fieldKey: string\\)/u);\n  assert.match(node, /All-Day Only/u);\n  assert.match(node, /All-day Calendar input cannot include timed fields/u);\n  assert.doesNotMatch(node, /field\\.type !== 'date'/u);\n", 1)
+          source_path.write_text(source)
+
+          # Documentation follows the Core contract rather than defining a second Calendar schema.
+          readme_path = Path('README.md')
+          readme = readme_path.read_text()
+          readme = readme.replace('This package follows the current LifeSpace Core Kernel `0.24.0` contract family.', 'This package follows the current LifeSpace Core Kernel `0.25.0` contract family.', 1)
+          marker = '- `0.24.0`: authorized human-readable `spaceName` projection in Runtime Discovery while `spaceId` remains the stable identifier.'
+          if readme.count(marker) != 1:
+              raise SystemExit('README 0.24 compatibility marker missing')
+          readme = readme.replace(marker, marker + '\n- `0.25.0`: bounded standard Capability field-role bindings in Runtime Discovery, beginning with Calendar timed/all-day semantics.', 1)
+          marker = 'Core Kernel 0.24 adds the optional human-readable `spaceName` Runtime Discovery projection. The node displays it when present and continues to submit the stable `spc_*` ID; Core 0.23 remains compatible and falls back to displaying the raw Space ID.'
+          if readme.count(marker) != 1:
+              raise SystemExit('README Generated Record UX marker missing')
+          readme = readme.replace(marker, marker + '\n\nCore Kernel 0.25 adds `capabilityBindings.calendar`. The node uses those canonical field roles—not Event-specific field names—to label timed versus all-day inputs, normalize `date` fields to `YYYY-MM-DD`, and reject contradictory Calendar branches before a mutation is sent. The older **Date Fields (Compatibility)** section remains for existing workflows.', 1)
+          readme_path.write_text(readme)
+          PY
+      - name: Commit patch and remove bootstrap workflow
+        shell: bash
+        run: |
+          rm .github/workflows/calendar-ux-bootstrap.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: make Calendar mutations Capability-aware'
+          git push origin HEAD:fix/calendar-capability-ux
