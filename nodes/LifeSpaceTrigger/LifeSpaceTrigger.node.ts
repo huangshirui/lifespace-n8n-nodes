@@ -125,9 +125,9 @@ export class LifeSpaceTrigger implements INodeType {
       async getSpaces(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const discovery = await loadRuntimeDiscovery.call(this);
         return discovery.data.spaces.map((space) => ({
-          name: space.spaceId,
+          name: space.spaceName?.trim() || space.spaceId,
           value: space.spaceId,
-          description: `${space.models.length} available Record Type${space.models.length === 1 ? '' : 's'}`,
+          description: `${space.spaceId} · ${space.models.length} available Record Type${space.models.length === 1 ? '' : 's'}`,
         }));
       },
       async getTriggerRecordTypes(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
