@@ -282,3 +282,29 @@ npm install
 npm run lint
 npm test
 ```
+
+`npm test` builds the package before running adapter contract tests.
+
+Run a local n8n development instance:
+
+```bash
+npm run dev
+```
+
+## Publishing and verification
+
+This repository is public and is intended to remain eligible for n8n Community Node verification.
+
+Publishing is performed by `.github/workflows/publish.yml` from a version tag matching `*.*.*`. npm authentication uses Trusted Publishing through GitHub Actions OIDC and provenance.
+
+Do not publish a verification candidate directly from a developer workstation and do not add a long-lived npm publishing token to the repository.
+
+The package intentionally has no runtime `dependencies`. It must not read environment variables or the local filesystem. Node UI/help text/errors/README/examples remain English-only for n8n verification compatibility.
+
+## Remaining upstream-dependent UX
+
+The adapter now consumes generic `person`, `person_list`, `record` and `record_list` reference labels/lookups when LifeSpace advertises them, and uses Calendar Capability bindings rather than model-specific field names. Remaining UX work should be driven by explicit future LifeSpace contract additions or n8n UI limitations; the adapter must not invent missing semantics locally.
+
+## License
+
+MIT
