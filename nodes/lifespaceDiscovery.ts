@@ -173,7 +173,7 @@ type InventoryModel = {
 
 type InventorySpace = {
   spaceId: string;
-  spaceName: string;
+  spaceName: string | null;
   models: Array<{
     modelKey: string;
     access: DiscoveryAccess[];
@@ -236,6 +236,8 @@ type DiscoverySelection = {
   spaceId: string;
   modelRoute: string;
 };
+
+type ProgressiveDetailMode = 'selected' | 'calendar-if-present';
 
 const RELATION_TARGET_PAGE_SIZE = 100;
 const RELATION_TARGET_OPTION_LIMIT = 1000;
@@ -382,6 +384,7 @@ async function requestProgressiveRuntimeDiscovery(
   context: ILoadOptionsFunctions | IExecuteFunctions,
   baseUrl: string,
   selection?: DiscoverySelection,
+  detailMode: ProgressiveDetailMode = 'selected',
 ): Promise<DiscoveryResponse | null> {
   let inventory: InventoryResponse;
   try {
@@ -403,7 +406,12 @@ async function requestProgressiveRuntimeDiscovery(
   if (selectedSpaceId && selectedModelRoute) {
     const selectedSpace = inventory.data.spaces.find((space) => space.spaceId === selectedSpaceId);
     const selectedIdentity = [...identities.values()].find((model) => model.route === selectedModelRoute);
-    if (selectedSpace && selectedIdentity && selectedSpace.models.some((edge) => edge.modelKey === selectedIdentity.key)) {
+    const visible = selectedSpace && selectedIdentity
+      && selectedSpace.models.some((edge) => edge.modelKey === selectedIdentity.key);
+    const needsDetail = selectedIdentity
+      && (detailMode === 'selected' || selectedIdentity.capabilities.includes('calendar'));
+
+    if (visible && selectedIdentity && needsDetail) {
       selectedModelKey = selectedIdentity.key;
       const path = replacePathTemplate(inventory.data.semanticDetailPathTemplate, {
         spaceId: selectedSpaceId,
@@ -542,7 +550,16 @@ export async function loadExecutionRuntimeDiscovery(
   modelRoute?: string,
 ): Promise<DiscoveryResponse> {
   const selection = spaceId && modelRoute ? { spaceId, modelRoute } : undefined;
-  const progressive = await requestProgressiveRuntimeDiscovery(context, baseUrl, selection);
+  let detailMode: ProgressiveDetailMode = 'selected';
+  if (selection) {
+    try {
+      const operation = String(context.getNodeParameter('operation', 0, '') ?? '').trim();
+      if (operation === 'create' || operation === 'update') detailMode = 'calendar-if-present';
+    } catch {
+      detailMode = 'selected';
+    }
+  }
+  const progressive = await requestProgressiveRuntimeDiscovery(context, baseUrl, selection, detailMode);
   return progressive ?? requestFullRuntimeDiscovery(context, baseUrl);
 }
 
