@@ -62,17 +62,19 @@ The token is shown only when it is created or rotated. Store it in n8n immediate
 
 A **LifeSpace Trigger** additionally uses a **LifeSpace Webhook Signing** credential containing the endpoint-scoped HMAC signing secret. This is deliberately separate from the API credential: the Service API Token authenticates outbound n8n → LifeSpace calls, while the signing secret verifies inbound LifeSpace → n8n deliveries and rotates with its Webhook Endpoint. The Trigger still reuses the LifeSpace API credential for Space/Record Type discovery, so API context is not duplicated.
 
-Runtime Discovery determines which Spaces, Record Types, fields, queries, Actions and relation lookup capabilities the current API credential can use. Execution authorization is still enforced by LifeSpace from the current principal, credential scope, Application × Model Access and current Space/Data Grant authority.
+Runtime Discovery determines which Spaces, Record Types, fields, queries, Actions and relation lookup capabilities the current API credential can use. The adapter starts from the compact current-principal inventory, then loads static semantic detail only for the selected Space/Record Type. Relation target lookup remains lazy and field-scoped. Execution authorization is still enforced by LifeSpace from the current principal, credential scope, Application × Model Access and current Space/Data Grant authority.
 
 ## Generated Record UX
 
-Create/Update now keep scalar fields in n8n Resource Mapper while using native n8n controls for LifeSpace calendar-date fields and supported relations. Single Person relations use a selector; multi-Person relations use multi-select. List / Query offers typed filter variants for text, enum, boolean, number, date/time and authorized Person relations, while retaining the raw legacy filter as an expression/compatibility escape hatch.
+Create/Update keep scalar fields in n8n Resource Mapper while using native n8n controls for LifeSpace calendar-date fields and supported relations. Single relations use a selector; multi-relations use multi-select. List / Query offers typed filter variants for text, enum, boolean, number, date/time and authorized relations, while retaining the raw legacy filter as an expression/compatibility escape hatch.
 
-Core Kernel 0.24 adds the optional human-readable `spaceName` Runtime Discovery projection. The node displays it when present and continues to submit the stable `spc_*` ID; Core 0.23 remains compatible and falls back to displaying the raw Space ID.
+The node displays the authorized human-readable `spaceName` when present while continuing to submit the stable `spc_*` ID.
+
+Calendar-backed models use canonical `capabilityBindings.calendar` field roles instead of Event-specific field names. Date-only values are normalized to `YYYY-MM-DD`, and contradictory all-day/timed state is rejected locally before the mutation request while Core remains the final validation authority.
 
 ## LifeSpace contract compatibility
 
-This package follows the current LifeSpace Core Kernel `0.24.0` contract family.
+This package follows the current LifeSpace Core Kernel `0.31.0` contract family. It consumes Runtime/Discovery semantics only; Eventing configuration and webhook delivery semantics are owned independently by Integration/Eventing `0.1.0`.
 
 The UX depends on these Kernel capabilities:
 
@@ -82,7 +84,26 @@ The UX depends on these Kernel capabilities:
 - `0.21.0`: invitation-token transport hardening retained by the current baseline;
 - `0.22.0`: authoritative field `title` metadata plus ordered repeatable Generic Query sort metadata;
 - `0.23.0`: authorized source-field-aware Relation Target Lookup for `person` / `person_list` fields;
-- `0.24.0`: authorized human-readable `spaceName` projection in Runtime Discovery while `spaceId` remains the stable identifier.
+- `0.24.0`: authorized human-readable `spaceName` projection while `spaceId` remains stable;
+- `0.25.0`: bounded Capability field-role bindings, beginning with Calendar;
+- `0.26.0`: progressively loadable single-model static semantic detail;
+- `0.27.0`: compact current-principal inventory that de-duplicates model semantics from Space visibility edges;
+- `0.28.0`: bounded batch Reference Resolution for relation IDs;
+- `0.29.0`: canonical ordinary-record `referenceLabel` semantics plus `record` / `record_list` lookup and resolution;
+- `0.30.0`: explicit paginated Change History collection and Model Control Plane ownership split;
+- `0.31.0`: Integration/Eventing wire representation moves to the independent Integration/Eventing `0.1.0` contract while Core remains the Runtime authority.
+
+The adapter prefers the `0.27+` progressive flow:
+
+```text
+GET /me/_discovery/inventory
+  -> choose current Space / Record Type
+  -> GET /spaces/{spaceId}/_discovery/models/{modelKey}
+  -> relation target lookup / reference resolution only when needed
+  -> canonical Runtime request
+```
+
+The legacy aggregate `GET /me/_discovery` remains an intentional compatibility fallback. Neither cached Discovery nor relation lookup is treated as authorization proof; every mutation still goes through canonical LifeSpace Runtime enforcement.
 
 Ordinary Record CRUD/Action routes remain model-contract surfaces derived from published Model Definitions; the n8n adapter does not maintain a second copy of those schemas.
 
@@ -105,7 +126,7 @@ The same applies to ordinary values such as Record ID, Search, Filter Value, Ret
 Two boundaries are intentional:
 
 - **Resource** and **Operation** are structural node controls and do not accept expressions because they determine which parameter schema and execution path the node has.
-- **Fields** and **Action Input** use n8n's `resourceMapper`. The mapper container is structural, but each generated field value inside it remains expression-capable. This includes relation-backed field values: the UI can offer authorized Person options while an expression can still supply a stable Person ID or ID list.
+- **Fields** and **Action Input** use n8n's `resourceMapper`. The mapper container is structural, but each generated field value inside it remains expression-capable. This includes relation-backed field values: the UI can offer authorized options while an expression can still supply a stable relation ID or ID list.
 
 For **Filters** and **Sorts**, add the required rows in the node UI and use expressions inside each row's Field/Operator/Value or Field/Direction inputs. The number of rows is treated as workflow structure rather than per-item data. This avoids relying on whole-array expressions for n8n `fixedCollection` parameters.
 
@@ -132,9 +153,9 @@ Supported operations:
 
 For Record operations:
 
-1. choose a **Space** from `/me/_discovery`;
+1. choose a **Space** from compact Runtime Discovery inventory;
 2. choose a **Record Type** available in that Space;
-3. configure the operation.
+3. configure the operation; the selected model's semantic detail is loaded only when required.
 
 You normally do not type Space IDs or model keys manually.
 
@@ -146,9 +167,9 @@ LifeSpace server defaults are authoritative. A field that is `required` but has 
 
 For example, lifecycle state such as Task status can remain server/Action-owned instead of being manually entered by the workflow author.
 
-When Runtime Discovery advertises supported Relation Target Lookup, `person` and `person_list` fields are rendered from the current authorized `{ id, label }` target projection instead of asking the workflow author to type raw `per_*` identifiers. The displayed value is the LifeSpace Person label, while the workflow payload still stores and submits the stable Person ID.
+When Runtime Discovery advertises relation semantics, supported `person`, `person_list`, `record` and `record_list` fields are rendered from the current authorized `{ id, label }` target projection instead of asking the workflow author to type raw identifiers. The displayed value is the canonical LifeSpace reference label, while the workflow payload still stores and submits the stable target ID.
 
-Older compatible Discovery responses without relation lookup metadata retain the raw-ID field behavior. `record` / `record_list` fields also retain raw-ID behavior until LifeSpace defines canonical generic Record reference-label semantics; the adapter does not guess labels from fields such as `name`, `title` or `summary`.
+Older compatible Discovery responses without relation lookup metadata retain the raw-ID field behavior. The adapter never guesses record labels from conventional fields such as `name`, `title` or `summary`.
 
 The current n8n UI loads bounded relation options when the relevant field is configured. Very large target sets should use expressions with stable IDs until n8n exposes a searchable dynamic relation option surface that can consume LifeSpace's paginated/searchable lookup directly.
 
@@ -158,6 +179,8 @@ LifeSpace uses optimistic concurrency.
 
 By default the node reads the current Record version immediately before Update/Delete and sends that version with the mutation. This keeps the ordinary n8n UI free from mandatory internal `version` entry while preserving stale-write protection for the actual mutation race.
 
+For Calendar-backed Update, the node also combines the current record with the proposed patch and checks the discovered all-day/timed field roles before sending the mutation. Core validation remains authoritative.
+
 If a workflow intentionally needs to bind a known version, add **Concurrency Options → Version**.
 
 ### List / Query
@@ -165,7 +188,7 @@ If a workflow intentionally needs to bind a known version, add **Concurrency Opt
 The normal UI supports:
 
 - optional **Search**;
-- one or more **Filters**;
+- one or more typed **Filters**;
 - **Return All** to follow `nextCursor` automatically;
 - **Limit** when Return All is disabled.
 
@@ -181,6 +204,8 @@ Choose an Action from Runtime Discovery.
 
 **Action Input** contains only semantic/domain inputs. LifeSpace concurrency metadata is not rendered as a business field. For the current `record-version` contract, the node reads the current Record version immediately before Action execution and sends it using the transport declared by Runtime Discovery.
 
+Execution-time Action metadata uses the same progressive inventory + selected-model detail path rather than loading the full cross-Space Discovery document.
+
 This means actions such as `complete` / `reopen` no longer ask users to type an internal version value.
 
 ### Advanced API Request
@@ -190,7 +215,7 @@ The **API Request** resource is an escape hatch for LifeSpace routes that do not
 Paths are relative to the configured API Base URL, for example:
 
 ```text
-/me/_discovery
+/me/_discovery/inventory
 ```
 
 Use normal Record operations when possible because they benefit from Runtime Discovery metadata and n8n-specific UX.
@@ -204,7 +229,7 @@ LifeSpace Eventing separates:
 - **Webhook Endpoint** — reusable callback URL, signing secret and delivery diagnostics for one Space;
 - **Event Subscription** — one Record Type plus selected event types attached to that endpoint.
 
-One Webhook Endpoint can therefore carry events for multiple Record Types through the same n8n callback.
+One Webhook Endpoint can therefore carry events for multiple Record Types through the same n8n callback. In n8n this is represented as one Trigger selecting multiple Record Types; Integration/Eventing still keeps one Event Subscription filter per Record Type.
 
 ### Trigger setup
 
@@ -230,7 +255,7 @@ Webhook Endpoint / Event Subscription creation is intentionally not performed by
 - **LifeSpace Webhook Signing** credential for endpoint-scoped inbound HMAC verification;
 - **LifeSpace** node with discovery-driven Record operations plus advanced API Request;
 - **LifeSpace Trigger** with signed multi-Record-Type Domain Event filtering;
-- dynamic Space, Record Type, field, relation target, query, Action and Action Input UI based on Runtime Discovery.
+- dynamic Space, Record Type, field, relation target, query, Action and Action Input UI based on progressive Runtime Discovery.
 
 LifeSpace remains authoritative for validation, authorization, defaults, Mutation Authority, Action semantics, relation semantics and event contracts. Runtime Discovery and Relation Target Lookup are current capability/reference projections, not execution-authorization proofs.
 
@@ -257,29 +282,3 @@ npm install
 npm run lint
 npm test
 ```
-
-`npm test` builds the package before running adapter contract tests.
-
-Run a local n8n development instance:
-
-```bash
-npm run dev
-```
-
-## Publishing and verification
-
-This repository is public and is intended to remain eligible for n8n Community Node verification.
-
-Publishing is performed by `.github/workflows/publish.yml` from a version tag matching `*.*.*`. npm authentication uses Trusted Publishing through GitHub Actions OIDC and provenance.
-
-Do not publish a verification candidate directly from a developer workstation and do not add a long-lived npm publishing token to the repository.
-
-The package intentionally has no runtime `dependencies`. It must not read environment variables or the local filesystem. Node UI/help text/errors/README/examples remain English-only for n8n verification compatibility.
-
-## Remaining upstream-dependent UX
-
-The adapter deliberately does not invent missing platform semantics. Remaining relation work is limited to `record` / `record_list` selectors after LifeSpace defines canonical generic Record reference-label semantics. Person relation selection consumes the LifeSpace 0.23 relation lookup contract, and Space labels consume the 0.24 Runtime Discovery projection.
-
-## License
-
-MIT
