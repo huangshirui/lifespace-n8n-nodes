@@ -146,6 +146,30 @@ function progressiveContext(parameters = {}) {
   };
 }
 
+function progressiveExecuteContext(parameters = {}) {
+  const calls = [];
+  return {
+    calls,
+    getInputData: () => [{ json: {} }],
+    getCredentials: async () => ({ baseUrl: `${BASE_URL}/` }),
+    getNodeParameter(name, _itemIndex, defaultValue) {
+      return Object.prototype.hasOwnProperty.call(parameters, name) ? parameters[name] : defaultValue;
+    },
+    getNode: () => ({ name: 'LifeSpace' }),
+    continueOnFail: () => false,
+    helpers: {
+      async httpRequestWithAuthentication(_credentialName, options) {
+        calls.push(options);
+        if (options.url === `${BASE_URL}/me/_discovery/inventory`) return inventory;
+        if (options.url === `${BASE_URL}/spaces/spc_test/tasks` && options.method === 'POST') {
+          return { data: { id: 'tsk_created', version: 1, ...options.body } };
+        }
+        throw new Error(`Unexpected request ${options.method} ${options.url}`);
+      },
+    },
+  };
+}
+
 test('Space and Record Type selectors use compact inventory only', async () => {
   const node = new LifeSpace();
 
@@ -193,4 +217,25 @@ test('Relation options remain lazy and field-scoped after progressive detail', a
     `${BASE_URL}/spaces/spc_test/_discovery/models/task`,
     `${BASE_URL}/spaces/spc_test/_relation-targets/task/assigneePersonIds`,
   ]);
+});
+
+test('non-Calendar create reads execution inventory without fetching semantic detail', async () => {
+  const node = new LifeSpace();
+  const context = progressiveExecuteContext({
+    resource: 'modelRecord',
+    operation: 'create',
+    spaceId: 'spc_test',
+    modelRoute: 'tasks',
+    'fields.value': { name: 'Inventory-only execution' },
+    'dateFields.date': [],
+    'singleRelations.relation': [],
+    'multiRelations.relation': [],
+  });
+
+  await node.execute.call(context);
+  assert.deepEqual(context.calls.map((call) => [call.method, call.url]), [
+    ['GET', `${BASE_URL}/me/_discovery/inventory`],
+    ['POST', `${BASE_URL}/spaces/spc_test/tasks`],
+  ]);
+  assert.equal(context.calls.some((call) => call.url.includes('/_discovery/models/')), false);
 });
