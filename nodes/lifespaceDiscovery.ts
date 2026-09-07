@@ -233,6 +233,11 @@ type SemanticDetailResponse = {
   data: SemanticDetail;
 };
 
+type DiscoverySelection = {
+  spaceId: string;
+  modelRoute: string;
+};
+
 const RELATION_TARGET_PAGE_SIZE = 100;
 const RELATION_TARGET_OPTION_LIMIT = 1000;
 const RELATION_TARGET_LOOKUP_PATH = '/api/v1/spaces/{spaceId}/_relation-targets/{modelKey}/{fieldKey}';
@@ -375,8 +380,9 @@ function replacePathTemplate(template: string, values: Record<string, string>): 
 }
 
 async function requestProgressiveRuntimeDiscovery(
-  context: ILoadOptionsFunctions,
+  context: ILoadOptionsFunctions | IExecuteFunctions,
   baseUrl: string,
+  selection?: DiscoverySelection,
 ): Promise<DiscoveryResponse | null> {
   let inventory: InventoryResponse;
   try {
@@ -392,8 +398,8 @@ async function requestProgressiveRuntimeDiscovery(
   }
 
   const identities = new Map(inventory.data.models.map((model) => [model.key, model]));
-  const selectedSpaceId = loadOptionParameter(context, 'spaceId');
-  const selectedModelRoute = loadOptionParameter(context, 'modelRoute');
+  const selectedSpaceId = selection?.spaceId ?? '';
+  const selectedModelRoute = selection?.modelRoute ?? '';
   let selectedDetail: SemanticDetail | null = null;
   let selectedModelKey = '';
 
@@ -524,15 +530,23 @@ export async function loadRelationTargets(
 export async function loadRuntimeDiscovery(this: ILoadOptionsFunctions): Promise<DiscoveryResponse> {
   const credentials = await this.getCredentials('lifeSpaceApi');
   const baseUrl = normalizeBaseUrl(credentials.baseUrl);
-  const progressive = await requestProgressiveRuntimeDiscovery(this, baseUrl);
+  const selection = {
+    spaceId: loadOptionParameter(this, 'spaceId'),
+    modelRoute: loadOptionParameter(this, 'modelRoute'),
+  };
+  const progressive = await requestProgressiveRuntimeDiscovery(this, baseUrl, selection);
   return progressive ?? requestFullRuntimeDiscovery(this, baseUrl);
 }
 
 export async function loadExecutionRuntimeDiscovery(
   context: IExecuteFunctions,
   baseUrl: string,
+  spaceId?: string,
+  modelRoute?: string,
 ): Promise<DiscoveryResponse> {
-  return requestFullRuntimeDiscovery(context, baseUrl);
+  const selection = spaceId && modelRoute ? { spaceId, modelRoute } : undefined;
+  const progressive = await requestProgressiveRuntimeDiscovery(context, baseUrl, selection);
+  return progressive ?? requestFullRuntimeDiscovery(context, baseUrl);
 }
 
 export function discoverySpace(discovery: DiscoveryResponse, spaceId: string): DiscoverySpace | undefined {
