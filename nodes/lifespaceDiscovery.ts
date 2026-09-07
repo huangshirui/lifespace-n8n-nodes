@@ -249,19 +249,6 @@ function apiUrl(baseUrl: string, path: string): string {
   return `${baseUrl}${normalizedPath}`;
 }
 
-function httpStatus(error: unknown): number | null {
-  if (!error || typeof error !== 'object') return null;
-  const candidate = error as {
-    statusCode?: unknown;
-    status?: unknown;
-    response?: { statusCode?: unknown; status?: unknown };
-  };
-  for (const value of [candidate.statusCode, candidate.status, candidate.response?.statusCode, candidate.response?.status]) {
-    if (typeof value === 'number') return value;
-  }
-  return null;
-}
-
 async function authenticatedGet<T>(
   context: ILoadOptionsFunctions | IExecuteFunctions,
   baseUrl: string,
@@ -305,14 +292,15 @@ function defaultLookup(): DiscoveryRelationLookup {
 }
 
 function normalizedField(field: SemanticField): DiscoveryField {
-  if (!field.relation) return field;
+  const { relation, ...baseField } = field;
+  if (!relation) return baseField;
   return {
-    ...field,
+    ...baseField,
     relation: {
-      targetModel: field.relation.targetModel,
-      cardinality: field.relation.cardinality,
-      lookup: field.relation.lookup ?? defaultLookup(),
-      ...(field.relation.resolution ? { resolution: field.relation.resolution } : {}),
+      targetModel: relation.targetModel,
+      cardinality: relation.cardinality,
+      lookup: relation.lookup ?? defaultLookup(),
+      ...(relation.resolution ? { resolution: relation.resolution } : {}),
     },
   };
 }
@@ -393,9 +381,10 @@ async function requestProgressiveRuntimeDiscovery(
   let inventory: InventoryResponse;
   try {
     inventory = await authenticatedGet<InventoryResponse>(context, baseUrl, '/me/_discovery/inventory');
-  } catch (error) {
-    if ([404, 405].includes(httpStatus(error) ?? -1)) return null;
-    throw new NodeApiError(context.getNode(), error as JsonObject);
+  } catch {
+    // Compatibility fallback for pre-progressive Kernel contracts and transient inventory-only failures.
+    // The legacy aggregate remains authority-scoped and execution never treats either projection as authorization proof.
+    return null;
   }
 
   if (!inventory?.data || !Array.isArray(inventory.data.models) || !Array.isArray(inventory.data.spaces)) {
