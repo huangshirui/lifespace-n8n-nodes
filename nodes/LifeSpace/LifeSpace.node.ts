@@ -11,6 +11,7 @@ import type {
   ResourceMapperFields,
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
+import { validateCalendarMutation } from '../calendarMutation';
 import {
   discoveryModel,
   discoverySpace,
@@ -316,18 +317,12 @@ function hasServerDefault(model: DiscoveryModel, fieldKey: string): boolean {
   return Object.prototype.hasOwnProperty.call(model.defaults ?? {}, fieldKey);
 }
 
-async function currentRecordVersion(
+function recordVersion(
   context: IExecuteFunctions,
   itemIndex: number,
-  baseUrl: string,
-  recordPath: string,
-): Promise<number> {
-  const response = await context.helpers.httpRequestWithAuthentication.call(
-    context,
-    'lifeSpaceApi',
-    { method: 'GET', url: `${baseUrl}${recordPath}`, json: true },
-  ) as { data?: IDataObject };
-  const version = response.data?.version;
+  record: IDataObject,
+): number {
+  const version = record.version;
   if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
     throw new NodeOperationError(
       context.getNode(),
@@ -338,18 +333,62 @@ async function currentRecordVersion(
   return version;
 }
 
+async function currentRecord(
+  context: IExecuteFunctions,
+  itemIndex: number,
+  baseUrl: string,
+  recordPath: string,
+): Promise<IDataObject> {
+  const response = await context.helpers.httpRequestWithAuthentication.call(
+    context,
+    'lifeSpaceApi',
+    { method: 'GET', url: `${baseUrl}${recordPath}`, json: true },
+  ) as { data?: IDataObject };
+  if (!response.data || typeof response.data !== 'object' || Array.isArray(response.data)) {
+    throw new NodeOperationError(context.getNode(), 'LifeSpace record lookup returned an invalid response', { itemIndex });
+  }
+  return response.data;
+}
+
+async function currentRecordVersion(
+  context: IExecuteFunctions,
+  itemIndex: number,
+  baseUrl: string,
+  recordPath: string,
+): Promise<number> {
+  return recordVersion(context, itemIndex, await currentRecord(context, itemIndex, baseUrl, recordPath));
+}
+
 async function mutationVersion(
   context: IExecuteFunctions,
   itemIndex: number,
   baseUrl: string,
   recordPath: string,
+  loadedRecord?: IDataObject,
 ): Promise<number> {
   const options = context.getNodeParameter('mutationOptions', itemIndex, {}) as IDataObject;
   const configuredVersion = options.version;
   if (typeof configuredVersion === 'number' && Number.isInteger(configuredVersion) && configuredVersion >= 1) {
     return configuredVersion;
   }
-  return currentRecordVersion(context, itemIndex, baseUrl, recordPath);
+  return loadedRecord
+    ? recordVersion(context, itemIndex, loadedRecord)
+    : currentRecordVersion(context, itemIndex, baseUrl, recordPath);
+}
+
+async function executionModel(
+  context: IExecuteFunctions,
+  itemIndex: number,
+  baseUrl: string,
+  spaceId: string,
+  modelRoute: string,
+): Promise<DiscoveryModel> {
+  const discovery = await loadExecutionRuntimeDiscovery(context, baseUrl, spaceId, modelRoute);
+  const model = discoveryModel(discovery, spaceId, modelRoute);
+  if (!model) {
+    throw new NodeOperationError(context.getNode(), `LifeSpace Record Type ${modelRoute} is not available`, { itemIndex });
+  }
+  return model;
 }
 
 async function actionBodyWithConcurrency(
@@ -362,9 +401,8 @@ async function actionBodyWithConcurrency(
   actionKey: string,
   semanticInput: IDataObject,
 ): Promise<IDataObject> {
-  const discovery = await loadExecutionRuntimeDiscovery(context, baseUrl);
-  const model = discoveryModel(discovery, spaceId, modelRoute);
-  const action = model?.actions.find((entry) => entry.key === actionKey);
+  const model = await executionModel(context, itemIndex, baseUrl, spaceId, modelRoute);
+  const action = model.actions.find((entry) => entry.key === actionKey);
   if (!action) {
     throw new NodeOperationError(context.getNode(), `LifeSpace Action ${actionKey} is not available`, { itemIndex });
   }
@@ -487,514 +525,208 @@ export class LifeSpace implements INodeType {
         noDataExpression: true,
         displayOptions: { show: { resource: ['modelRecord'] } },
         options: [
-          {
-            name: 'Create',
-            value: 'create',
-            action: 'Create a record',
-            description: 'Create a record through the LifeSpace Generic Runtime',
-          },
-          {
-            name: 'Delete',
-            value: 'delete',
-            action: 'Delete a record',
-            description: 'Delete a record using optimistic concurrency',
-          },
-          {
-            name: 'Execute Action',
-            value: 'executeAction',
-            action: 'Execute a record action',
-            description: 'Execute a published LifeSpace Record Action or Capability action',
-          },
-          {
-            name: 'Get',
-            value: 'get',
-            action: 'Get a record',
-            description: 'Get one record by ID',
-          },
-          {
-            name: 'List / Query',
-            value: 'list',
-            action: 'List or query records',
-            description: 'Query a record collection using its published query contract',
-          },
-          {
-            name: 'Update',
-            value: 'update',
-            action: 'Update a record',
-            description: 'Update a record using optimistic concurrency',
-          },
+          { name: 'Create', value: 'create', action: 'Create a record', description: 'Create a record through the LifeSpace Generic Runtime' },
+          { name: 'Delete', value: 'delete', action: 'Delete a record', description: 'Delete a record using optimistic concurrency' },
+          { name: 'Execute Action', value: 'executeAction', action: 'Execute a record action', description: 'Execute a published LifeSpace Record Action or Capability action' },
+          { name: 'Get', value: 'get', action: 'Get a record', description: 'Get one record by ID' },
+          { name: 'List / Query', value: 'list', action: 'List or query records', description: 'Query a record collection using its published query contract' },
+          { name: 'Update', value: 'update', action: 'Update a record', description: 'Update a record using optimistic concurrency' },
         ],
         default: 'list',
       },
       {
-        displayName: 'Space Name or ID',
-        name: 'spaceId',
-        type: 'options',
-        typeOptions: {
-          loadOptionsMethod: 'getSpaces',
-        },
-        options: [],
-        default: '',
-        required: true,
+        displayName: 'Space Name or ID', name: 'spaceId', type: 'options',
+        typeOptions: { loadOptionsMethod: 'getSpaces' }, options: [], default: '', required: true,
         displayOptions: { show: { resource: ['modelRecord'] } },
         description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
       },
       {
-        displayName: 'Record Type Name or ID',
-        name: 'modelRoute',
-        type: 'options',
-        typeOptions: {
-          loadOptionsMethod: 'getRecordTypes',
-          loadOptionsDependsOn: ['spaceId', 'operation'],
-        },
-        options: [],
-        default: '',
-        required: true,
-        displayOptions: { show: { resource: ['modelRecord'] } },
+        displayName: 'Record Type Name or ID', name: 'modelRoute', type: 'options',
+        typeOptions: { loadOptionsMethod: 'getRecordTypes', loadOptionsDependsOn: ['spaceId', 'operation'] },
+        options: [], default: '', required: true, displayOptions: { show: { resource: ['modelRecord'] } },
         description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
       },
       {
-        displayName: 'Record ID',
-        name: 'recordId',
-        type: 'string',
-        default: '',
-        required: true,
-        displayOptions: {
-          show: {
-            resource: ['modelRecord'],
-            operation: ['get', 'update', 'delete', 'executeAction'],
-          },
-        },
+        displayName: 'Record ID', name: 'recordId', type: 'string', default: '', required: true,
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['get', 'update', 'delete', 'executeAction'] } },
       },
       {
-        displayName: 'Fields',
-        name: 'fields',
-        type: 'resourceMapper',
-        default: {
-          mappingMode: 'defineBelow',
-          value: null,
-        },
-        noDataExpression: true,
-        required: true,
+        displayName: 'Fields', name: 'fields', type: 'resourceMapper',
+        default: { mappingMode: 'defineBelow', value: null }, noDataExpression: true, required: true,
         typeOptions: {
           loadOptionsDependsOn: ['spaceId', 'modelRoute', 'operation'],
           resourceMapper: {
-            resourceMapperMethod: 'getRecordFields',
-            mode: 'add',
-            fieldWords: {
-              singular: 'field',
-              plural: 'fields',
-            },
-            addAllFields: true,
-            supportAutoMap: false,
+            resourceMapperMethod: 'getRecordFields', mode: 'add',
+            fieldWords: { singular: 'field', plural: 'fields' }, addAllFields: true, supportAutoMap: false,
             noFieldsError: 'The selected LifeSpace Record Type has no writable fields for this operation.',
           },
         },
-        displayOptions: {
-          show: {
-            resource: ['modelRecord'],
-            operation: ['create', 'update'],
-          },
-        },
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['create', 'update'] } },
         description: 'Writable fields loaded from LifeSpace Runtime Discovery. Server-defaulted required fields are not required from the n8n user.',
       },
       {
-        displayName: 'Date Fields',
-        name: 'dateFields',
-        type: 'fixedCollection',
-        default: {},
-        placeholder: 'Add Date Field',
-        typeOptions: { multipleValues: true },
+        displayName: 'Date Fields', name: 'dateFields', type: 'fixedCollection', default: {},
+        placeholder: 'Add Date Field', typeOptions: { multipleValues: true },
         displayOptions: { show: { resource: ['modelRecord'], operation: ['create', 'update'] } },
-        options: [
-          {
-            displayName: 'Date',
-            name: 'date',
-            values: [
-              {
-                displayName: 'Field Name or ID',
-                name: 'field',
-                type: 'options',
-                typeOptions: {
-                  loadOptionsMethod: 'getWritableDateFields',
-                  loadOptionsDependsOn: ['spaceId', 'modelRoute', 'operation'],
-                },
-                options: [],
-                default: '',
-                required: true,
-                description: 'Choose a LifeSpace date field. The node submits calendar-date YYYY-MM-DD values. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
-              },
-              {
-                displayName: 'Date',
-                name: 'value',
-                type: 'dateTime',
-                default: '',
-                description: 'Calendar date. Expressions remain supported; empty values clear nullable fields.',
-              },
-            ],
-          },
-        ],
+        options: [{
+          displayName: 'Date', name: 'date', values: [
+            {
+              displayName: 'Field Name or ID', name: 'field', type: 'options',
+              typeOptions: { loadOptionsMethod: 'getWritableDateFields', loadOptionsDependsOn: ['spaceId', 'modelRoute', 'operation'] },
+              options: [], default: '', required: true,
+              description: 'Choose a LifeSpace date field. The node submits calendar-date YYYY-MM-DD values. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+            },
+            { displayName: 'Date', name: 'value', type: 'dateTime', default: '', description: 'Calendar date. Expressions remain supported; empty values clear nullable fields.' },
+          ],
+        }],
       },
       {
-        displayName: 'Single Relations',
-        name: 'singleRelations',
-        type: 'fixedCollection',
-        default: {},
-        placeholder: 'Add Single Relation',
-        typeOptions: { multipleValues: true },
+        displayName: 'Single Relations', name: 'singleRelations', type: 'fixedCollection', default: {},
+        placeholder: 'Add Single Relation', typeOptions: { multipleValues: true },
         displayOptions: { show: { resource: ['modelRecord'], operation: ['create', 'update'] } },
-        options: [
+        options: [{ displayName: 'Relation', name: 'relation', values: [
           {
-            displayName: 'Relation',
-            name: 'relation',
-            values: [
-              {
-                displayName: 'Field Name or ID',
-                name: 'field',
-                type: 'options',
-																description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
-                typeOptions: {
-                  loadOptionsMethod: 'getSingleRelationFields',
-                  loadOptionsDependsOn: ['spaceId', 'modelRoute', 'operation'],
-                },
-                options: [],
-                default: '',
-                required: true,
-              },
-              {
-                displayName: 'Target Name or ID',
-                name: 'target',
-                type: 'options',
-                typeOptions: {
-                  loadOptionsMethod: 'getRelationTargetsForCurrentField',
-                  loadOptionsDependsOn: ['spaceId', 'modelRoute', '&field'],
-                },
-                options: [],
-                default: '',
-                description: 'Choose an authorized relation target, or use an expression with a stable LifeSpace ID. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
-              },
-            ],
+            displayName: 'Field Name or ID', name: 'field', type: 'options',
+            description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+            typeOptions: { loadOptionsMethod: 'getSingleRelationFields', loadOptionsDependsOn: ['spaceId', 'modelRoute', 'operation'] },
+            options: [], default: '', required: true,
           },
-        ],
+          {
+            displayName: 'Target Name or ID', name: 'target', type: 'options',
+            typeOptions: { loadOptionsMethod: 'getRelationTargetsForCurrentField', loadOptionsDependsOn: ['spaceId', 'modelRoute', '&field'] },
+            options: [], default: '',
+            description: 'Choose an authorized relation target, or use an expression with a stable LifeSpace ID. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+          },
+        ] }],
       },
       {
-        displayName: 'Multi Relations',
-        name: 'multiRelations',
-        type: 'fixedCollection',
-        default: {},
-        placeholder: 'Add Multi Relation',
-        typeOptions: { multipleValues: true },
+        displayName: 'Multi Relations', name: 'multiRelations', type: 'fixedCollection', default: {},
+        placeholder: 'Add Multi Relation', typeOptions: { multipleValues: true },
         displayOptions: { show: { resource: ['modelRecord'], operation: ['create', 'update'] } },
-        options: [
+        options: [{ displayName: 'Relation', name: 'relation', values: [
           {
-            displayName: 'Relation',
-            name: 'relation',
-            values: [
-              {
-                displayName: 'Field Name or ID',
-                name: 'field',
-                type: 'options',
-																description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
-                typeOptions: {
-                  loadOptionsMethod: 'getMultiRelationFields',
-                  loadOptionsDependsOn: ['spaceId', 'modelRoute', 'operation'],
-                },
-                options: [],
-                default: '',
-                required: true,
-              },
-              {
-                displayName: 'Targets Names or IDs',
-                name: 'targets',
-                type: 'multiOptions',
-                typeOptions: {
-                  loadOptionsMethod: 'getRelationTargetsForCurrentField',
-                  loadOptionsDependsOn: ['spaceId', 'modelRoute', '&field'],
-                },
-                options: [],
-                default: [],
-                description: 'Choose authorized relation targets, or use an expression with stable LifeSpace IDs. Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
-              },
-            ],
+            displayName: 'Field Name or ID', name: 'field', type: 'options',
+            description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+            typeOptions: { loadOptionsMethod: 'getMultiRelationFields', loadOptionsDependsOn: ['spaceId', 'modelRoute', 'operation'] },
+            options: [], default: '', required: true,
           },
-        ],
+          {
+            displayName: 'Targets Names or IDs', name: 'targets', type: 'multiOptions',
+            typeOptions: { loadOptionsMethod: 'getRelationTargetsForCurrentField', loadOptionsDependsOn: ['spaceId', 'modelRoute', '&field'] },
+            options: [], default: [],
+            description: 'Choose authorized relation targets, or use an expression with stable LifeSpace IDs. Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+          },
+        ] }],
       },
       {
-        displayName: 'Search',
-        name: 'search',
-        type: 'string',
-        default: '',
+        displayName: 'Search', name: 'search', type: 'string', default: '',
         displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
         description: 'Full-text search across fields declared searchable by LifeSpace. Leave empty to disable search.',
       },
       {
-        displayName: 'Filters',
-        name: 'filters',
-        type: 'fixedCollection',
-        default: {},
-        placeholder: 'Add Filter',
-        typeOptions: { multipleValues: true },
+        displayName: 'Filters', name: 'filters', type: 'fixedCollection', default: {},
+        placeholder: 'Add Filter', typeOptions: { multipleValues: true },
         displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
         options: [
-          {
-            displayName: 'Text Filter',
-            name: 'text',
-            values: [
-              { displayName: 'Field Name or ID', name: 'field', type: 'options',
-																																																																description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getTextFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
-              { displayName: 'Value', name: 'value', type: 'string', default: '', required: true },
-            ],
-          },
-          {
-            displayName: 'Enum Filter',
-            name: 'enum',
-            values: [
-              { displayName: 'Field Name or ID', name: 'field', type: 'options',
-																																																																description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getEnumFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
-              { displayName: 'Value Names or IDs', name: 'values', type: 'multiOptions',
-																																																							description: 'Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getEnumValuesForCurrentFilter', loadOptionsDependsOn: ['spaceId', 'modelRoute', '&field'] }, options: [], default: [], required: true },
-            ],
-          },
-          {
-            displayName: 'Boolean Filter',
-            name: 'boolean',
-            values: [
-              { displayName: 'Field Name or ID', name: 'field', type: 'options',
-																																																																description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getBooleanFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
-              { displayName: 'Value', name: 'value', type: 'boolean', default: true },
-            ],
-          },
-          {
-            displayName: 'Number Filter',
-            name: 'number',
-            values: [
-              { displayName: 'Field Name or ID', name: 'field', type: 'options',
-																																																																description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getNumericFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
-              { displayName: 'Operator', name: 'operator', type: 'options', options: [{ name: 'Equals', value: 'exact' }, { name: 'From / Greater Than or Equal', value: 'from' }, { name: 'To / Less Than or Equal', value: 'to' }], default: 'exact' },
-              { displayName: 'Value', name: 'value', type: 'number', default: 0, required: true },
-            ],
-          },
-          {
-            displayName: 'Date / Time Filter',
-            name: 'temporal',
-            values: [
-              { displayName: 'Field Name or ID', name: 'field', type: 'options',
-																																																																description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getTemporalFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
-              { displayName: 'Operator', name: 'operator', type: 'options', options: [{ name: 'Equals', value: 'exact' }, { name: 'From / Greater Than or Equal', value: 'from' }, { name: 'To / Less Than or Equal', value: 'to' }], default: 'exact' },
-              { displayName: 'Value', name: 'value', type: 'dateTime', default: '', required: true },
-            ],
-          },
-          {
-            displayName: 'Person Filter',
-            name: 'person',
-            values: [
-              { displayName: 'Field Name or ID', name: 'field', type: 'options',
-																																																																description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getPersonFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
-              { displayName: 'Person Name or ID', name: 'target', type: 'options',
-																																																																		description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getRelationTargetsForCurrentField', loadOptionsDependsOn: ['spaceId', 'modelRoute', '&field'] }, options: [], default: '', required: true },
-            ],
-          },
-          {
-            displayName: 'Raw / Legacy Filter',
-            name: 'filter',
-            values: [
-              { displayName: 'Field Name or ID', name: 'field', type: 'options', typeOptions: { loadOptionsMethod: 'getFilterableFields' }, options: [], default: '', required: true, description: 'Compatibility and unsupported relation escape hatch. Prefer the typed filter variants above. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.' },
-              { displayName: 'Operator', name: 'operator', type: 'options', options: [{ name: 'Equals', value: 'exact' }, { name: 'From / Greater Than or Equal', value: 'from' }, { name: 'To / Less Than or Equal', value: 'to' }], default: 'exact' },
-              { displayName: 'Value', name: 'value', type: 'string', default: '', required: true },
-            ],
-          },
+          { displayName: 'Text Filter', name: 'text', values: [
+            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getTextFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
+            { displayName: 'Value', name: 'value', type: 'string', default: '', required: true },
+          ] },
+          { displayName: 'Enum Filter', name: 'enum', values: [
+            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getEnumFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
+            { displayName: 'Value Names or IDs', name: 'values', type: 'multiOptions', description: 'Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getEnumValuesForCurrentFilter', loadOptionsDependsOn: ['spaceId', 'modelRoute', '&field'] }, options: [], default: [], required: true },
+          ] },
+          { displayName: 'Boolean Filter', name: 'boolean', values: [
+            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getBooleanFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
+            { displayName: 'Value', name: 'value', type: 'boolean', default: true },
+          ] },
+          { displayName: 'Number Filter', name: 'number', values: [
+            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getNumericFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
+            { displayName: 'Operator', name: 'operator', type: 'options', options: [{ name: 'Equals', value: 'exact' }, { name: 'From / Greater Than or Equal', value: 'from' }, { name: 'To / Less Than or Equal', value: 'to' }], default: 'exact' },
+            { displayName: 'Value', name: 'value', type: 'number', default: 0, required: true },
+          ] },
+          { displayName: 'Date / Time Filter', name: 'temporal', values: [
+            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getTemporalFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
+            { displayName: 'Operator', name: 'operator', type: 'options', options: [{ name: 'Equals', value: 'exact' }, { name: 'From / Greater Than or Equal', value: 'from' }, { name: 'To / Less Than or Equal', value: 'to' }], default: 'exact' },
+            { displayName: 'Value', name: 'value', type: 'dateTime', default: '', required: true },
+          ] },
+          { displayName: 'Person Filter', name: 'person', values: [
+            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getPersonFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
+            { displayName: 'Person Name or ID', name: 'target', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getRelationTargetsForCurrentField', loadOptionsDependsOn: ['spaceId', 'modelRoute', '&field'] }, options: [], default: '', required: true },
+          ] },
+          { displayName: 'Raw / Legacy Filter', name: 'filter', values: [
+            { displayName: 'Field Name or ID', name: 'field', type: 'options', typeOptions: { loadOptionsMethod: 'getFilterableFields' }, options: [], default: '', required: true, description: 'Compatibility and unsupported relation escape hatch. Prefer the typed filter variants above. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.' },
+            { displayName: 'Operator', name: 'operator', type: 'options', options: [{ name: 'Equals', value: 'exact' }, { name: 'From / Greater Than or Equal', value: 'from' }, { name: 'To / Less Than or Equal', value: 'to' }], default: 'exact' },
+            { displayName: 'Value', name: 'value', type: 'string', default: '', required: true },
+          ] },
         ],
       },
       {
-        displayName: 'Return All',
-        name: 'returnAll',
-        type: 'boolean',
-        default: false,
+        displayName: 'Return All', name: 'returnAll', type: 'boolean', default: false,
         displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
         description: 'Whether to return all results or only up to a given limit',
       },
       {
-        displayName: 'Limit',
-        name: 'limit',
-        type: 'number',
-        typeOptions: { minValue: 1, maxValue: 200, numberPrecision: 0 },
-        default: 50,
+        displayName: 'Limit', name: 'limit', type: 'number',
+        typeOptions: { minValue: 1, maxValue: 200, numberPrecision: 0 }, default: 50,
         displayOptions: { show: { resource: ['modelRecord'], operation: ['list'], returnAll: [false] } },
         description: 'Max number of results to return',
       },
       {
-        displayName: 'Sorts',
-        name: 'sorts',
-        type: 'fixedCollection',
-        default: {},
-        placeholder: 'Add Sort',
-        typeOptions: { multipleValues: true },
+        displayName: 'Sorts', name: 'sorts', type: 'fixedCollection', default: {},
+        placeholder: 'Add Sort', typeOptions: { multipleValues: true },
         displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
-        options: [
-          {
-            displayName: 'Sort',
-            name: 'sort',
-            values: [
-              {
-                displayName: 'Field Name or ID',
-                name: 'field',
-                type: 'options',
-                typeOptions: { loadOptionsMethod: 'getSortableFields' },
-                options: [],
-                default: '',
-                required: true,
-                description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
-              },
-              {
-                displayName: 'Direction',
-                name: 'direction',
-                type: 'options',
-                options: [
-                  { name: 'Ascending', value: 'asc' },
-                  { name: 'Descending', value: 'desc' },
-                ],
-                default: 'asc',
-              },
-            ],
-          },
-        ],
+        options: [{ displayName: 'Sort', name: 'sort', values: [
+          { displayName: 'Field Name or ID', name: 'field', type: 'options', typeOptions: { loadOptionsMethod: 'getSortableFields' }, options: [], default: '', required: true, description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>' },
+          { displayName: 'Direction', name: 'direction', type: 'options', options: [{ name: 'Ascending', value: 'asc' }, { name: 'Descending', value: 'desc' }], default: 'asc' },
+        ] }],
         description: 'Add sort criteria in priority order. If omitted, LifeSpace applies the server-declared default order.',
       },
       {
-        displayName: 'Options',
-        name: 'options',
-        type: 'collection',
-        placeholder: 'Add Option',
-        default: {},
+        displayName: 'Options', name: 'options', type: 'collection', placeholder: 'Add Option', default: {},
         displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
-        options: [
-          {
-            displayName: 'Cursor',
-            name: 'cursor',
-            type: 'string',
-            default: '',
-            description: 'Advanced manual pagination. Normally leave empty and use Return All or Limit.',
-          },
-        ],
+        options: [{ displayName: 'Cursor', name: 'cursor', type: 'string', default: '', description: 'Advanced manual pagination. Normally leave empty and use Return All or Limit.' }],
       },
       {
-        displayName: 'Concurrency Options',
-        name: 'mutationOptions',
-        type: 'collection',
-        placeholder: 'Add Option',
-        default: {},
+        displayName: 'Concurrency Options', name: 'mutationOptions', type: 'collection', placeholder: 'Add Option', default: {},
         displayOptions: { show: { resource: ['modelRecord'], operation: ['update', 'delete'] } },
-        options: [
-          {
-            displayName: 'Version',
-            name: 'version',
-            type: 'number',
-            typeOptions: { minValue: 1, numberPrecision: 0 },
-            default: 1,
-            description: 'Optional known record version. If omitted, the node reads the current record version immediately before the mutation.',
-          },
-        ],
+        options: [{ displayName: 'Version', name: 'version', type: 'number', typeOptions: { minValue: 1, numberPrecision: 0 }, default: 1, description: 'Optional known record version. If omitted, the node reads the current record version immediately before the mutation.' }],
       },
       {
-        displayName: 'Action Name or ID',
-        name: 'actionKey',
-        type: 'options',
-        typeOptions: {
-          loadOptionsMethod: 'getActions',
-          loadOptionsDependsOn: ['spaceId', 'modelRoute'],
-        },
-        options: [],
-        default: '',
-        required: true,
-        displayOptions: {
-          show: {
-            resource: ['modelRecord'],
-            operation: ['executeAction'],
-          },
-        },
+        displayName: 'Action Name or ID', name: 'actionKey', type: 'options',
+        typeOptions: { loadOptionsMethod: 'getActions', loadOptionsDependsOn: ['spaceId', 'modelRoute'] },
+        options: [], default: '', required: true,
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['executeAction'] } },
         description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
       },
       {
-        displayName: 'Action Input',
-        name: 'actionInput',
-        type: 'resourceMapper',
-        default: {
-          mappingMode: 'defineBelow',
-          value: null,
-        },
-        noDataExpression: true,
+        displayName: 'Action Input', name: 'actionInput', type: 'resourceMapper',
+        default: { mappingMode: 'defineBelow', value: null }, noDataExpression: true,
         typeOptions: {
           loadOptionsDependsOn: ['spaceId', 'modelRoute', 'actionKey'],
-          resourceMapper: {
-            resourceMapperMethod: 'getActionInputFields',
-            mode: 'add',
-            fieldWords: {
-              singular: 'input',
-              plural: 'inputs',
-            },
-            addAllFields: true,
-            supportAutoMap: false,
-            noFieldsError: 'This LifeSpace Action has no semantic input fields.',
-          },
+          resourceMapper: { resourceMapperMethod: 'getActionInputFields', mode: 'add', fieldWords: { singular: 'input', plural: 'inputs' }, addAllFields: true, supportAutoMap: false, noFieldsError: 'This LifeSpace Action has no semantic input fields.' },
         },
-        displayOptions: {
-          show: {
-            resource: ['modelRecord'],
-            operation: ['executeAction'],
-          },
-        },
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['executeAction'] } },
         description: 'Only semantic/domain inputs from Runtime Discovery are shown. Concurrency metadata is resolved automatically.',
       },
       {
-        displayName: 'Operation',
-        name: 'operation',
-        type: 'options',
-        noDataExpression: true,
+        displayName: 'Operation', name: 'operation', type: 'options', noDataExpression: true,
         displayOptions: { show: { resource: ['apiRequest'] } },
-        options: [
-          {
-            name: 'API Request',
-            value: 'apiRequest',
-            action: 'Make an API request',
-            description: 'Call a path relative to the configured LifeSpace API Base URL',
-          },
-        ],
+        options: [{ name: 'API Request', value: 'apiRequest', action: 'Make an API request', description: 'Call a path relative to the configured LifeSpace API Base URL' }],
         default: 'apiRequest',
       },
       {
-        displayName: 'Method',
-        name: 'method',
-        type: 'options',
-        displayOptions: { show: { resource: ['apiRequest'] } },
-        options: [
-          { name: 'DELETE', value: 'DELETE' },
-          { name: 'GET', value: 'GET' },
-          { name: 'PATCH', value: 'PATCH' },
-          { name: 'POST', value: 'POST' },
-          { name: 'PUT', value: 'PUT' },
-        ],
-        default: 'GET',
+        displayName: 'Method', name: 'method', type: 'options', displayOptions: { show: { resource: ['apiRequest'] } },
+        options: [{ name: 'DELETE', value: 'DELETE' }, { name: 'GET', value: 'GET' }, { name: 'PATCH', value: 'PATCH' }, { name: 'POST', value: 'POST' }, { name: 'PUT', value: 'PUT' }], default: 'GET',
       },
       {
-        displayName: 'Path',
-        name: 'path',
-        type: 'string',
-        default: '/',
-        required: true,
+        displayName: 'Path', name: 'path', type: 'string', default: '/', required: true,
         displayOptions: { show: { resource: ['apiRequest'] } },
         description: 'Path relative to the configured LifeSpace API Base URL, for example /me/_discovery',
       },
       {
-        displayName: 'JSON Body',
-        name: 'jsonBody',
-        type: 'json',
-        default: '{}',
-        displayOptions: {
-          show: {
-            resource: ['apiRequest'],
-            method: ['POST', 'PATCH', 'PUT', 'DELETE'],
-          },
-        },
+        displayName: 'JSON Body', name: 'jsonBody', type: 'json', default: '{}',
+        displayOptions: { show: { resource: ['apiRequest'], method: ['POST', 'PATCH', 'PUT', 'DELETE'] } },
       },
     ],
   };
@@ -1016,54 +748,33 @@ export class LifeSpace implements INodeType {
         const space = discoverySpace(discovery, spaceId);
         if (!space) return [];
         const operation = String(this.getNodeParameter('operation', 'list'));
-
         return space.models
           .filter((model) => operation === 'executeAction'
             ? model.actions.length > 0
             : model.access.includes(requiredAccessForOperation(operation)))
-          .map((model) => ({
-            name: `${model.display.plural} (${model.route})`,
-            value: model.route,
-            description: model.description ?? undefined,
-          }));
+          .map((model) => ({ name: `${model.display.plural} (${model.route})`, value: model.route, description: model.description ?? undefined }));
       },
       async getActions(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
-        const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
-        if (!spaceId || !modelRoute) return [];
-
-        const discovery = await loadRuntimeDiscovery.call(this);
-        const model = discoveryModel(discovery, spaceId, modelRoute);
-        if (!model) return [];
-
-        return model.actions.map(actionOption);
+        const selected = await optionModel(this);
+        return selected ? selected.model.actions.map(actionOption) : [];
       },
       async getFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
-        const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
-        if (!spaceId || !modelRoute) return [];
-        const discovery = await loadRuntimeDiscovery.call(this);
-        const model = discoveryModel(discovery, spaceId, modelRoute);
-        if (!model) return [];
-        return model.query.filterable.map((fieldKey) => {
-          const field = model.fields.find((entry) => entry.key === fieldKey);
+        const selected = await optionModel(this);
+        if (!selected) return [];
+        return selected.model.query.filterable.map((fieldKey) => {
+          const field = selected.model.fields.find((entry) => entry.key === fieldKey);
           const rangeSupported = field && ['date', 'datetime', 'integer', 'number'].includes(field.type);
           return {
-            name: field?.title?.trim() || humanizeKey(fieldKey),
-            value: fieldKey,
+            name: field?.title?.trim() || humanizeKey(fieldKey), value: fieldKey,
             description: rangeSupported ? `${field?.type ?? 'field'} · equality and range filters` : `${field?.type ?? 'field'} · equality filter`,
           };
         });
       },
       async getWritableDateFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
-        const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
-        if (!spaceId || !modelRoute) return [];
+        const selected = await optionModel(this);
+        if (!selected) return [];
         const operation = String(this.getNodeParameter('operation', 'create'));
-        const discovery = await loadRuntimeDiscovery.call(this);
-        const model = discoveryModel(discovery, spaceId, modelRoute);
-        if (!model) return [];
-        return model.fields
+        return selected.model.fields
           .filter((field) => field.type === 'date' && !field.readOnly && (operation !== 'update' || !field.immutable))
           .map((field) => ({ name: field.title?.trim() || humanizeKey(field.key), value: field.key, description: field.description }));
       },
@@ -1074,58 +785,33 @@ export class LifeSpace implements INodeType {
         return relationFieldOptions(this, 'many', false);
       },
       async getRelationTargetsForCurrentField(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
-        const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
+        const selected = await optionModel(this);
         const fieldKey = String(this.getCurrentNodeParameter('&field') ?? '').trim();
-        if (!spaceId || !modelRoute || !fieldKey) return [];
-        const discovery = await loadRuntimeDiscovery.call(this);
-        const model = discoveryModel(discovery, spaceId, modelRoute);
-        const field = model?.fields.find((entry) => entry.key === fieldKey);
-        if (!model || !field) return [];
-        const targets = await loadRelationTargets(this, spaceId, model.key, field);
+        if (!selected || !fieldKey) return [];
+        const field = selected.model.fields.find((entry) => entry.key === fieldKey);
+        if (!field) return [];
+        const targets = await loadRelationTargets(this, selected.spaceId, selected.model.key, field);
         return (targets ?? []).map((target) => ({ name: target.label, value: target.id }));
       },
-      async getTextFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-        return filterFieldOptions(this, ['string', 'text', 'timezone']);
-      },
-      async getEnumFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-        return filterFieldOptions(this, ['enum']);
-      },
-      async getBooleanFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-        return filterFieldOptions(this, ['boolean']);
-      },
-      async getNumericFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-        return filterFieldOptions(this, ['integer', 'number']);
-      },
-      async getTemporalFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-        return filterFieldOptions(this, ['date', 'datetime'], true);
-      },
-      async getPersonFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-        return relationFieldOptions(this, undefined, true);
-      },
+      async getTextFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> { return filterFieldOptions(this, ['string', 'text', 'timezone']); },
+      async getEnumFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> { return filterFieldOptions(this, ['enum']); },
+      async getBooleanFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> { return filterFieldOptions(this, ['boolean']); },
+      async getNumericFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> { return filterFieldOptions(this, ['integer', 'number']); },
+      async getTemporalFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> { return filterFieldOptions(this, ['date', 'datetime'], true); },
+      async getPersonFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> { return relationFieldOptions(this, undefined, true); },
       async getEnumValuesForCurrentFilter(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
-        const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
+        const selected = await optionModel(this);
         const fieldKey = String(this.getCurrentNodeParameter('&field') ?? '').trim();
-        if (!spaceId || !modelRoute || !fieldKey) return [];
-        const discovery = await loadRuntimeDiscovery.call(this);
-        const field = discoveryModel(discovery, spaceId, modelRoute)?.fields.find((entry) => entry.key === fieldKey);
+        const field = selected?.model.fields.find((entry) => entry.key === fieldKey);
         return field?.type === 'enum' ? (field.values ?? []).map((value) => ({ name: value, value })) : [];
       },
       async getSortableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
-        const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
-        if (!spaceId || !modelRoute) return [];
-        const discovery = await loadRuntimeDiscovery.call(this);
-        const model = discoveryModel(discovery, spaceId, modelRoute);
-        if (!model) return [];
+        const selected = await optionModel(this);
+        if (!selected) return [];
         return [
-          ...model.query.sort.envelopeFields.map((fieldKey) => ({
-            name: humanizeKey(fieldKey),
-            value: fieldKey,
-          })),
-          ...model.query.sortable.map((fieldKey) => {
-            const field = model.fields.find((entry) => entry.key === fieldKey);
+          ...selected.model.query.sort.envelopeFields.map((fieldKey) => ({ name: humanizeKey(fieldKey), value: fieldKey })),
+          ...selected.model.query.sortable.map((fieldKey) => {
+            const field = selected.model.fields.find((entry) => entry.key === fieldKey);
             return { name: field?.title?.trim() || humanizeKey(fieldKey), value: fieldKey };
           }),
         ];
@@ -1133,40 +819,27 @@ export class LifeSpace implements INodeType {
     },
     resourceMapping: {
       async getRecordFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
-        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
-        const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
-        if (!spaceId || !modelRoute) return { fields: [] };
-
+        const selected = await optionModel(this);
+        if (!selected) return { fields: [] };
         const operation = String(this.getNodeParameter('operation', 'create'));
-        const discovery = await loadRuntimeDiscovery.call(this);
-        const model = discoveryModel(discovery, spaceId, modelRoute);
-        if (!model) return { fields: [] };
-
-        const writableFields = model.fields
+        const writableFields = selected.model.fields
           .filter((field) => !field.readOnly && (operation !== 'update' || !field.immutable))
           .filter((field) => field.type !== 'date')
           .filter((field) => field.relation?.lookup.supported !== true);
-        const fields = writableFields.map((field) => mapperField(
-          field,
-          operation === 'create' && field.required === true && !hasServerDefault(model, field.key),
-        ));
-
-        return { fields };
+        return {
+          fields: writableFields.map((field) => mapperField(
+            field,
+            operation === 'create' && field.required === true && !hasServerDefault(selected.model, field.key),
+          )),
+        };
       },
       async getActionInputFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
-        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
-        const modelRoute = String(this.getNodeParameter('modelRoute', '')).trim();
+        const selected = await optionModel(this);
         const actionKey = String(this.getNodeParameter('actionKey', '')).trim();
-        if (!spaceId || !modelRoute || !actionKey) return { fields: [] };
-
-        const discovery = await loadRuntimeDiscovery.call(this);
-        const model = discoveryModel(discovery, spaceId, modelRoute);
-        const action = model?.actions.find((entry) => entry.key === actionKey);
-        if (!action) return { fields: [] };
-
-        return {
-          fields: action.input.fields.map((field) => mapperField(field, field.required === true)),
-        };
+        const action = selected?.model.actions.find((entry) => entry.key === actionKey);
+        return action
+          ? { fields: action.input.fields.map((field) => mapperField(field, field.required === true)) }
+          : { fields: [] };
       },
     },
   };
@@ -1195,62 +868,37 @@ export class LifeSpace implements INodeType {
             if (!returnAll) {
               const limit = this.getNodeParameter('limit', itemIndex, 50) as number;
               const qs = queryParameters(this, itemIndex, limit);
-              const requestOptions: IHttpRequestOptions = {
-                method: 'GET',
-                url: `${baseUrl}${collectionPath}`,
-                qs,
-                json: true,
-              };
+              const requestOptions: IHttpRequestOptions = { method: 'GET', url: `${baseUrl}${collectionPath}`, qs, json: true };
               if (Array.isArray(qs.sort)) requestOptions.arrayFormat = 'repeat';
-              response = await this.helpers.httpRequestWithAuthentication.call(
-                this,
-                'lifeSpaceApi',
-                requestOptions,
-              );
+              response = await this.helpers.httpRequestWithAuthentication.call(this, 'lifeSpaceApi', requestOptions);
             } else {
               const allItems: IDataObject[] = [];
               const seenCursors = new Set<string>();
               let cursor: string | undefined;
-
               do {
                 const qs = queryParameters(this, itemIndex, 200, cursor);
-                const requestOptions: IHttpRequestOptions = {
-                  method: 'GET',
-                  url: `${baseUrl}${collectionPath}`,
-                  qs,
-                  json: true,
-                };
+                const requestOptions: IHttpRequestOptions = { method: 'GET', url: `${baseUrl}${collectionPath}`, qs, json: true };
                 if (Array.isArray(qs.sort)) requestOptions.arrayFormat = 'repeat';
-                const pageResponse = await this.helpers.httpRequestWithAuthentication.call(
-                  this,
-                  'lifeSpaceApi',
-                  requestOptions,
-                );
+                const pageResponse = await this.helpers.httpRequestWithAuthentication.call(this, 'lifeSpaceApi', requestOptions);
                 const page = queryPage(this, itemIndex, pageResponse);
                 allItems.push(...page.items);
-                if (!page.nextCursor) {
-                  cursor = undefined;
-                  break;
-                }
+                if (!page.nextCursor) { cursor = undefined; break; }
                 if (seenCursors.has(page.nextCursor)) {
                   throw new NodeOperationError(this.getNode(), 'LifeSpace returned the same nextCursor more than once', { itemIndex });
                 }
                 seenCursors.add(page.nextCursor);
                 cursor = page.nextCursor;
               } while (cursor);
-
               response = { data: { items: allItems, nextCursor: null } };
             }
           } else if (operation === 'create') {
+            const body = mutationMappedValues(this, itemIndex);
+            const model = await executionModel(this, itemIndex, baseUrl, rawSpaceId, rawModelRoute);
+            validateCalendarMutation(this, itemIndex, model, body);
             response = await this.helpers.httpRequestWithAuthentication.call(
               this,
               'lifeSpaceApi',
-              {
-                method: 'POST',
-                url: `${baseUrl}${collectionPath}`,
-                body: mutationMappedValues(this, itemIndex),
-                json: true,
-              },
+              { method: 'POST', url: `${baseUrl}${collectionPath}`, body, json: true },
             );
           } else {
             const recordId = encodeURIComponent(String(this.getNodeParameter('recordId', itemIndex)));
@@ -1260,12 +908,18 @@ export class LifeSpace implements INodeType {
             if (operation === 'get') {
               options = { method: 'GET', url: `${baseUrl}${recordPath}`, json: true };
             } else if (operation === 'update') {
+              const body = mutationMappedValues(this, itemIndex);
+              const model = await executionModel(this, itemIndex, baseUrl, rawSpaceId, rawModelRoute);
+              const loadedRecord = model.capabilityBindings?.calendar
+                ? await currentRecord(this, itemIndex, baseUrl, recordPath)
+                : undefined;
+              validateCalendarMutation(this, itemIndex, model, body, loadedRecord);
               options = {
                 method: 'PATCH',
                 url: `${baseUrl}${recordPath}`,
                 body: {
-                  ...mutationMappedValues(this, itemIndex),
-                  version: await mutationVersion(this, itemIndex, baseUrl, recordPath),
+                  ...body,
+                  version: await mutationVersion(this, itemIndex, baseUrl, recordPath, loadedRecord),
                 },
                 json: true,
               };
@@ -1295,12 +949,7 @@ export class LifeSpace implements INodeType {
                 json: true,
               };
             }
-
-            response = await this.helpers.httpRequestWithAuthentication.call(
-              this,
-              'lifeSpaceApi',
-              options,
-            );
+            response = await this.helpers.httpRequestWithAuthentication.call(this, 'lifeSpaceApi', options);
           }
         } else {
           const method = this.getNodeParameter('method', itemIndex) as IHttpRequestOptions['method'];
@@ -1310,21 +959,10 @@ export class LifeSpace implements INodeType {
             url: `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`,
             json: true,
           };
-
           if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(String(method))) {
-            options.body = parseJsonObject(
-              this,
-              itemIndex,
-              this.getNodeParameter('jsonBody', itemIndex, '{}'),
-              'JSON Body',
-            );
+            options.body = parseJsonObject(this, itemIndex, this.getNodeParameter('jsonBody', itemIndex, '{}'), 'JSON Body');
           }
-
-          response = await this.helpers.httpRequestWithAuthentication.call(
-            this,
-            'lifeSpaceApi',
-            options,
-          );
+          response = await this.helpers.httpRequestWithAuthentication.call(this, 'lifeSpaceApi', options);
         }
 
         const json = typeof response === 'object' && response !== null
@@ -1332,7 +970,6 @@ export class LifeSpace implements INodeType {
           : response === undefined || response === null
             ? { success: true }
             : { data: response };
-
         output.push({ json, pairedItem: { item: itemIndex } });
       } catch (error) {
         if (this.continueOnFail()) {
@@ -1342,7 +979,6 @@ export class LifeSpace implements INodeType {
           });
           continue;
         }
-
         throw new NodeOperationError(this.getNode(), error as Error, { itemIndex });
       }
     }

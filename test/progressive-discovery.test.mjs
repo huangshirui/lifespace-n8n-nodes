@@ -1,0 +1,241 @@
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { test } from 'node:test';
+
+const require = createRequire(import.meta.url);
+const { LifeSpace } = require('../dist/nodes/LifeSpace/LifeSpace.node.js');
+
+const BASE_URL = 'https://example.invalid/api/v1';
+
+const inventory = {
+  data: {
+    semanticDetailPathTemplate: '/api/v1/spaces/{spaceId}/_discovery/models/{modelKey}',
+    models: [
+      {
+        key: 'task',
+        route: 'tasks',
+        version: 7,
+        schemaHash: 'sha256:task-v7',
+        display: { singular: 'Task', plural: 'Tasks' },
+        capabilities: [],
+        actions: [{ key: 'complete', access: 'write', kind: 'workflow' }],
+      },
+      {
+        key: 'note',
+        route: 'notes',
+        version: 2,
+        schemaHash: 'sha256:note-v2',
+        display: { singular: 'Note', plural: 'Notes' },
+        capabilities: [],
+        actions: [],
+      },
+    ],
+    spaces: [
+      {
+        spaceId: 'spc_test',
+        spaceName: 'Test Space',
+        models: [
+          { modelKey: 'task', access: ['read', 'write'] },
+          { modelKey: 'note', access: ['read'] },
+        ],
+      },
+    ],
+  },
+};
+
+const taskDetail = {
+  data: {
+    key: 'task',
+    route: 'tasks',
+    version: 7,
+    schemaHash: 'sha256:task-v7',
+    display: { singular: 'Task', plural: 'Tasks' },
+    description: 'Synthetic progressive detail.',
+    referenceLabel: { fields: ['name'], separator: ' · ' },
+    declaredAccess: ['read', 'write'],
+    fields: [
+      { key: 'name', type: 'string', title: 'Name', required: true },
+      { key: 'status', type: 'enum', title: 'Status', required: true, readOnly: true, values: ['pending', 'completed'] },
+      { key: 'dueDate', type: 'date', title: 'Due Date', nullable: true },
+      {
+        key: 'assigneePersonIds',
+        type: 'person_list',
+        title: 'Assignees',
+        relation: {
+          targetModel: 'person',
+          cardinality: 'many',
+          resolution: {
+            supported: true,
+            method: 'POST',
+            pathTemplate: '/api/v1/spaces/{spaceId}/_reference-resolutions/{modelKey}/{fieldKey}',
+            maxIds: 50,
+          },
+        },
+      },
+    ],
+    defaults: { status: 'pending' },
+    query: {
+      searchable: ['name'],
+      filterable: ['status', 'dueDate', 'assigneePersonIds'],
+      sortable: ['dueDate', 'name'],
+      search: { parameter: 'q', minLength: 1, maxLength: 100 },
+      filters: [],
+      sort: {
+        parameter: 'sort',
+        syntax: 'field:direction',
+        repeatable: true,
+        ordered: true,
+        maxCriteria: 8,
+        genericDefault: ['createdAt:desc'],
+        envelopeFields: ['createdAt', 'updatedAt'],
+        nullPlacement: 'last',
+        genericValues: [],
+        semantic: { standalone: true, values: [], defaults: {} },
+      },
+      pagination: {
+        limit: { parameter: 'limit', minimum: 1, maximum: 200, default: 100 },
+        cursor: { parameter: 'cursor', type: 'string' },
+      },
+      capabilityParameters: [],
+    },
+    actions: [
+      {
+        key: 'complete',
+        access: 'write',
+        kind: 'workflow',
+        input: { fields: [] },
+        concurrency: {
+          strategy: 'record-version',
+          required: true,
+          transport: { in: 'body', name: 'version' },
+        },
+        invocation: {
+          method: 'POST',
+          pathTemplate: '/api/v1/spaces/{spaceId}/tasks/{recordId}/actions/complete',
+        },
+      },
+    ],
+    capabilities: [],
+    capabilityBindings: {},
+  },
+};
+
+function progressiveContext(parameters = {}) {
+  const calls = [];
+  return {
+    calls,
+    getCredentials: async () => ({ baseUrl: `${BASE_URL}/` }),
+    getNodeParameter(name, defaultValue) {
+      return Object.prototype.hasOwnProperty.call(parameters, name) ? parameters[name] : defaultValue;
+    },
+    getCurrentNodeParameter(name) {
+      return Object.prototype.hasOwnProperty.call(parameters, name) ? parameters[name] : undefined;
+    },
+    getNode: () => ({ name: 'LifeSpace' }),
+    helpers: {
+      async httpRequestWithAuthentication(_credentialName, options) {
+        calls.push(options);
+        if (options.url === `${BASE_URL}/me/_discovery/inventory`) return inventory;
+        if (options.url === `${BASE_URL}/spaces/spc_test/_discovery/models/task`) return taskDetail;
+        if (options.url === `${BASE_URL}/spaces/spc_test/_relation-targets/task/assigneePersonIds`) {
+          return { data: { items: [{ id: 'per_a', label: 'Alice' }], nextCursor: null } };
+        }
+        throw new Error(`Unexpected request ${options.method} ${options.url}`);
+      },
+    },
+  };
+}
+
+function progressiveExecuteContext(parameters = {}) {
+  const calls = [];
+  return {
+    calls,
+    getInputData: () => [{ json: {} }],
+    getCredentials: async () => ({ baseUrl: `${BASE_URL}/` }),
+    getNodeParameter(name, _itemIndex, defaultValue) {
+      return Object.prototype.hasOwnProperty.call(parameters, name) ? parameters[name] : defaultValue;
+    },
+    getNode: () => ({ name: 'LifeSpace' }),
+    continueOnFail: () => false,
+    helpers: {
+      async httpRequestWithAuthentication(_credentialName, options) {
+        calls.push(options);
+        if (options.url === `${BASE_URL}/me/_discovery/inventory`) return inventory;
+        if (options.url === `${BASE_URL}/spaces/spc_test/tasks` && options.method === 'POST') {
+          return { data: { id: 'tsk_created', version: 1, ...options.body } };
+        }
+        throw new Error(`Unexpected request ${options.method} ${options.url}`);
+      },
+    },
+  };
+}
+
+test('Space and Record Type selectors use compact inventory only', async () => {
+  const node = new LifeSpace();
+
+  const spaceContext = progressiveContext();
+  const spaces = await node.methods.loadOptions.getSpaces.call(spaceContext);
+  assert.deepEqual(spaces.map((item) => [item.name, item.value]), [['Test Space', 'spc_test']]);
+  assert.deepEqual(spaceContext.calls.map((call) => call.url), [`${BASE_URL}/me/_discovery/inventory`]);
+
+  const modelContext = progressiveContext({ spaceId: 'spc_test', operation: 'list' });
+  const models = await node.methods.loadOptions.getRecordTypes.call(modelContext);
+  assert.deepEqual(models.map((item) => item.value), ['tasks', 'notes']);
+  assert.deepEqual(modelContext.calls.map((call) => call.url), [`${BASE_URL}/me/_discovery/inventory`]);
+});
+
+test('Field UI fetches only the selected model semantic detail', async () => {
+  const node = new LifeSpace();
+  const context = progressiveContext({
+    spaceId: 'spc_test',
+    modelRoute: 'tasks',
+    operation: 'create',
+  });
+
+  const fields = await node.methods.resourceMapping.getRecordFields.call(context);
+  assert.deepEqual(fields.fields.map((field) => field.id), ['name']);
+  assert.deepEqual(context.calls.map((call) => call.url), [
+    `${BASE_URL}/me/_discovery/inventory`,
+    `${BASE_URL}/spaces/spc_test/_discovery/models/task`,
+  ]);
+  assert.equal(context.calls.some((call) => call.url.endsWith('/me/_discovery')), false);
+  assert.equal(context.calls.some((call) => call.url.includes('/models/note')), false);
+});
+
+test('Relation options remain lazy and field-scoped after progressive detail', async () => {
+  const node = new LifeSpace();
+  const context = progressiveContext({
+    spaceId: 'spc_test',
+    modelRoute: 'tasks',
+    '&field': 'assigneePersonIds',
+  });
+
+  const targets = await node.methods.loadOptions.getRelationTargetsForCurrentField.call(context);
+  assert.deepEqual(targets, [{ name: 'Alice', value: 'per_a' }]);
+  assert.deepEqual(context.calls.map((call) => call.url), [
+    `${BASE_URL}/me/_discovery/inventory`,
+    `${BASE_URL}/spaces/spc_test/_discovery/models/task`,
+    `${BASE_URL}/spaces/spc_test/_relation-targets/task/assigneePersonIds`,
+  ]);
+});
+
+test('non-Calendar create reads execution inventory without fetching semantic detail', async () => {
+  const node = new LifeSpace();
+  const context = progressiveExecuteContext({
+    resource: 'modelRecord',
+    operation: 'create',
+    spaceId: 'spc_test',
+    modelRoute: 'tasks',
+    'fields.value': { name: 'Inventory-only execution' },
+    'dateFields.date': [],
+    'singleRelations.relation': [],
+    'multiRelations.relation': [],
+  });
+
+  await node.execute.call(context);
+  assert.deepEqual(context.calls.map((call) => [call.method, call.url]), [
+    ['GET', `${BASE_URL}/me/_discovery/inventory`],
+    ['POST', `${BASE_URL}/spaces/spc_test/tasks`],
+  ]);
+  assert.equal(context.calls.some((call) => call.url.includes('/_discovery/models/')), false);
+});

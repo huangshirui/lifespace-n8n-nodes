@@ -1,6 +1,5 @@
 import type {
   IExecuteFunctions,
-  IHttpRequestOptions,
   ILoadOptionsFunctions,
   JsonObject,
 } from 'n8n-workflow';
@@ -22,10 +21,23 @@ export type DiscoveryRelationLookup =
       reason: string;
     };
 
+export type DiscoveryRelationResolution =
+  | {
+      supported: true;
+      method: 'POST';
+      pathTemplate: string;
+      maxIds: number;
+    }
+  | {
+      supported: false;
+      reason: string;
+    };
+
 export type DiscoveryRelation = {
   targetModel: string;
   cardinality: 'one' | 'many';
   lookup: DiscoveryRelationLookup;
+  resolution?: DiscoveryRelationResolution;
 };
 
 export type DiscoveryField = {
@@ -61,6 +73,33 @@ export type DiscoveryAction = {
   kind: 'workflow' | 'capability';
   input: { fields: DiscoveryField[] };
   concurrency?: DiscoveryActionConcurrency;
+  invocation?: {
+    method: 'POST';
+    pathTemplate: string;
+  };
+};
+
+export type DiscoveryCalendarCapabilityBinding = {
+  allDayField: string;
+  timedStartField: string;
+  timedEndField: string;
+  startTimezoneField: string;
+  endTimezoneField: string;
+  allDayStartField: string;
+  allDayEndExclusiveField: string;
+  attendeePersonField?: string;
+};
+
+export type DiscoveryTemporalCapabilityBinding = {
+  subjectPersonField: string;
+  anchorField: string;
+  recurrenceField?: string;
+  occurrences?: boolean;
+};
+
+export type DiscoveryCapabilityBindings = {
+  calendar?: DiscoveryCalendarCapabilityBinding;
+  temporal?: DiscoveryTemporalCapabilityBinding;
 };
 
 export type DiscoveryModel = {
@@ -88,6 +127,8 @@ export type DiscoveryModel = {
     };
   };
   actions: DiscoveryAction[];
+  capabilities?: string[];
+  capabilityBindings?: DiscoveryCapabilityBindings;
 };
 
 export type DiscoverySpace = {
@@ -114,32 +155,292 @@ type RelationTargetResponse = {
   };
 };
 
+type InventoryAction = {
+  key: string;
+  access: DiscoveryAccess;
+  kind: 'workflow' | 'capability';
+};
+
+type InventoryModel = {
+  key: string;
+  route: string;
+  version: number;
+  schemaHash: string;
+  display: { singular: string; plural: string };
+  capabilities: string[];
+  actions: InventoryAction[];
+};
+
+type InventorySpace = {
+  spaceId: string;
+  spaceName: string | null;
+  models: Array<{
+    modelKey: string;
+    access: DiscoveryAccess[];
+  }>;
+};
+
+type InventoryResponse = {
+  data: {
+    semanticDetailPathTemplate: string;
+    models: InventoryModel[];
+    spaces: InventorySpace[];
+  };
+};
+
+type SemanticRelation = {
+  targetModel: string;
+  cardinality: 'one' | 'many';
+  lookup?: DiscoveryRelationLookup;
+  resolution?: DiscoveryRelationResolution;
+};
+
+type SemanticField = Omit<DiscoveryField, 'relation'> & {
+  relation?: SemanticRelation;
+};
+
+type SemanticDetail = {
+  key: string;
+  route: string;
+  version: number;
+  schemaHash: string;
+  display: { singular: string; plural: string };
+  description: string | null;
+  declaredAccess: DiscoveryAccess[];
+  fields: SemanticField[];
+  defaults: Record<string, unknown>;
+  query: {
+    searchable: string[];
+    filterable: string[];
+    sortable: string[];
+    sort: {
+      parameter: 'sort';
+      syntax: 'field:direction';
+      repeatable: true;
+      ordered: true;
+      maxCriteria: number;
+      genericDefault: string[];
+      envelopeFields: string[];
+    };
+  };
+  actions: DiscoveryAction[];
+  capabilities: string[];
+  capabilityBindings: DiscoveryCapabilityBindings;
+};
+
+type SemanticDetailResponse = {
+  data: SemanticDetail;
+};
+
+type DiscoverySelection = {
+  spaceId: string;
+  modelRoute: string;
+};
+
+type ProgressiveDetailMode = 'selected' | 'calendar-if-present';
+
 const RELATION_TARGET_PAGE_SIZE = 100;
 const RELATION_TARGET_OPTION_LIMIT = 1000;
+const RELATION_TARGET_LOOKUP_PATH = '/api/v1/spaces/{spaceId}/_relation-targets/{modelKey}/{fieldKey}';
 
 export function normalizeBaseUrl(value: unknown): string {
   return String(value ?? '').replace(/\/$/, '');
 }
 
-async function requestRuntimeDiscovery(
+function apiUrl(baseUrl: string, path: string): string {
+  let normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  if (baseUrl.endsWith('/api/v1') && normalizedPath.startsWith('/api/v1/')) {
+    normalizedPath = normalizedPath.slice('/api/v1'.length);
+  }
+  return `${baseUrl}${normalizedPath}`;
+}
+
+async function authenticatedGet<T>(
+  context: ILoadOptionsFunctions | IExecuteFunctions,
+  baseUrl: string,
+  path: string,
+): Promise<T> {
+  return await context.helpers.httpRequestWithAuthentication.call(
+    context,
+    'lifeSpaceApi',
+    { method: 'GET', url: apiUrl(baseUrl, path), json: true },
+  ) as T;
+}
+
+async function requestFullRuntimeDiscovery(
   context: ILoadOptionsFunctions | IExecuteFunctions,
   baseUrl: string,
 ): Promise<DiscoveryResponse> {
-  const options: IHttpRequestOptions = {
-    method: 'GET',
-    url: `${baseUrl}/me/_discovery`,
-    json: true,
-  };
-
   try {
-    return await context.helpers.httpRequestWithAuthentication.call(
-      context,
-      'lifeSpaceApi',
-      options,
-    ) as DiscoveryResponse;
+    return await authenticatedGet<DiscoveryResponse>(context, baseUrl, '/me/_discovery');
   } catch (error) {
     throw new NodeApiError(context.getNode(), error as JsonObject);
   }
+}
+
+function loadOptionParameter(context: ILoadOptionsFunctions, name: string): string {
+  try {
+    return String(context.getNodeParameter(name, '') ?? '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function defaultLookup(): DiscoveryRelationLookup {
+  return {
+    supported: true,
+    method: 'GET',
+    pathTemplate: RELATION_TARGET_LOOKUP_PATH,
+    searchParameter: 'q',
+    cursorParameter: 'cursor',
+    limitParameter: 'limit',
+  };
+}
+
+function normalizedField(field: SemanticField): DiscoveryField {
+  const { relation, ...baseField } = field;
+  if (!relation) return baseField;
+  return {
+    ...baseField,
+    relation: {
+      targetModel: relation.targetModel,
+      cardinality: relation.cardinality,
+      lookup: relation.lookup ?? defaultLookup(),
+      ...(relation.resolution ? { resolution: relation.resolution } : {}),
+    },
+  };
+}
+
+function stubModel(identity: InventoryModel, access: DiscoveryAccess[]): DiscoveryModel {
+  return {
+    key: identity.key,
+    route: identity.route,
+    version: identity.version,
+    schemaHash: identity.schemaHash,
+    display: identity.display,
+    description: null,
+    access,
+    fields: [],
+    defaults: {},
+    query: {
+      searchable: [],
+      filterable: [],
+      sortable: [],
+      sort: {
+        parameter: 'sort',
+        syntax: 'field:direction',
+        repeatable: true,
+        ordered: true,
+        maxCriteria: 8,
+        default: ['createdAt:desc'],
+        envelopeFields: ['createdAt', 'updatedAt'],
+      },
+    },
+    actions: identity.actions.map((action) => ({ ...action, input: { fields: [] } })),
+    capabilities: [...identity.capabilities],
+    capabilityBindings: {},
+  };
+}
+
+function detailedModel(detail: SemanticDetail, access: DiscoveryAccess[]): DiscoveryModel {
+  return {
+    key: detail.key,
+    route: detail.route,
+    version: detail.version,
+    schemaHash: detail.schemaHash,
+    display: detail.display,
+    description: detail.description,
+    access,
+    fields: detail.fields.map(normalizedField),
+    defaults: detail.defaults,
+    query: {
+      searchable: detail.query.searchable,
+      filterable: detail.query.filterable,
+      sortable: detail.query.sortable,
+      sort: {
+        parameter: detail.query.sort.parameter,
+        syntax: detail.query.sort.syntax,
+        repeatable: detail.query.sort.repeatable,
+        ordered: detail.query.sort.ordered,
+        maxCriteria: detail.query.sort.maxCriteria,
+        default: detail.query.sort.genericDefault,
+        envelopeFields: detail.query.sort.envelopeFields,
+      },
+    },
+    actions: detail.actions,
+    capabilities: detail.capabilities,
+    capabilityBindings: detail.capabilityBindings,
+  };
+}
+
+function replacePathTemplate(template: string, values: Record<string, string>): string {
+  return Object.entries(values).reduce(
+    (path, [key, value]) => path.replace(`{${key}}`, encodeURIComponent(value)),
+    template,
+  );
+}
+
+async function requestProgressiveRuntimeDiscovery(
+  context: ILoadOptionsFunctions | IExecuteFunctions,
+  baseUrl: string,
+  selection?: DiscoverySelection,
+  detailMode: ProgressiveDetailMode = 'selected',
+): Promise<DiscoveryResponse | null> {
+  let inventory: InventoryResponse;
+  try {
+    inventory = await authenticatedGet<InventoryResponse>(context, baseUrl, '/me/_discovery/inventory');
+  } catch {
+    return null;
+  }
+
+  if (!inventory?.data || !Array.isArray(inventory.data.models) || !Array.isArray(inventory.data.spaces)) {
+    throw new NodeOperationError(context.getNode(), 'LifeSpace Runtime Discovery inventory returned an invalid response');
+  }
+
+  const identities = new Map(inventory.data.models.map((model) => [model.key, model]));
+  const selectedSpaceId = selection?.spaceId ?? '';
+  const selectedModelRoute = selection?.modelRoute ?? '';
+  let selectedDetail: SemanticDetail | null = null;
+  let selectedModelKey = '';
+
+  if (selectedSpaceId && selectedModelRoute) {
+    const selectedSpace = inventory.data.spaces.find((space) => space.spaceId === selectedSpaceId);
+    const selectedIdentity = [...identities.values()].find((model) => model.route === selectedModelRoute);
+    const visible = selectedSpace && selectedIdentity
+      && selectedSpace.models.some((edge) => edge.modelKey === selectedIdentity.key);
+    const needsDetail = selectedIdentity
+      && (detailMode === 'selected' || selectedIdentity.capabilities.includes('calendar'));
+
+    if (visible && selectedIdentity && needsDetail) {
+      selectedModelKey = selectedIdentity.key;
+      const path = replacePathTemplate(inventory.data.semanticDetailPathTemplate, {
+        spaceId: selectedSpaceId,
+        modelKey: selectedIdentity.key,
+      });
+      try {
+        const response = await authenticatedGet<SemanticDetailResponse>(context, baseUrl, path);
+        selectedDetail = response.data;
+      } catch (error) {
+        throw new NodeApiError(context.getNode(), error as JsonObject);
+      }
+    }
+  }
+
+  return {
+    data: {
+      spaces: inventory.data.spaces.map((space) => ({
+        spaceId: space.spaceId,
+        spaceName: space.spaceName,
+        models: space.models.flatMap((edge) => {
+          const identity = identities.get(edge.modelKey);
+          if (!identity) return [];
+          return [selectedDetail && edge.modelKey === selectedModelKey && space.spaceId === selectedSpaceId
+            ? detailedModel(selectedDetail, edge.access)
+            : stubModel(identity, edge.access)];
+        }),
+      })),
+    },
+  };
 }
 
 function relationTargetUrl(
@@ -149,16 +450,7 @@ function relationTargetUrl(
   modelKey: string,
   fieldKey: string,
 ): string {
-  let path = pathTemplate
-    .replace('{spaceId}', encodeURIComponent(spaceId))
-    .replace('{modelKey}', encodeURIComponent(modelKey))
-    .replace('{fieldKey}', encodeURIComponent(fieldKey));
-
-  if (baseUrl.endsWith('/api/v1') && path.startsWith('/api/v1/')) {
-    path = path.slice('/api/v1'.length);
-  }
-  if (!path.startsWith('/')) path = `/${path}`;
-  return `${baseUrl}${path}`;
+  return apiUrl(baseUrl, replacePathTemplate(pathTemplate, { spaceId, modelKey, fieldKey }));
 }
 
 function parseRelationTargets(
@@ -242,14 +534,33 @@ export async function loadRelationTargets(
 
 export async function loadRuntimeDiscovery(this: ILoadOptionsFunctions): Promise<DiscoveryResponse> {
   const credentials = await this.getCredentials('lifeSpaceApi');
-  return requestRuntimeDiscovery(this, normalizeBaseUrl(credentials.baseUrl));
+  const baseUrl = normalizeBaseUrl(credentials.baseUrl);
+  const selection = {
+    spaceId: loadOptionParameter(this, 'spaceId'),
+    modelRoute: loadOptionParameter(this, 'modelRoute'),
+  };
+  const progressive = await requestProgressiveRuntimeDiscovery(this, baseUrl, selection);
+  return progressive ?? requestFullRuntimeDiscovery(this, baseUrl);
 }
 
 export async function loadExecutionRuntimeDiscovery(
   context: IExecuteFunctions,
   baseUrl: string,
+  spaceId?: string,
+  modelRoute?: string,
 ): Promise<DiscoveryResponse> {
-  return requestRuntimeDiscovery(context, baseUrl);
+  const selection = spaceId && modelRoute ? { spaceId, modelRoute } : undefined;
+  let detailMode: ProgressiveDetailMode = 'selected';
+  if (selection) {
+    try {
+      const operation = String(context.getNodeParameter('operation', 0, '') ?? '').trim();
+      if (operation === 'create' || operation === 'update') detailMode = 'calendar-if-present';
+    } catch {
+      detailMode = 'selected';
+    }
+  }
+  const progressive = await requestProgressiveRuntimeDiscovery(context, baseUrl, selection, detailMode);
+  return progressive ?? requestFullRuntimeDiscovery(context, baseUrl);
 }
 
 export function discoverySpace(discovery: DiscoveryResponse, spaceId: string): DiscoverySpace | undefined {

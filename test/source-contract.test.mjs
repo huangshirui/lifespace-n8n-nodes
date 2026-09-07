@@ -43,7 +43,8 @@ test('package separates outbound API auth from endpoint-scoped webhook signing',
 test('Runtime Discovery UX is cross-Space and Record-facing', async () => {
   const discovery = await text('nodes/lifespaceDiscovery.ts');
   const node = await text('nodes/LifeSpace/LifeSpace.node.ts');
-  assert.match(discovery, /\/me\/_discovery/u);
+  assert.match(discovery, /\/me\/_discovery\/inventory/u);
+  assert.match(discovery, /semanticDetailPathTemplate/u);
   assert.match(discovery, /defaults: Record<string, unknown>/u);
   assert.match(discovery, /title\?: string/u);
   assert.match(discovery, /repeatable: true/u);
@@ -51,6 +52,7 @@ test('Runtime Discovery UX is cross-Space and Record-facing', async () => {
   assert.match(discovery, /spaceName\?: string \| null/u);
   assert.match(discovery, /relation\?: DiscoveryRelation/u);
   assert.match(discovery, /lookup: DiscoveryRelationLookup/u);
+  assert.match(discovery, /resolution\?: DiscoveryRelationResolution/u);
   assert.match(discovery, /export async function loadRelationTargets/u);
   assert.match(node, /name: 'Record'/u);
   assert.match(node, /displayName: 'Record Type Name or ID'/u);
@@ -67,7 +69,7 @@ test('Runtime Discovery UX is cross-Space and Record-facing', async () => {
   assert.match(multiRelations, /loadOptionsMethod: 'getRelationTargetsForCurrentField'/u);
 
   assert.match(node, /getCurrentNodeParameter\('&field'\)/u);
-  assert.match(node, /loadRelationTargets\(this, spaceId, model\.key, field\)/u);
+  assert.match(node, /loadRelationTargets\(this, selected\.spaceId, selected\.model\.key, field\)/u);
 
   const actionKey = sourceBlock(node, "name: 'actionKey'", "name: 'actionInput'");
   assert.match(actionKey, /loadOptionsDependsOn: \['spaceId', 'modelRoute'\]/u);

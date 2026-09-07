@@ -140,6 +140,12 @@ function executeContext(parameters, responder) {
     continueOnFail: () => false,
     helpers: {
       async httpRequestWithAuthentication(credentialName, options) {
+        if (options.url === `${BASE_URL}/me/_discovery/inventory`) {
+          throw new Error('Synthetic legacy Core has no progressive inventory');
+        }
+        if (options.url === `${BASE_URL}/me/_discovery` && parameters.operation !== 'executeAction') {
+          return discoveryFixture();
+        }
         calls.push({ credentialName, options });
         return responder(options, calls.length - 1);
       },
