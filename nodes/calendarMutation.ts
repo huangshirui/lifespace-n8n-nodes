@@ -21,7 +21,7 @@ function calendarMode(value: unknown): 'all-day' | 'timed' | null {
 function conflictingFields(
   model: DiscoveryModel,
   binding: DiscoveryCalendarCapabilityBinding,
-  state: IDataObject,
+  state: Record<string, unknown>,
   mode: 'all-day' | 'timed',
 ): string[] {
   const keys = mode === 'all-day'
@@ -48,7 +48,7 @@ export function validateCalendarMutation(
   const binding = model.capabilityBindings?.calendar;
   if (!binding) return;
 
-  const state: IDataObject = {
+  const state: Record<string, unknown> = {
     ...model.defaults,
     ...(currentRecord ?? {}),
     ...payload,
