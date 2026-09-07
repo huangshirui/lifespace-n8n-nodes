@@ -1,6 +1,5 @@
 import type {
   IExecuteFunctions,
-  IHttpRequestOptions,
   ILoadOptionsFunctions,
   JsonObject,
 } from 'n8n-workflow';
@@ -388,8 +387,6 @@ async function requestProgressiveRuntimeDiscovery(
   try {
     inventory = await authenticatedGet<InventoryResponse>(context, baseUrl, '/me/_discovery/inventory');
   } catch {
-    // Compatibility fallback for pre-progressive Kernel contracts and transient inventory-only failures.
-    // The legacy aggregate remains authority-scoped and execution never treats either projection as authorization proof.
     return null;
   }
 
