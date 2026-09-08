@@ -111,6 +111,40 @@ function discoveryFixture({ legacyAction = false } = {}) {
   };
 }
 
+function semanticDetailFixture({ legacyAction = false } = {}) {
+  const model = discoveryFixture({ legacyAction }).data.spaces[0].models[0];
+  return {
+    data: {
+      key: model.key,
+      route: model.route,
+      version: model.version,
+      schemaHash: model.schemaHash,
+      display: model.display,
+      description: model.description,
+      declaredAccess: model.access,
+      fields: model.fields,
+      defaults: model.defaults,
+      query: {
+        searchable: model.query.searchable,
+        filterable: model.query.filterable,
+        sortable: model.query.sortable,
+        sort: {
+          parameter: 'sort',
+          syntax: 'field:direction',
+          repeatable: true,
+          ordered: true,
+          maxCriteria: 8,
+          genericDefault: ['createdAt:desc'],
+          envelopeFields: ['createdAt', 'updatedAt'],
+        },
+      },
+      actions: model.actions,
+      capabilities: [],
+      capabilityBindings: {},
+    },
+  };
+}
+
 function loadOptionsContext(discovery, parameters = {}) {
   return {
     getCredentials: async () => ({ baseUrl: `${BASE_URL}/` }),
@@ -467,9 +501,8 @@ test('Update accepts an explicit advanced version without an extra read', async 
   assert.deepEqual(context.calls[0].options.body, { name: 'Updated', version: 5 });
 });
 
-test('Execute Action resolves record-version concurrency from cross-Space Discovery', async () => {
+test('Execute Action resolves record-version concurrency from selected-model semantic detail', async () => {
   const node = new LifeSpace();
-  const discovery = discoveryFixture();
   const context = executeContext(
     {
       resource: 'modelRecord',
@@ -481,7 +514,7 @@ test('Execute Action resolves record-version concurrency from cross-Space Discov
       'actionInput.value': {},
     },
     (options) => {
-      if (options.url.endsWith('/me/_discovery')) return discovery;
+      if (options.url.endsWith('/spaces/spc_test/_discovery/models/task')) return semanticDetailFixture();
       if (options.method === 'GET' && options.url.endsWith('/tasks/tsk_test')) {
         return { data: { id: 'tsk_test', version: 7 } };
       }
@@ -496,16 +529,15 @@ test('Execute Action resolves record-version concurrency from cross-Space Discov
 
   assert.equal(context.calls.length, 3);
   assert.deepEqual(context.calls.map((call) => [call.options.method, call.options.url]), [
-    ['GET', `${BASE_URL}/me/_discovery`],
+    ['GET', `${BASE_URL}/spaces/spc_test/_discovery/models/task`],
     ['GET', `${BASE_URL}/spaces/spc_test/tasks/tsk_test`],
     ['POST', `${BASE_URL}/spaces/spc_test/tasks/tsk_test/actions/complete`],
   ]);
   assert.deepEqual(context.calls[2].options.body, { version: 7 });
 });
 
-test('Execute Action preserves compatibility when Discovery still carries version as semantic input', async () => {
+test('Execute Action preserves compatibility when semantic detail still carries version as semantic input', async () => {
   const node = new LifeSpace();
-  const discovery = discoveryFixture({ legacyAction: true });
   const context = executeContext(
     {
       resource: 'modelRecord',
@@ -517,7 +549,7 @@ test('Execute Action preserves compatibility when Discovery still carries versio
       'actionInput.value': { version: 4 },
     },
     (options) => {
-      if (options.url.endsWith('/me/_discovery')) return discovery;
+      if (options.url.endsWith('/spaces/spc_test/_discovery/models/task')) return semanticDetailFixture({ legacyAction: true });
       if (options.method === 'POST' && options.url.endsWith('/tasks/tsk_legacy/actions/complete')) {
         return { data: { id: 'tsk_legacy', status: 'completed', version: 5 } };
       }
@@ -528,6 +560,10 @@ test('Execute Action preserves compatibility when Discovery still carries versio
   await node.execute.call(context);
 
   assert.equal(context.calls.length, 2);
+  assert.deepEqual(context.calls.map((call) => [call.options.method, call.options.url]), [
+    ['GET', `${BASE_URL}/spaces/spc_test/_discovery/models/task`],
+    ['POST', `${BASE_URL}/spaces/spc_test/tasks/tsk_legacy/actions/complete`],
+  ]);
   assert.deepEqual(context.calls[1].options.body, { version: 4 });
 });
 
