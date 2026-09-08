@@ -4,12 +4,9 @@ on:
   push:
     tags:
       - '*.*.*'
-    branches:
-      - main
 
 jobs:
   publish:
-    if: github.ref_type == 'tag' || startsWith(github.event.head_commit.message, 'release-publish-')
     name: Publish to npm
     runs-on: ubuntu-latest
     permissions:
@@ -48,10 +45,8 @@ jobs:
           set -euo pipefail
           package_version="$(node -p "require('./package.json').version")"
           lock_version="$(node -p "require('./package-lock.json').version")"
-          test "$package_version" = "$lock_version"
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            test "$package_version" = "${GITHUB_REF_NAME}"
-          fi
+          test "$package_version" = "$lock_version" || { echo "package.json (${package_version}) does not match package-lock.json (${lock_version})." >&2; exit 1; }
+          test "$package_version" = "${GITHUB_REF_NAME}" || { echo "Release tag (${GITHUB_REF_NAME}) does not match package version (${package_version})." >&2; exit 1; }
           echo "Publishing n8n-nodes-lifespace@${package_version}"
 
       - name: Install dependencies
