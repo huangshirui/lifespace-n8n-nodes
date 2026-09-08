@@ -105,6 +105,8 @@ GET /me/_discovery/inventory
   -> persist stable workflow configuration
 ```
 
+Design-time callbacks prefer n8n editor-current parameters, so Fields and Actions refresh immediately after Record Type selection. A legacy 0.1.3 `modelRoute` is still readable for design-time compatibility; re-selecting Record Type moves configuration to the composable selector.
+
 Execution is deliberately narrower. Get/List/Delete derive the REST route locally from the persisted Record Type selector. Create/Update submit the configured mutation without a fresh Runtime Discovery preflight. Execute Action loads only the selected model's `0.26+` static semantic detail, and reuses that detail within the same node execution for repeated items using the same Space/Record Type. No cached Discovery result is treated as authorization proof; every CRUD or Action request still goes through canonical LifeSpace Core current-state enforcement.
 
 The legacy aggregate `GET /me/_discovery` remains an intentional design-time compatibility fallback. Neither cached Discovery nor relation lookup is treated as authorization proof; every mutation still goes through canonical LifeSpace Runtime enforcement.
