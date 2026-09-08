@@ -234,7 +234,7 @@ type SemanticDetailResponse = {
 
 type DiscoverySelection = {
   spaceId: string;
-  modelRoute: string;
+  modelKey: string;
 };
 
 type ProgressiveDetailMode = 'selected' | 'calendar-if-present';
@@ -242,6 +242,30 @@ type ProgressiveDetailMode = 'selected' | 'calendar-if-present';
 const RELATION_TARGET_PAGE_SIZE = 100;
 const RELATION_TARGET_OPTION_LIMIT = 1000;
 const RELATION_TARGET_LOOKUP_PATH = '/api/v1/spaces/{spaceId}/_relation-targets/{modelKey}/{fieldKey}';
+const RECORD_TYPE_SELECTOR_PREFIX = 'lsrt1.';
+
+export type RecordTypeSelector = {
+  modelKey: string;
+  route: string;
+};
+
+export function encodeRecordTypeSelector(modelKey: string, route: string): string {
+  const payload = Buffer.from(JSON.stringify([modelKey, route]), 'utf8').toString('base64url');
+  return RECORD_TYPE_SELECTOR_PREFIX + payload;
+}
+
+export function decodeRecordTypeSelector(value: unknown): RecordTypeSelector | null {
+  const raw = String(value ?? '').trim();
+  if (!raw.startsWith(RECORD_TYPE_SELECTOR_PREFIX)) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(raw.slice(RECORD_TYPE_SELECTOR_PREFIX.length), 'base64url').toString('utf8')) as unknown;
+    if (!Array.isArray(decoded) || decoded.length !== 2 || typeof decoded[0] !== 'string' || typeof decoded[1] !== 'string'
+      || !decoded[0].trim() || !decoded[1].trim()) return null;
+    return { modelKey: decoded[0], route: decoded[1] };
+  } catch {
+    return null;
+  }
+}
 
 export function normalizeBaseUrl(value: unknown): string {
   return String(value ?? '').replace(/\/$/, '');
@@ -399,20 +423,18 @@ async function requestProgressiveRuntimeDiscovery(
 
   const identities = new Map(inventory.data.models.map((model) => [model.key, model]));
   const selectedSpaceId = selection?.spaceId ?? '';
-  const selectedModelRoute = selection?.modelRoute ?? '';
+  const selectedModelKey = selection?.modelKey ?? '';
   let selectedDetail: SemanticDetail | null = null;
-  let selectedModelKey = '';
 
-  if (selectedSpaceId && selectedModelRoute) {
+  if (selectedSpaceId && selectedModelKey) {
     const selectedSpace = inventory.data.spaces.find((space) => space.spaceId === selectedSpaceId);
-    const selectedIdentity = [...identities.values()].find((model) => model.route === selectedModelRoute);
+    const selectedIdentity = identities.get(selectedModelKey);
     const visible = selectedSpace && selectedIdentity
       && selectedSpace.models.some((edge) => edge.modelKey === selectedIdentity.key);
     const needsDetail = selectedIdentity
       && (detailMode === 'selected' || selectedIdentity.capabilities.includes('calendar'));
 
     if (visible && selectedIdentity && needsDetail) {
-      selectedModelKey = selectedIdentity.key;
       const path = replacePathTemplate(inventory.data.semanticDetailPathTemplate, {
         spaceId: selectedSpaceId,
         modelKey: selectedIdentity.key,
@@ -535,9 +557,14 @@ export async function loadRelationTargets(
 export async function loadRuntimeDiscovery(this: ILoadOptionsFunctions): Promise<DiscoveryResponse> {
   const credentials = await this.getCredentials('lifeSpaceApi');
   const baseUrl = normalizeBaseUrl(credentials.baseUrl);
+  const recordType = loadOptionParameter(this, 'recordType');
+  const decodedRecordType = recordType ? decodeRecordTypeSelector(recordType) : null;
+  if (recordType && !decodedRecordType) {
+    throw new NodeOperationError(this.getNode(), 'LifeSpace Record Type selector is invalid. Choose a Record Type from Discovery or pass a Trigger recordType value.');
+  }
   const selection = {
     spaceId: loadOptionParameter(this, 'spaceId'),
-    modelRoute: loadOptionParameter(this, 'modelRoute'),
+    modelKey: decodedRecordType?.modelKey ?? '',
   };
   const progressive = await requestProgressiveRuntimeDiscovery(this, baseUrl, selection);
   return progressive ?? requestFullRuntimeDiscovery(this, baseUrl);
@@ -547,9 +574,9 @@ export async function loadExecutionRuntimeDiscovery(
   context: IExecuteFunctions,
   baseUrl: string,
   spaceId?: string,
-  modelRoute?: string,
+  modelKey?: string,
 ): Promise<DiscoveryResponse> {
-  const selection = spaceId && modelRoute ? { spaceId, modelRoute } : undefined;
+  const selection = spaceId && modelKey ? { spaceId, modelKey } : undefined;
   let detailMode: ProgressiveDetailMode = 'selected';
   if (selection) {
     try {
@@ -570,9 +597,9 @@ export function discoverySpace(discovery: DiscoveryResponse, spaceId: string): D
 export function discoveryModel(
   discovery: DiscoveryResponse,
   spaceId: string,
-  modelRoute: string,
+  modelKey: string,
 ): DiscoveryModel | undefined {
-  return discoverySpace(discovery, spaceId)?.models.find((model) => model.route === modelRoute);
+  return discoverySpace(discovery, spaceId)?.models.find((model) => model.key === modelKey);
 }
 
 export function humanizeKey(key: string): string {

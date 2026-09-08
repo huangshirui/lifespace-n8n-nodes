@@ -13,8 +13,10 @@ import type {
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import { validateCalendarMutation } from '../calendarMutation';
 import {
+  decodeRecordTypeSelector,
   discoveryModel,
   discoverySpace,
+  encodeRecordTypeSelector,
   humanizeKey,
   loadExecutionRuntimeDiscovery,
   loadRelationTargets,
@@ -381,12 +383,12 @@ async function executionModel(
   itemIndex: number,
   baseUrl: string,
   spaceId: string,
-  modelRoute: string,
+  modelKey: string,
 ): Promise<DiscoveryModel> {
-  const discovery = await loadExecutionRuntimeDiscovery(context, baseUrl, spaceId, modelRoute);
-  const model = discoveryModel(discovery, spaceId, modelRoute);
+  const discovery = await loadExecutionRuntimeDiscovery(context, baseUrl, spaceId, modelKey);
+  const model = discoveryModel(discovery, spaceId, modelKey);
   if (!model) {
-    throw new NodeOperationError(context.getNode(), `LifeSpace Record Type ${modelRoute} is not available`, { itemIndex });
+    throw new NodeOperationError(context.getNode(), `LifeSpace Record Type ${modelKey} is not available`, { itemIndex });
   }
   return model;
 }
@@ -396,12 +398,12 @@ async function actionBodyWithConcurrency(
   itemIndex: number,
   baseUrl: string,
   spaceId: string,
-  modelRoute: string,
+  modelKey: string,
   recordPath: string,
   actionKey: string,
   semanticInput: IDataObject,
 ): Promise<IDataObject> {
-  const model = await executionModel(context, itemIndex, baseUrl, spaceId, modelRoute);
+  const model = await executionModel(context, itemIndex, baseUrl, spaceId, modelKey);
   const action = model.actions.find((entry) => entry.key === actionKey);
   if (!action) {
     throw new NodeOperationError(context.getNode(), `LifeSpace Action ${actionKey} is not available`, { itemIndex });
@@ -435,10 +437,14 @@ function actionOption(action: DiscoveryAction): INodePropertyOptions {
 
 async function optionModel(context: ILoadOptionsFunctions): Promise<{ model: DiscoveryModel; spaceId: string } | null> {
   const spaceId = String(context.getNodeParameter('spaceId', '')).trim();
-  const modelRoute = String(context.getNodeParameter('modelRoute', '')).trim();
-  if (!spaceId || !modelRoute) return null;
+  const recordTypeValue = String(context.getNodeParameter('recordType', '')).trim();
+  if (!spaceId || !recordTypeValue) return null;
+  const recordType = decodeRecordTypeSelector(recordTypeValue);
+  if (!recordType) {
+    throw new NodeOperationError(context.getNode(), 'LifeSpace Record Type selector is invalid. Choose a Record Type from Discovery or pass a Trigger recordType value.');
+  }
   const discovery = await loadRuntimeDiscovery.call(context);
-  const model = discoveryModel(discovery, spaceId, modelRoute);
+  const model = discoveryModel(discovery, spaceId, recordType.modelKey);
   return model ? { model, spaceId } : null;
 }
 
@@ -541,10 +547,10 @@ export class LifeSpace implements INodeType {
         description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
       },
       {
-        displayName: 'Record Type Name or ID', name: 'modelRoute', type: 'options',
+        displayName: 'Record Type Name or ID', name: 'recordType', type: 'options',
         typeOptions: { loadOptionsMethod: 'getRecordTypes', loadOptionsDependsOn: ['spaceId', 'operation'] },
         options: [], default: '', required: true, displayOptions: { show: { resource: ['modelRecord'] } },
-        description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+        description: 'Choose from Discovery, or pass the recordType selector emitted by a LifeSpace Trigger using an <a href="https://docs.n8n.io/code/expressions/">expression</a>. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
       },
       {
         displayName: 'Record ID', name: 'recordId', type: 'string', default: '', required: true,
@@ -554,7 +560,7 @@ export class LifeSpace implements INodeType {
         displayName: 'Fields', name: 'fields', type: 'resourceMapper',
         default: { mappingMode: 'defineBelow', value: null }, noDataExpression: true, required: true,
         typeOptions: {
-          loadOptionsDependsOn: ['spaceId', 'modelRoute', 'operation'],
+          loadOptionsDependsOn: ['spaceId', 'recordType', 'operation'],
           resourceMapper: {
             resourceMapperMethod: 'getRecordFields', mode: 'add',
             fieldWords: { singular: 'field', plural: 'fields' }, addAllFields: true, supportAutoMap: false,
@@ -572,7 +578,7 @@ export class LifeSpace implements INodeType {
           displayName: 'Date', name: 'date', values: [
             {
               displayName: 'Field Name or ID', name: 'field', type: 'options',
-              typeOptions: { loadOptionsMethod: 'getWritableDateFields', loadOptionsDependsOn: ['spaceId', 'modelRoute', 'operation'] },
+              typeOptions: { loadOptionsMethod: 'getWritableDateFields', loadOptionsDependsOn: ['spaceId', 'recordType', 'operation'] },
               options: [], default: '', required: true,
               description: 'Choose a LifeSpace date field. The node submits calendar-date YYYY-MM-DD values. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
             },
@@ -588,12 +594,12 @@ export class LifeSpace implements INodeType {
           {
             displayName: 'Field Name or ID', name: 'field', type: 'options',
             description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
-            typeOptions: { loadOptionsMethod: 'getSingleRelationFields', loadOptionsDependsOn: ['spaceId', 'modelRoute', 'operation'] },
+            typeOptions: { loadOptionsMethod: 'getSingleRelationFields', loadOptionsDependsOn: ['spaceId', 'recordType', 'operation'] },
             options: [], default: '', required: true,
           },
           {
             displayName: 'Target Name or ID', name: 'target', type: 'options',
-            typeOptions: { loadOptionsMethod: 'getRelationTargetsForCurrentField', loadOptionsDependsOn: ['spaceId', 'modelRoute', '&field'] },
+            typeOptions: { loadOptionsMethod: 'getRelationTargetsForCurrentField', loadOptionsDependsOn: ['spaceId', 'recordType', '&field'] },
             options: [], default: '',
             description: 'Choose an authorized relation target, or use an expression with a stable LifeSpace ID. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
           },
@@ -607,12 +613,12 @@ export class LifeSpace implements INodeType {
           {
             displayName: 'Field Name or ID', name: 'field', type: 'options',
             description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
-            typeOptions: { loadOptionsMethod: 'getMultiRelationFields', loadOptionsDependsOn: ['spaceId', 'modelRoute', 'operation'] },
+            typeOptions: { loadOptionsMethod: 'getMultiRelationFields', loadOptionsDependsOn: ['spaceId', 'recordType', 'operation'] },
             options: [], default: '', required: true,
           },
           {
             displayName: 'Targets Names or IDs', name: 'targets', type: 'multiOptions',
-            typeOptions: { loadOptionsMethod: 'getRelationTargetsForCurrentField', loadOptionsDependsOn: ['spaceId', 'modelRoute', '&field'] },
+            typeOptions: { loadOptionsMethod: 'getRelationTargetsForCurrentField', loadOptionsDependsOn: ['spaceId', 'recordType', '&field'] },
             options: [], default: [],
             description: 'Choose authorized relation targets, or use an expression with stable LifeSpace IDs. Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
           },
@@ -629,30 +635,30 @@ export class LifeSpace implements INodeType {
         displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
         options: [
           { displayName: 'Text Filter', name: 'text', values: [
-            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getTextFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
+            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getTextFilterableFields', loadOptionsDependsOn: ['spaceId', 'recordType'] }, options: [], default: '', required: true },
             { displayName: 'Value', name: 'value', type: 'string', default: '', required: true },
           ] },
           { displayName: 'Enum Filter', name: 'enum', values: [
-            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getEnumFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
-            { displayName: 'Value Names or IDs', name: 'values', type: 'multiOptions', description: 'Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getEnumValuesForCurrentFilter', loadOptionsDependsOn: ['spaceId', 'modelRoute', '&field'] }, options: [], default: [], required: true },
+            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getEnumFilterableFields', loadOptionsDependsOn: ['spaceId', 'recordType'] }, options: [], default: '', required: true },
+            { displayName: 'Value Names or IDs', name: 'values', type: 'multiOptions', description: 'Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getEnumValuesForCurrentFilter', loadOptionsDependsOn: ['spaceId', 'recordType', '&field'] }, options: [], default: [], required: true },
           ] },
           { displayName: 'Boolean Filter', name: 'boolean', values: [
-            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getBooleanFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
+            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getBooleanFilterableFields', loadOptionsDependsOn: ['spaceId', 'recordType'] }, options: [], default: '', required: true },
             { displayName: 'Value', name: 'value', type: 'boolean', default: true },
           ] },
           { displayName: 'Number Filter', name: 'number', values: [
-            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getNumericFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
+            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getNumericFilterableFields', loadOptionsDependsOn: ['spaceId', 'recordType'] }, options: [], default: '', required: true },
             { displayName: 'Operator', name: 'operator', type: 'options', options: [{ name: 'Equals', value: 'exact' }, { name: 'From / Greater Than or Equal', value: 'from' }, { name: 'To / Less Than or Equal', value: 'to' }], default: 'exact' },
             { displayName: 'Value', name: 'value', type: 'number', default: 0, required: true },
           ] },
           { displayName: 'Date / Time Filter', name: 'temporal', values: [
-            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getTemporalFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
+            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getTemporalFilterableFields', loadOptionsDependsOn: ['spaceId', 'recordType'] }, options: [], default: '', required: true },
             { displayName: 'Operator', name: 'operator', type: 'options', options: [{ name: 'Equals', value: 'exact' }, { name: 'From / Greater Than or Equal', value: 'from' }, { name: 'To / Less Than or Equal', value: 'to' }], default: 'exact' },
             { displayName: 'Value', name: 'value', type: 'dateTime', default: '', required: true },
           ] },
           { displayName: 'Person Filter', name: 'person', values: [
-            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getPersonFilterableFields', loadOptionsDependsOn: ['spaceId', 'modelRoute'] }, options: [], default: '', required: true },
-            { displayName: 'Person Name or ID', name: 'target', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getRelationTargetsForCurrentField', loadOptionsDependsOn: ['spaceId', 'modelRoute', '&field'] }, options: [], default: '', required: true },
+            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getPersonFilterableFields', loadOptionsDependsOn: ['spaceId', 'recordType'] }, options: [], default: '', required: true },
+            { displayName: 'Person Name or ID', name: 'target', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getRelationTargetsForCurrentField', loadOptionsDependsOn: ['spaceId', 'recordType', '&field'] }, options: [], default: '', required: true },
           ] },
           { displayName: 'Raw / Legacy Filter', name: 'filter', values: [
             { displayName: 'Field Name or ID', name: 'field', type: 'options', typeOptions: { loadOptionsMethod: 'getFilterableFields' }, options: [], default: '', required: true, description: 'Compatibility and unsupported relation escape hatch. Prefer the typed filter variants above. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.' },
@@ -694,7 +700,7 @@ export class LifeSpace implements INodeType {
       },
       {
         displayName: 'Action Name or ID', name: 'actionKey', type: 'options',
-        typeOptions: { loadOptionsMethod: 'getActions', loadOptionsDependsOn: ['spaceId', 'modelRoute'] },
+        typeOptions: { loadOptionsMethod: 'getActions', loadOptionsDependsOn: ['spaceId', 'recordType'] },
         options: [], default: '', required: true,
         displayOptions: { show: { resource: ['modelRecord'], operation: ['executeAction'] } },
         description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
@@ -703,7 +709,7 @@ export class LifeSpace implements INodeType {
         displayName: 'Action Input', name: 'actionInput', type: 'resourceMapper',
         default: { mappingMode: 'defineBelow', value: null }, noDataExpression: true,
         typeOptions: {
-          loadOptionsDependsOn: ['spaceId', 'modelRoute', 'actionKey'],
+          loadOptionsDependsOn: ['spaceId', 'recordType', 'actionKey'],
           resourceMapper: { resourceMapperMethod: 'getActionInputFields', mode: 'add', fieldWords: { singular: 'input', plural: 'inputs' }, addAllFields: true, supportAutoMap: false, noFieldsError: 'This LifeSpace Action has no semantic input fields.' },
         },
         displayOptions: { show: { resource: ['modelRecord'], operation: ['executeAction'] } },
@@ -752,7 +758,11 @@ export class LifeSpace implements INodeType {
           .filter((model) => operation === 'executeAction'
             ? model.actions.length > 0
             : model.access.includes(requiredAccessForOperation(operation)))
-          .map((model) => ({ name: `${model.display.plural} (${model.route})`, value: model.route, description: model.description ?? undefined }));
+          .map((model) => ({
+            name: `${model.display.plural} (${model.key})`,
+            value: encodeRecordTypeSelector(model.key, model.route),
+            description: model.description ?? undefined,
+          }));
       },
       async getActions(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const selected = await optionModel(this);
@@ -858,7 +868,16 @@ export class LifeSpace implements INodeType {
         if (resource === 'modelRecord') {
           const operation = this.getNodeParameter('operation', itemIndex) as string;
           const rawSpaceId = String(this.getNodeParameter('spaceId', itemIndex));
-          const rawModelRoute = String(this.getNodeParameter('modelRoute', itemIndex));
+          const recordType = decodeRecordTypeSelector(this.getNodeParameter('recordType', itemIndex));
+          if (!recordType) {
+            throw new NodeOperationError(
+              this.getNode(),
+              'LifeSpace Record Type selector is invalid. Choose a Record Type from Discovery or pass a Trigger recordType value.',
+              { itemIndex },
+            );
+          }
+          const rawModelKey = recordType.modelKey;
+          const rawModelRoute = recordType.route;
           const spaceId = encodeURIComponent(rawSpaceId);
           const modelRoute = encodeURIComponent(rawModelRoute);
           const collectionPath = `/spaces/${spaceId}/${modelRoute}`;
@@ -893,7 +912,7 @@ export class LifeSpace implements INodeType {
             }
           } else if (operation === 'create') {
             const body = mutationMappedValues(this, itemIndex);
-            const model = await executionModel(this, itemIndex, baseUrl, rawSpaceId, rawModelRoute);
+            const model = await executionModel(this, itemIndex, baseUrl, rawSpaceId, rawModelKey);
             validateCalendarMutation(this, itemIndex, model, body);
             response = await this.helpers.httpRequestWithAuthentication.call(
               this,
@@ -909,7 +928,7 @@ export class LifeSpace implements INodeType {
               options = { method: 'GET', url: `${baseUrl}${recordPath}`, json: true };
             } else if (operation === 'update') {
               const body = mutationMappedValues(this, itemIndex);
-              const model = await executionModel(this, itemIndex, baseUrl, rawSpaceId, rawModelRoute);
+              const model = await executionModel(this, itemIndex, baseUrl, rawSpaceId, rawModelKey);
               const loadedRecord = model.capabilityBindings?.calendar
                 ? await currentRecord(this, itemIndex, baseUrl, recordPath)
                 : undefined;
@@ -941,7 +960,7 @@ export class LifeSpace implements INodeType {
                   itemIndex,
                   baseUrl,
                   rawSpaceId,
-                  rawModelRoute,
+                  rawModelKey,
                   recordPath,
                   rawActionKey,
                   mappedValue(this, itemIndex, 'actionInput'),

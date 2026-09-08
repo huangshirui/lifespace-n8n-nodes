@@ -70,6 +70,8 @@ Create/Update keep scalar fields in n8n Resource Mapper while using native n8n c
 
 The node displays the authorized human-readable `spaceName` when present while continuing to submit the stable `spc_*` ID.
 
+Record Type identity and REST routing remain distinct. LifeSpace `modelKey` is the stable semantic identity, while the Discovery `route` is a REST transport detail. The n8n adapter persists an adapter-local `recordType` selector containing both values when the workflow is configured. At execution time the selector is decoded locally, so Get/List/Delete do not add a Discovery request merely to translate `modelKey` to a REST route.
+
 Calendar-backed models use canonical `capabilityBindings.calendar` field roles instead of Event-specific field names. Date-only values are normalized to `YYYY-MM-DD`, and contradictory all-day/timed state is rejected locally before the mutation request while Core remains the final validation authority.
 
 ## LifeSpace contract compatibility
@@ -116,10 +118,11 @@ Examples:
 ```text
 {{$json.spaceId}}
 {{$json.recordId}}
+{{$json.recordType}}
 {{$vars.lifeSpaceRecordType}}
 ```
 
-Discovery-backed selectors such as **Space**, **Record Type**, **Filter Field**, **Sort Field** and **Action** support the normal n8n pattern: choose a value from the list, or switch the parameter to an expression and provide the corresponding stable ID/key.
+Discovery-backed selectors such as **Space**, **Filter Field**, **Sort Field** and **Action** support the normal n8n pattern: choose a value from the list, or switch the parameter to an expression and provide the corresponding stable ID/key. **Record Type** uses the adapter-local `recordType` selector so a LifeSpace Trigger can feed a Record node directly without a mapping step or an extra Discovery request.
 
 The same applies to ordinary values such as Record ID, Search, Filter Value, Return All, Limit, Sort Direction, Cursor, explicit Version, API Method, API Path and JSON Body.
 
@@ -246,6 +249,8 @@ One Webhook Endpoint can therefore carry events for multiple Record Types throug
 11. Use the LifeSpace Webhook Endpoint test operation to verify delivery.
 
 The Trigger verifies `X-LifeSpace-Timestamp` and `X-LifeSpace-Signature` with the LifeSpace HMAC-SHA256 contract before emitting workflow data. `endpoint.test` payloads are always accepted after signature verification.
+
+For ordinary record events, the Trigger preserves the LifeSpace `modelKey` exactly as delivered and additionally emits the n8n adapter-local `recordType` selector for the matching configured Record Type. Pass `{{$json.recordType}}` and `{{$json.recordId}}` directly to a downstream LifeSpace Record node. The downstream node derives the REST route locally from that selector.
 
 Webhook Endpoint / Event Subscription creation is intentionally not performed by the n8n Service API Token today because LifeSpace treats that configuration as a Space-management operation. The adapter does not bypass that authority boundary.
 

@@ -54,6 +54,8 @@ test('Runtime Discovery UX is cross-Space and Record-facing', async () => {
   assert.match(discovery, /lookup: DiscoveryRelationLookup/u);
   assert.match(discovery, /resolution\?: DiscoveryRelationResolution/u);
   assert.match(discovery, /export async function loadRelationTargets/u);
+  assert.match(discovery, /export function encodeRecordTypeSelector/u);
+  assert.match(discovery, /export function decodeRecordTypeSelector/u);
   assert.match(node, /name: 'Record'/u);
   assert.match(node, /displayName: 'Record Type Name or ID'/u);
   assert.match(node, /displayName: 'Return All'/u);
@@ -72,7 +74,7 @@ test('Runtime Discovery UX is cross-Space and Record-facing', async () => {
   assert.match(node, /loadRelationTargets\(this, selected\.spaceId, selected\.model\.key, field\)/u);
 
   const actionKey = sourceBlock(node, "name: 'actionKey'", "name: 'actionInput'");
-  assert.match(actionKey, /loadOptionsDependsOn: \['spaceId', 'modelRoute'\]/u);
+  assert.match(actionKey, /loadOptionsDependsOn: \['spaceId', 'recordType'\]/u);
 });
 
 test('runtime node inputs remain expression-capable except structural controls', async () => {
@@ -92,11 +94,11 @@ test('runtime node inputs remain expression-capable except structural controls',
   // Discovery-backed runtime selectors keep the standard n8n "select or expression"
   // path so workflows can pass stable IDs/keys from variables or previous item data.
   assert.match(node, /name: 'spaceId'[\s\S]{0,360}specify an ID using an <a href=/u);
-  assert.match(node, /name: 'modelRoute'[\s\S]{0,420}specify an ID using an <a href=/u);
+  assert.match(node, /name: 'recordType'[\s\S]{0,800}specify an ID using an <a href=/u);
   const actionKey = sourceBlock(node, "name: 'actionKey'", "name: 'actionInput'");
   assert.match(actionKey, /specify an ID using an <a href=/u);
   assert.match(trigger, /name: 'spaceId'[\s\S]{0,360}specify an ID using an <a href=/u);
-  assert.match(trigger, /name: 'recordTypeKeys'[\s\S]{0,460}specify IDs using an <a href=/u);
+  assert.match(trigger, /name: 'recordTypes'[\s\S]{0,460}specify IDs using an <a href=/u);
 });
 
 test('npm releases use a committed lockfile and GitHub OIDC Trusted Publishing', async () => {
@@ -128,8 +130,9 @@ test('npm releases use a committed lockfile and GitHub OIDC Trusted Publishing',
 
 test('Trigger supports multiple Record Types and current endpoint test event', async () => {
   const trigger = await text('nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.ts');
-  assert.match(trigger, /name: 'recordTypeKeys'[\s\S]*type: 'multiOptions'/u);
+  assert.match(trigger, /name: 'recordTypes'[\s\S]*type: 'multiOptions'/u);
   assert.match(trigger, /eventType === 'endpoint\.test'/u);
+  assert.match(trigger, /recordType: matchedRecordType/u);
   assert.doesNotMatch(trigger, /subscription\.test/u);
 });
 

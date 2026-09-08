@@ -6,6 +6,10 @@ import { test } from 'node:test';
 const require = createRequire(import.meta.url);
 const { LifeSpace } = require('../dist/nodes/LifeSpace/LifeSpace.node.js');
 const { LifeSpaceTrigger } = require('../dist/nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.js');
+const { decodeRecordTypeSelector, encodeRecordTypeSelector } = require('../dist/nodes/lifespaceDiscovery.js');
+
+const TASK_RECORD_TYPE = encodeRecordTypeSelector('task', 'tasks');
+const NOTE_RECORD_TYPE = encodeRecordTypeSelector('note', 'notes');
 
 const BASE_URL = 'https://example.invalid/api/v1';
 
@@ -185,12 +189,17 @@ test('Runtime Discovery drives Space and Record Type selection', async () => {
   const createRecordTypes = await node.methods.loadOptions.getRecordTypes.call(
     loadOptionsContext(discovery, { spaceId: 'spc_test', operation: 'create' }),
   );
-  assert.deepEqual(createRecordTypes.map((item) => item.value), ['tasks']);
+  assert.deepEqual(createRecordTypes.map((item) => decodeRecordTypeSelector(item.value)), [
+    { modelKey: 'task', route: 'tasks' },
+  ]);
 
   const listRecordTypes = await node.methods.loadOptions.getRecordTypes.call(
     loadOptionsContext(discovery, { spaceId: 'spc_test', operation: 'list' }),
   );
-  assert.deepEqual(listRecordTypes.map((item) => item.value), ['tasks', 'notes']);
+  assert.deepEqual(listRecordTypes.map((item) => decodeRecordTypeSelector(item.value)), [
+    { modelKey: 'task', route: 'tasks' },
+    { modelKey: 'note', route: 'notes' },
+  ]);
 });
 
 test('Create field mapping respects LifeSpace server defaults and Mutation Authority', async () => {
@@ -198,7 +207,7 @@ test('Create field mapping respects LifeSpace server defaults and Mutation Autho
   const fields = await node.methods.resourceMapping.getRecordFields.call(
     loadOptionsContext(discoveryFixture(), {
       spaceId: 'spc_test',
-      modelRoute: 'tasks',
+      recordType: TASK_RECORD_TYPE,
       operation: 'create',
     }),
   );
@@ -209,7 +218,7 @@ test('Create field mapping respects LifeSpace server defaults and Mutation Autho
   ]);
 
   const dates = await node.methods.loadOptions.getWritableDateFields.call(
-    loadOptionsContext(discoveryFixture(), { spaceId: 'spc_test', modelRoute: 'tasks', operation: 'create' }),
+    loadOptionsContext(discoveryFixture(), { spaceId: 'spc_test', recordType: TASK_RECORD_TYPE, operation: 'create' }),
   );
   assert.deepEqual(dates.map((field) => field.value), ['dueDate']);
 });
@@ -219,7 +228,7 @@ test('Action Input contains semantic fields only when Discovery separates concur
   const fields = await node.methods.resourceMapping.getActionInputFields.call(
     loadOptionsContext(discoveryFixture(), {
       spaceId: 'spc_test',
-      modelRoute: 'tasks',
+      recordType: TASK_RECORD_TYPE,
       actionKey: 'complete',
     }),
   );
@@ -234,7 +243,7 @@ test('Create sends only mapped semantic fields and leaves defaults authoritative
       resource: 'modelRecord',
       operation: 'create',
       spaceId: 'spc_test',
-      modelRoute: 'tasks',
+      recordType: TASK_RECORD_TYPE,
       'fields.value': { name: 'Buy milk' },
     },
     () => ({ data: { id: 'tsk_created', name: 'Buy milk', priority: 'normal', status: 'pending', version: 1 } }),
@@ -258,7 +267,7 @@ test('List omits sort and cursor unless the user configures them', async () => {
       resource: 'modelRecord',
       operation: 'list',
       spaceId: 'spc_test',
-      modelRoute: 'tasks',
+      recordType: TASK_RECORD_TYPE,
       search: 'milk',
       returnAll: false,
       limit: 25,
@@ -295,7 +304,7 @@ test('Typed filters serialize enum, boolean, number and calendar-date values thr
   task.query.filterable.push('flagged', 'score');
   const context = executeContext(
     {
-      resource: 'modelRecord', operation: 'list', spaceId: 'spc_test', modelRoute: 'tasks', search: '',
+      resource: 'modelRecord', operation: 'list', spaceId: 'spc_test', recordType: TASK_RECORD_TYPE, search: '',
       returnAll: false, limit: 10, options: {}, 'filters.filter': [],
       filters: {
         enum: [{ field: 'status', values: ['pending', 'completed'] }],
@@ -319,7 +328,7 @@ test('Return All follows LifeSpace nextCursor automatically', async () => {
       resource: 'modelRecord',
       operation: 'list',
       spaceId: 'spc_test',
-      modelRoute: 'tasks',
+      recordType: TASK_RECORD_TYPE,
       search: '',
       returnAll: true,
       options: { sortField: 'dueDate', sortDirection: 'asc' },
@@ -368,12 +377,12 @@ test('LifeSpace 0.22 field titles and sortable envelope metadata drive generated
   };
 
   const fields = await node.methods.resourceMapping.getRecordFields.call(
-    loadOptionsContext(discovery, { spaceId: 'spc_test', modelRoute: 'tasks', operation: 'create' }),
+    loadOptionsContext(discovery, { spaceId: 'spc_test', recordType: TASK_RECORD_TYPE, operation: 'create' }),
   );
   assert.equal(fields.fields.find((field) => field.id === 'name').displayName, 'Task Name');
 
   const sorts = await node.methods.loadOptions.getSortableFields.call(
-    loadOptionsContext(discovery, { spaceId: 'spc_test', modelRoute: 'tasks' }),
+    loadOptionsContext(discovery, { spaceId: 'spc_test', recordType: TASK_RECORD_TYPE }),
   );
   assert.deepEqual(sorts.map((item) => [item.name, item.value]), [
     ['Created At', 'createdAt'],
@@ -390,7 +399,7 @@ test('List sends ordered LifeSpace 0.22 multi-sort as repeated query parameters'
       resource: 'modelRecord',
       operation: 'list',
       spaceId: 'spc_test',
-      modelRoute: 'tasks',
+      recordType: TASK_RECORD_TYPE,
       search: '',
       returnAll: false,
       limit: 25,
@@ -416,7 +425,7 @@ test('Update fetches current version by default and sends it with the mutation',
       resource: 'modelRecord',
       operation: 'update',
       spaceId: 'spc_test',
-      modelRoute: 'tasks',
+      recordType: TASK_RECORD_TYPE,
       recordId: 'tsk_test',
       mutationOptions: {},
       'fields.value': { name: 'Updated' },
@@ -443,7 +452,7 @@ test('Update accepts an explicit advanced version without an extra read', async 
       resource: 'modelRecord',
       operation: 'update',
       spaceId: 'spc_test',
-      modelRoute: 'tasks',
+      recordType: TASK_RECORD_TYPE,
       recordId: 'tsk_test',
       mutationOptions: { version: 5 },
       'fields.value': { name: 'Updated' },
@@ -466,7 +475,7 @@ test('Execute Action resolves record-version concurrency from cross-Space Discov
       resource: 'modelRecord',
       operation: 'executeAction',
       spaceId: 'spc_test',
-      modelRoute: 'tasks',
+      recordType: TASK_RECORD_TYPE,
       recordId: 'tsk_test',
       actionKey: 'complete',
       'actionInput.value': {},
@@ -502,7 +511,7 @@ test('Execute Action preserves compatibility when Discovery still carries versio
       resource: 'modelRecord',
       operation: 'executeAction',
       spaceId: 'spc_test',
-      modelRoute: 'tasks',
+      recordType: TASK_RECORD_TYPE,
       recordId: 'tsk_legacy',
       actionKey: 'complete',
       'actionInput.value': { version: 4 },
@@ -552,7 +561,7 @@ test('LifeSpace Trigger accepts a correctly signed event for any selected Record
       const parameters = {
         eventTypes: ['record.created', 'record.updated', 'record.deleted'],
         spaceId: 'spc_test',
-        recordTypeKeys: ['task', 'note'],
+        recordTypes: [TASK_RECORD_TYPE, NOTE_RECORD_TYPE],
       };
       return Object.prototype.hasOwnProperty.call(parameters, name) ? parameters[name] : defaultValue;
     },
@@ -562,7 +571,7 @@ test('LifeSpace Trigger accepts a correctly signed event for any selected Record
   });
 
   assert.equal(state.statusCode, null);
-  assert.deepEqual(result.workflowData, [[{ json: body }]]);
+  assert.deepEqual(result.workflowData, [[{ json: { ...body, recordType: TASK_RECORD_TYPE } }]]);
 });
 
 test('LifeSpace Trigger always accepts a correctly signed endpoint.test payload', async () => {
@@ -633,7 +642,7 @@ test('LifeSpace Person relations use native single/multi selectors backed by sou
     { key: 'assigneePersonIds', type: 'person_list', title: 'Assignees', relation: { targetModel: 'person', cardinality: 'many', lookup } },
     { key: 'parentTaskId', type: 'record', title: 'Parent Task', targetModel: 'task', relation: { targetModel: 'task', cardinality: 'one', lookup: { supported: false, reason: 'reference-label-unavailable' } } },
   );
-  const parameters = { spaceId: 'spc_test', modelRoute: 'tasks', operation: 'create', '&field': 'assigneePersonIds' };
+  const parameters = { spaceId: 'spc_test', recordType: TASK_RECORD_TYPE, operation: 'create', '&field': 'assigneePersonIds' };
   const context = loadOptionsContext(discovery, parameters);
   context.helpers = {
     async httpRequestWithAuthentication(_credentialName, options) {
@@ -664,7 +673,7 @@ test('Person relation fields keep raw-ID fallback when Runtime Discovery has no 
   });
 
   const fields = await node.methods.resourceMapping.getRecordFields.call(
-    loadOptionsContext(discovery, { spaceId: 'spc_test', modelRoute: 'tasks', operation: 'create' }),
+    loadOptionsContext(discovery, { spaceId: 'spc_test', recordType: TASK_RECORD_TYPE, operation: 'create' }),
   );
   const assignees = fields.fields.find((field) => field.id === 'assigneePersonIds');
   assert.equal(assignees.type, 'array');
@@ -678,7 +687,7 @@ test('Create preserves selected LifeSpace Person IDs in the resource payload', a
       resource: 'modelRecord',
       operation: 'create',
       spaceId: 'spc_test',
-      modelRoute: 'tasks',
+      recordType: TASK_RECORD_TYPE,
       'fields.value': { name: 'Shared task' },
       'dateFields.date': [{ field: 'dueDate', value: '2026-09-30T00:00:00.000+08:00' }],
       'multiRelations.relation': [{ field: 'assigneePersonIds', targets: ['per_alpha', 'per_beta'] }],
@@ -692,4 +701,25 @@ test('Create preserves selected LifeSpace Person IDs in the resource payload', a
     dueDate: '2026-09-30',
     assigneePersonIds: ['per_alpha', 'per_beta'],
   });
+});
+
+test('Trigger recordType output feeds Get directly without a model mapping or Discovery request', async () => {
+  const recordNode = new LifeSpace();
+  const context = executeContext(
+    {
+      resource: 'modelRecord',
+      operation: 'get',
+      spaceId: 'spc_test',
+      recordType: TASK_RECORD_TYPE,
+      recordId: 'rec_from_trigger',
+    },
+    (options) => {
+      assert.equal(options.url, `${BASE_URL}/spaces/spc_test/tasks/rec_from_trigger`);
+      return { data: { id: 'rec_from_trigger', version: 1 } };
+    },
+  );
+
+  const result = await recordNode.execute.call(context);
+  assert.equal(result[0][0].json.data.id, 'rec_from_trigger');
+  assert.equal(context.calls.length, 1);
 });
