@@ -72,7 +72,7 @@ function executionContext(parameters, itemCount = 1) {
       async httpRequestWithAuthentication(_credentialName, options) {
         calls.push(options);
         if (options.url === `${BASE_URL}/spaces/spc_test/_discovery/models/task`) return actionDetail();
-        if (options.method === 'GET' && /\/spaces\/spc_test\/tasks\/rec_/u.test(options.url)) {
+        if (options.method === 'GET' && /\/spaces\/spc_test\/models\/task\/records\/rec_/u.test(options.url)) {
           return { data: { id: options.url.split('/').at(-1), version: 7 } };
         }
         if (options.method === 'GET' && options.url === `${BASE_URL}/spaces/spc_test/models/task/records`) {
@@ -124,6 +124,18 @@ test('List is one business request per page and zero Discovery requests', async 
 
 test('Create is one business mutation and zero Discovery requests', async () => {
   const calls = await execute({ operation: 'create', 'fields.value': { name: 'Create' } });
+  assert.deepEqual(requestShape(calls), [
+    ['POST', `${BASE_URL}/spaces/spc_test/models/task/records`],
+  ]);
+});
+
+test('legacy 0.1.3 modelRoute executes through the canonical modelKey path without Discovery', async () => {
+  const calls = await execute({
+    operation: 'create',
+    recordType: '',
+    modelRoute: 'tasks',
+    'fields.value': { name: 'Legacy workflow' },
+  });
   assert.deepEqual(requestShape(calls), [
     ['POST', `${BASE_URL}/spaces/spc_test/models/task/records`],
   ]);
@@ -220,4 +232,3 @@ test('same-model multi-item Action reuses static semantic detail once per node e
     ['POST', `${BASE_URL}/spaces/spc_test/models/task/records/rec_action_2/actions/complete`],
   ]);
 });
-
