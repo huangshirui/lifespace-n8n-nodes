@@ -550,7 +550,7 @@ export class LifeSpace implements INodeType {
         displayName: 'Record Type Name or ID', name: 'recordType', type: 'options',
         typeOptions: { loadOptionsMethod: 'getRecordTypes', loadOptionsDependsOn: ['spaceId', 'operation'] },
         options: [], default: '', required: true, displayOptions: { show: { resource: ['modelRecord'] } },
-        description: 'Choose from Discovery, or pass the recordType selector emitted by a LifeSpace Trigger using an <a href="https://docs.n8n.io/code/expressions/">expression</a>. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+        description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
       },
       {
         displayName: 'Record ID', name: 'recordId', type: 'string', default: '', required: true,
