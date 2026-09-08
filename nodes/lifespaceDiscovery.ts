@@ -237,14 +237,11 @@ type DiscoverySelection = {
   modelKey: string;
 };
 
-type ProgressiveDetailMode = 'selected' | 'calendar-if-present';
-
 const RELATION_TARGET_PAGE_SIZE = 100;
 const RELATION_TARGET_OPTION_LIMIT = 1000;
 const RELATION_TARGET_LOOKUP_PATH = '/api/v1/spaces/{spaceId}/_relation-targets/{modelKey}/{fieldKey}';
 const MODEL_SEMANTIC_DETAIL_PATH = '/api/v1/spaces/{spaceId}/_discovery/models/{modelKey}';
 const RECORD_TYPE_SELECTOR_PREFIX = 'lsrt1.';
-const EXECUTION_PREFLIGHT_BYPASS_SCHEMA_HASH = 'adapter:execution-preflight-disabled';
 const executionSemanticCache = new WeakMap<IExecuteFunctions, Map<string, Promise<DiscoveryResponse>>>();
 
 export type RecordTypeSelector = {
@@ -400,52 +397,6 @@ function detailedModel(detail: SemanticDetail, access: DiscoveryAccess[]): Disco
   };
 }
 
-function executionPreflightBypassModel(modelKey: string): DiscoveryModel {
-  // Create/Update no longer pay a remote semantic read solely for adapter-side
-  // Calendar error wording. This is an internal no-preflight sentinel, not a
-  // LifeSpace semantic snapshot or authorization result; Core still validates
-  // the actual mutation and current authority on every business request.
-  return {
-    key: modelKey,
-    route: modelKey,
-    version: 0,
-    schemaHash: EXECUTION_PREFLIGHT_BYPASS_SCHEMA_HASH,
-    display: { singular: modelKey, plural: modelKey },
-    description: null,
-    access: [],
-    fields: [],
-    defaults: {},
-    query: {
-      searchable: [],
-      filterable: [],
-      sortable: [],
-      sort: {
-        parameter: 'sort',
-        syntax: 'field:direction',
-        repeatable: true,
-        ordered: true,
-        maxCriteria: 0,
-        default: [],
-        envelopeFields: [],
-      },
-    },
-    actions: [],
-    capabilities: [],
-    capabilityBindings: {},
-  };
-}
-
-function executionPreflightBypassDiscovery(spaceId: string, modelKey: string): DiscoveryResponse {
-  return {
-    data: {
-      spaces: [{
-        spaceId,
-        models: [executionPreflightBypassModel(modelKey)],
-      }],
-    },
-  };
-}
-
 function replacePathTemplate(template: string, values: Record<string, string>): string {
   return Object.entries(values).reduce(
     (path, [key, value]) => path.replace(`{${key}}`, encodeURIComponent(value)),
@@ -505,7 +456,6 @@ async function requestProgressiveRuntimeDiscovery(
   context: ILoadOptionsFunctions | IExecuteFunctions,
   baseUrl: string,
   selection?: DiscoverySelection,
-  detailMode: ProgressiveDetailMode = 'selected',
 ): Promise<DiscoveryResponse | null> {
   let inventory: InventoryResponse;
   try {
@@ -528,10 +478,8 @@ async function requestProgressiveRuntimeDiscovery(
     const selectedIdentity = identities.get(selectedModelKey);
     const visible = selectedSpace && selectedIdentity
       && selectedSpace.models.some((edge) => edge.modelKey === selectedIdentity.key);
-    const needsDetail = selectedIdentity
-      && (detailMode === 'selected' || selectedIdentity.capabilities.includes('calendar'));
 
-    if (visible && selectedIdentity && needsDetail) {
+    if (visible && selectedIdentity) {
       const path = replacePathTemplate(inventory.data.semanticDetailPathTemplate, {
         spaceId: selectedSpaceId,
         modelKey: selectedIdentity.key,
@@ -673,22 +621,9 @@ export async function loadExecutionRuntimeDiscovery(
   spaceId?: string,
   modelKey?: string,
 ): Promise<DiscoveryResponse> {
-  const selection = spaceId && modelKey ? { spaceId, modelKey } : undefined;
-  if (selection) {
-    let operation = '';
-    try {
-      operation = String(context.getNodeParameter('operation', 0, '') ?? '').trim();
-    } catch {
-      operation = '';
-    }
-
-    if (operation === 'create' || operation === 'update') {
-      return executionPreflightBypassDiscovery(selection.spaceId, selection.modelKey);
-    }
-
-    return cachedExecutionSemanticDetail(context, baseUrl, selection.spaceId, selection.modelKey);
+  if (spaceId && modelKey) {
+    return cachedExecutionSemanticDetail(context, baseUrl, spaceId, modelKey);
   }
-
   return requestFullRuntimeDiscovery(context, baseUrl);
 }
 
