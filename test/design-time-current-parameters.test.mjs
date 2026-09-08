@@ -6,20 +6,20 @@ const require = createRequire(import.meta.url);
 const { LifeSpace } = require('../dist/nodes/LifeSpace/LifeSpace.node.js');
 const { encodeRecordTypeSelector } = require('../dist/nodes/lifespaceDiscovery.js');
 const BASE_URL = 'https://example.invalid/api/v1';
-const RECORD_TYPE = encodeRecordTypeSelector('task', 'tasks');
+const RECORD_TYPE = encodeRecordTypeSelector('task');
 const model = {
-  key: 'task', route: 'tasks', version: 1, schemaHash: 'sha256:task', display: { singular: 'Task', plural: 'Tasks' }, description: 'Task', access: ['read', 'write'],
+  key: 'task', version: 1, schemaHash: 'sha256:task', display: { singular: 'Task', plural: 'Tasks' }, description: 'Task', access: ['read', 'write'],
   fields: [{ key: 'name', type: 'string', title: 'Name', required: true }], defaults: {},
   query: { searchable: ['name'], filterable: [], sortable: [], sort: { parameter: 'sort', syntax: 'field:direction', repeatable: true, ordered: true, maxCriteria: 8, default: ['createdAt:desc'], envelopeFields: ['createdAt', 'updatedAt'] } },
   actions: [{ key: 'complete', access: 'write', kind: 'workflow', input: { fields: [] } }], capabilities: [], capabilityBindings: {},
 };
 const inventory = { data: {
   semanticDetailPathTemplate: '/api/v1/spaces/{spaceId}/_discovery/models/{modelKey}',
-  models: [{ key: 'task', route: 'tasks', version: 1, schemaHash: 'sha256:task', display: { singular: 'Task', plural: 'Tasks' }, capabilities: [], actions: [{ key: 'complete', access: 'write', kind: 'workflow' }] }],
+  models: [{ key: 'task', version: 1, schemaHash: 'sha256:task', display: { singular: 'Task', plural: 'Tasks' }, capabilities: [], actions: [{ key: 'complete', access: 'write', kind: 'workflow' }] }],
   spaces: [{ spaceId: 'spc_test', spaceName: 'Test', models: [{ modelKey: 'task', access: ['read', 'write'] }] }],
 } };
 const detail = { data: {
-  key: 'task', route: 'tasks', version: 1, schemaHash: 'sha256:task', display: { singular: 'Task', plural: 'Tasks' }, description: 'Task', declaredAccess: ['read', 'write'],
+  key: 'task', version: 1, schemaHash: 'sha256:task', display: { singular: 'Task', plural: 'Tasks' }, description: 'Task', declaredAccess: ['read', 'write'],
   fields: [{ key: 'name', type: 'string', title: 'Name', required: true }], defaults: {},
   query: { searchable: ['name'], filterable: [], sortable: [], sort: { parameter: 'sort', syntax: 'field:direction', repeatable: true, ordered: true, maxCriteria: 8, genericDefault: ['createdAt:desc'], envelopeFields: ['createdAt', 'updatedAt'] } },
   actions: [{ key: 'complete', access: 'write', kind: 'workflow', input: { fields: [] } }], capabilities: [], capabilityBindings: {},
@@ -72,3 +72,4 @@ test('Legacy 0.1.3 modelRoute still loads design-time fields', async () => {
   assert.deepEqual(fields.fields.map((field) => field.id), ['name']);
   assert.deepEqual(c.calls.map((call) => call.url), [`${BASE_URL}/me/_discovery`]);
 });
+

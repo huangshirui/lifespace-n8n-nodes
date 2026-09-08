@@ -16,7 +16,6 @@ import { NodeConnectionTypes } from 'n8n-workflow';
 import {
   decodeRecordTypeSelector,
   discoverySpace,
-  encodeRecordTypeSelector,
   loadRuntimeDiscovery,
 } from '../lifespaceDiscovery';
 
@@ -143,7 +142,7 @@ export class LifeSpaceTrigger implements INodeType {
           .filter((model) => model.access.includes('read'))
           .map((model) => ({
             name: `${model.display.plural} (${model.key})`,
-            value: encodeRecordTypeSelector(model.key, model.route),
+            value: model.key,
             description: model.description ?? undefined,
           }));
       },
@@ -249,7 +248,7 @@ export class LifeSpaceTrigger implements INodeType {
     }
 
     return {
-      workflowData: [this.helpers.returnJsonArray({ ...bodyData, recordType: matchedRecordType })],
+      workflowData: [this.helpers.returnJsonArray({ ...bodyData, recordType: String(bodyData.modelKey) })],
     };
   }
 }

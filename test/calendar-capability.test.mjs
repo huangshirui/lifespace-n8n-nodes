@@ -6,7 +6,7 @@ const require = createRequire(import.meta.url);
 const { LifeSpace } = require('../dist/nodes/LifeSpace/LifeSpace.node.js');
 const { encodeRecordTypeSelector } = require('../dist/nodes/lifespaceDiscovery.js');
 
-const CALENDAR_RECORD_TYPE = encodeRecordTypeSelector('synthetic_calendar', 'synthetic-calendars');
+const CALENDAR_RECORD_TYPE = encodeRecordTypeSelector('synthetic_calendar');
 
 const BASE_URL = 'https://example.invalid/api/v1';
 
@@ -15,7 +15,6 @@ const inventory = {
     semanticDetailPathTemplate: '/api/v1/spaces/{spaceId}/_discovery/models/{modelKey}',
     models: [{
       key: 'synthetic_calendar',
-      route: 'synthetic-calendars',
       version: 1,
       schemaHash: 'sha256:synthetic-calendar-v1',
       display: { singular: 'Synthetic Calendar', plural: 'Synthetic Calendars' },
@@ -33,7 +32,6 @@ const inventory = {
 const detail = {
   data: {
     key: 'synthetic_calendar',
-    route: 'synthetic-calendars',
     version: 1,
     schemaHash: 'sha256:synthetic-calendar-v1',
     display: { singular: 'Synthetic Calendar', plural: 'Synthetic Calendars' },
@@ -96,7 +94,7 @@ function context(parameters, { rejectMutation = false } = {}) {
         calls.push(options);
         if (options.url === `${BASE_URL}/me/_discovery/inventory`) return inventory;
         if (options.url === `${BASE_URL}/spaces/spc_test/_discovery/models/synthetic_calendar`) return detail;
-        if (options.url === `${BASE_URL}/spaces/spc_test/synthetic-calendars`) {
+        if (options.url === `${BASE_URL}/spaces/spc_test/models/synthetic_calendar/records`) {
           if (rejectMutation) throw new Error('Core rejected contradictory Calendar semantics');
           return { data: { id: 'rec_created', version: 1, ...options.body } };
         }
@@ -128,7 +126,7 @@ test('all-day Calendar create normalizes configured date values without executio
 
   await node.execute.call(ctx);
   assert.deepEqual(ctx.calls.map((call) => [call.method, call.url]), [
-    ['POST', `${BASE_URL}/spaces/spc_test/synthetic-calendars`],
+    ['POST', `${BASE_URL}/spaces/spc_test/models/synthetic_calendar/records`],
   ]);
   const mutation = ctx.calls.at(-1);
   assert.deepEqual(mutation.body, {
@@ -156,7 +154,7 @@ test('timed Calendar create executes directly without model-specific field names
 
   await node.execute.call(ctx);
   assert.deepEqual(ctx.calls.map((call) => [call.method, call.url]), [
-    ['POST', `${BASE_URL}/spaces/spc_test/synthetic-calendars`],
+    ['POST', `${BASE_URL}/spaces/spc_test/models/synthetic_calendar/records`],
   ]);
   const mutation = ctx.calls.at(-1);
   assert.equal(mutation.body.wholeDay, false);
@@ -180,6 +178,6 @@ test('Calendar semantic conflicts are left to authoritative Core validation inst
     /Core rejected contradictory Calendar semantics/u,
   );
   assert.deepEqual(ctx.calls.map((call) => [call.method, call.url]), [
-    ['POST', `${BASE_URL}/spaces/spc_test/synthetic-calendars`],
+    ['POST', `${BASE_URL}/spaces/spc_test/models/synthetic_calendar/records`],
   ]);
 });

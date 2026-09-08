@@ -132,7 +132,7 @@ test('Trigger supports multiple Record Types and current endpoint test event', a
   const trigger = await text('nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.ts');
   assert.match(trigger, /name: 'recordTypes'[\s\S]*type: 'multiOptions'/u);
   assert.match(trigger, /eventType === 'endpoint\.test'/u);
-  assert.match(trigger, /recordType: matchedRecordType/u);
+  assert.match(trigger, /recordType: String\(bodyData\.modelKey\)/u);
   assert.doesNotMatch(trigger, /subscription\.test/u);
 });
 

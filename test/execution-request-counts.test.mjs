@@ -7,13 +7,12 @@ const { LifeSpace } = require('../dist/nodes/LifeSpace/LifeSpace.node.js');
 const { encodeRecordTypeSelector } = require('../dist/nodes/lifespaceDiscovery.js');
 
 const BASE_URL = 'https://example.invalid/api/v1';
-const TASK_RECORD_TYPE = encodeRecordTypeSelector('task', 'tasks');
+const TASK_RECORD_TYPE = encodeRecordTypeSelector('task');
 
 function actionDetail() {
   return {
     data: {
       key: 'task',
-      route: 'tasks',
       version: 7,
       schemaHash: 'sha256:task-v7',
       display: { singular: 'Task', plural: 'Tasks' },
@@ -73,10 +72,10 @@ function executionContext(parameters, itemCount = 1) {
       async httpRequestWithAuthentication(_credentialName, options) {
         calls.push(options);
         if (options.url === `${BASE_URL}/spaces/spc_test/_discovery/models/task`) return actionDetail();
-        if (options.method === 'GET' && /\/spaces\/spc_test\/tasks\/rec_/u.test(options.url)) {
+        if (options.method === 'GET' && /\/spaces\/spc_test\/models\/task\/records\/rec_/u.test(options.url)) {
           return { data: { id: options.url.split('/').at(-1), version: 7 } };
         }
-        if (options.method === 'GET' && options.url === `${BASE_URL}/spaces/spc_test/tasks`) {
+        if (options.method === 'GET' && options.url === `${BASE_URL}/spaces/spc_test/models/task/records`) {
           return { data: { items: [], nextCursor: null } };
         }
         if (options.method === 'POST' && options.url.endsWith('/actions/complete')) {
@@ -112,21 +111,33 @@ function requestShape(calls) {
 test('Get is one business request and zero Discovery requests', async () => {
   const calls = await execute({ operation: 'get', recordId: 'rec_get' });
   assert.deepEqual(requestShape(calls), [
-    ['GET', `${BASE_URL}/spaces/spc_test/tasks/rec_get`],
+    ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/rec_get`],
   ]);
 });
 
 test('List is one business request per page and zero Discovery requests', async () => {
   const calls = await execute({ operation: 'list', returnAll: false, limit: 10, search: '', options: {}, filters: {}, 'filters.filter': [], 'sorts.sort': [] });
   assert.deepEqual(requestShape(calls), [
-    ['GET', `${BASE_URL}/spaces/spc_test/tasks`],
+    ['GET', `${BASE_URL}/spaces/spc_test/models/task/records`],
   ]);
 });
 
 test('Create is one business mutation and zero Discovery requests', async () => {
   const calls = await execute({ operation: 'create', 'fields.value': { name: 'Create' } });
   assert.deepEqual(requestShape(calls), [
-    ['POST', `${BASE_URL}/spaces/spc_test/tasks`],
+    ['POST', `${BASE_URL}/spaces/spc_test/models/task/records`],
+  ]);
+});
+
+test('legacy 0.1.3 modelRoute executes through the canonical modelKey path without Discovery', async () => {
+  const calls = await execute({
+    operation: 'create',
+    recordType: '',
+    modelRoute: 'tasks',
+    'fields.value': { name: 'Legacy workflow' },
+  });
+  assert.deepEqual(requestShape(calls), [
+    ['POST', `${BASE_URL}/spaces/spc_test/models/task/records`],
   ]);
 });
 
@@ -138,7 +149,7 @@ test('Update with an explicit version is one business mutation and zero Discover
     'fields.value': { name: 'Update' },
   });
   assert.deepEqual(requestShape(calls), [
-    ['PATCH', `${BASE_URL}/spaces/spc_test/tasks/rec_update_explicit`],
+    ['PATCH', `${BASE_URL}/spaces/spc_test/models/task/records/rec_update_explicit`],
   ]);
   assert.equal(calls[0].body.version, 5);
 });
@@ -151,8 +162,8 @@ test('Update without an explicit version performs only concurrency read plus mut
     'fields.value': { name: 'Update' },
   });
   assert.deepEqual(requestShape(calls), [
-    ['GET', `${BASE_URL}/spaces/spc_test/tasks/rec_update_auto`],
-    ['PATCH', `${BASE_URL}/spaces/spc_test/tasks/rec_update_auto`],
+    ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/rec_update_auto`],
+    ['PATCH', `${BASE_URL}/spaces/spc_test/models/task/records/rec_update_auto`],
   ]);
 });
 
@@ -163,7 +174,7 @@ test('Delete with an explicit version is one business mutation and zero Discover
     mutationOptions: { version: 5 },
   });
   assert.deepEqual(requestShape(calls), [
-    ['DELETE', `${BASE_URL}/spaces/spc_test/tasks/rec_delete_explicit`],
+    ['DELETE', `${BASE_URL}/spaces/spc_test/models/task/records/rec_delete_explicit`],
   ]);
   assert.equal(calls[0].body.version, 5);
 });
@@ -175,8 +186,8 @@ test('Delete without an explicit version performs only concurrency read plus mut
     mutationOptions: {},
   });
   assert.deepEqual(requestShape(calls), [
-    ['GET', `${BASE_URL}/spaces/spc_test/tasks/rec_delete_auto`],
-    ['DELETE', `${BASE_URL}/spaces/spc_test/tasks/rec_delete_auto`],
+    ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/rec_delete_auto`],
+    ['DELETE', `${BASE_URL}/spaces/spc_test/models/task/records/rec_delete_auto`],
   ]);
 });
 
@@ -189,8 +200,8 @@ test('Execute Action uses selected static semantic detail, concurrency read, and
   });
   assert.deepEqual(requestShape(calls), [
     ['GET', `${BASE_URL}/spaces/spc_test/_discovery/models/task`],
-    ['GET', `${BASE_URL}/spaces/spc_test/tasks/rec_action`],
-    ['POST', `${BASE_URL}/spaces/spc_test/tasks/rec_action/actions/complete`],
+    ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/rec_action`],
+    ['POST', `${BASE_URL}/spaces/spc_test/models/task/records/rec_action/actions/complete`],
   ]);
 });
 
@@ -201,8 +212,8 @@ test('per-item Record Type expressions do not introduce Discovery for CRUD execu
     'fields.value': (itemIndex) => ({ name: `Create ${itemIndex}` }),
   }, 2);
   assert.deepEqual(requestShape(calls), [
-    ['POST', `${BASE_URL}/spaces/spc_test/tasks`],
-    ['POST', `${BASE_URL}/spaces/spc_test/tasks`],
+    ['POST', `${BASE_URL}/spaces/spc_test/models/task/records`],
+    ['POST', `${BASE_URL}/spaces/spc_test/models/task/records`],
   ]);
 });
 
@@ -215,9 +226,9 @@ test('same-model multi-item Action reuses static semantic detail once per node e
   }, 2);
   assert.deepEqual(requestShape(calls), [
     ['GET', `${BASE_URL}/spaces/spc_test/_discovery/models/task`],
-    ['GET', `${BASE_URL}/spaces/spc_test/tasks/rec_action_1`],
-    ['POST', `${BASE_URL}/spaces/spc_test/tasks/rec_action_1/actions/complete`],
-    ['GET', `${BASE_URL}/spaces/spc_test/tasks/rec_action_2`],
-    ['POST', `${BASE_URL}/spaces/spc_test/tasks/rec_action_2/actions/complete`],
+    ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/rec_action_1`],
+    ['POST', `${BASE_URL}/spaces/spc_test/models/task/records/rec_action_1/actions/complete`],
+    ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/rec_action_2`],
+    ['POST', `${BASE_URL}/spaces/spc_test/models/task/records/rec_action_2/actions/complete`],
   ]);
 });
