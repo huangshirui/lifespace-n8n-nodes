@@ -1,0 +1,406 @@
+name: Temporary P0 31 patcher
+
+on:
+  push:
+    branches:
+      - fix/0.1.4-design-time-discovery
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/0.1.4-design-time-discovery
+      - name: Apply P0 regression fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one match, found {count}')
+              p.write_text(text.replace(old, new, 1))
+
+          discovery = 'nodes/lifespaceDiscovery.ts'
+          replace_once(discovery, """type DiscoverySelection = {
+            spaceId: string;
+            modelKey: string;
+          };""", """type DiscoverySelection = {
+            spaceId: string;
+            modelKey?: string;
+            modelRoute?: string;
+          };""")
+
+          replace_once(discovery, """function loadOptionParameter(context: ILoadOptionsFunctions, name: string): string {
+            try {
+              return String(context.getNodeParameter(name, '') ?? '').trim();
+            } catch {
+              return '';
+            }
+          }""", """export function loadOptionParameter(context: ILoadOptionsFunctions, name: string): string {
+            try {
+              const current = context.getCurrentNodeParameter(name);
+              if (current !== undefined) return String(current ?? '').trim();
+            } catch {
+              // Older compatible n8n contexts may not expose an editor-current value.
+            }
+            try {
+              return String(context.getNodeParameter(name, '') ?? '').trim();
+            } catch {
+              return '';
+            }
+          }""")
+
+          replace_once(discovery, """  const selectedSpaceId = selection?.spaceId ?? '';
+            const selectedModelKey = selection?.modelKey ?? '';
+            let selectedDetail: SemanticDetail | null = null;
+
+            if (selectedSpaceId && selectedModelKey) {
+              const selectedSpace = inventory.data.spaces.find((space) => space.spaceId === selectedSpaceId);
+              const selectedIdentity = identities.get(selectedModelKey);
+              const visible = selectedSpace && selectedIdentity
+                && selectedSpace.models.some((edge) => edge.modelKey === selectedIdentity.key);
+
+              if (visible && selectedIdentity) {
+                const path = replacePathTemplate(inventory.data.semanticDetailPathTemplate, {
+                  spaceId: selectedSpaceId,
+                  modelKey: selectedIdentity.key,
+                });
+                try {
+                  const response = await authenticatedGet<SemanticDetailResponse>(context, baseUrl, path);
+                  selectedDetail = response.data;
+                } catch (error) {
+                  throw new NodeApiError(context.getNode(), error as JsonObject);
+                }
+              }
+            }""", """  const selectedSpaceId = selection?.spaceId ?? '';
+            const requestedModelKey = selection?.modelKey ?? '';
+            const requestedModelRoute = selection?.modelRoute ?? '';
+            let selectedDetail: SemanticDetail | null = null;
+            let selectedModelKey = '';
+
+            if (selectedSpaceId && (requestedModelKey || requestedModelRoute)) {
+              const selectedSpace = inventory.data.spaces.find((space) => space.spaceId === selectedSpaceId);
+              const selectedIdentity = requestedModelKey
+                ? identities.get(requestedModelKey)
+                : [...identities.values()].find((model) => model.route === requestedModelRoute);
+              const visible = selectedSpace && selectedIdentity
+                && selectedSpace.models.some((edge) => edge.modelKey === selectedIdentity.key);
+
+              if (visible && selectedIdentity) {
+                selectedModelKey = selectedIdentity.key;
+                const path = replacePathTemplate(inventory.data.semanticDetailPathTemplate, {
+                  spaceId: selectedSpaceId,
+                  modelKey: selectedIdentity.key,
+                });
+                try {
+                  const response = await authenticatedGet<SemanticDetailResponse>(context, baseUrl, path);
+                  selectedDetail = response.data;
+                } catch (error) {
+                  throw new NodeApiError(context.getNode(), error as JsonObject);
+                }
+              }
+            }""")
+
+          replace_once(discovery, """  const recordType = loadOptionParameter(this, 'recordType');
+            const decodedRecordType = recordType ? decodeRecordTypeSelector(recordType) : null;
+            if (recordType && !decodedRecordType) {
+              throw new NodeOperationError(this.getNode(), 'LifeSpace Record Type selector is invalid. Choose a Record Type from Discovery or pass a Trigger recordType value.');
+            }
+            const selection = {
+              spaceId: loadOptionParameter(this, 'spaceId'),
+              modelKey: decodedRecordType?.modelKey ?? '',
+            };
+            const progressive = await requestProgressiveRuntimeDiscovery(this, baseUrl, selection);""", """  const recordType = loadOptionParameter(this, 'recordType');
+            const decodedRecordType = recordType ? decodeRecordTypeSelector(recordType) : null;
+            if (recordType && !decodedRecordType) {
+              throw new NodeOperationError(this.getNode(), 'LifeSpace Record Type selector is invalid. Choose a Record Type from Discovery or pass a Trigger recordType value.');
+            }
+            const legacyModelRoute = recordType ? '' : loadOptionParameter(this, 'modelRoute');
+            const selection: DiscoverySelection = {
+              spaceId: loadOptionParameter(this, 'spaceId'),
+              ...(decodedRecordType
+                ? { modelKey: decodedRecordType.modelKey }
+                : legacyModelRoute
+                  ? { modelRoute: legacyModelRoute }
+                  : {}),
+            };
+            const progressive = await requestProgressiveRuntimeDiscovery(this, baseUrl, selection);""")
+
+          node = 'nodes/LifeSpace/LifeSpace.node.ts'
+          replace_once(node, """  loadExecutionRuntimeDiscovery,
+            loadRelationTargets,
+            loadRuntimeDiscovery,""", """  loadExecutionRuntimeDiscovery,
+            loadOptionParameter,
+            loadRelationTargets,
+            loadRuntimeDiscovery,""")
+
+          replace_once(node, """async function optionModel(context: ILoadOptionsFunctions): Promise<{ model: DiscoveryModel; spaceId: string } | null> {
+            const spaceId = String(context.getNodeParameter('spaceId', '')).trim();
+            const recordTypeValue = String(context.getNodeParameter('recordType', '')).trim();
+            if (!spaceId || !recordTypeValue) return null;
+            const recordType = decodeRecordTypeSelector(recordTypeValue);
+            if (!recordType) {
+              throw new NodeOperationError(context.getNode(), 'LifeSpace Record Type selector is invalid. Choose a Record Type from Discovery or pass a Trigger recordType value.');
+            }
+            const discovery = await loadRuntimeDiscovery.call(context);
+            const model = discoveryModel(discovery, spaceId, recordType.modelKey);
+            return model ? { model, spaceId } : null;
+          }""", """async function optionModel(context: ILoadOptionsFunctions): Promise<{ model: DiscoveryModel; spaceId: string } | null> {
+            const spaceId = loadOptionParameter(context, 'spaceId');
+            const recordTypeValue = loadOptionParameter(context, 'recordType');
+            const legacyModelRoute = recordTypeValue ? '' : loadOptionParameter(context, 'modelRoute');
+            if (!spaceId || (!recordTypeValue && !legacyModelRoute)) return null;
+            const recordType = recordTypeValue ? decodeRecordTypeSelector(recordTypeValue) : null;
+            if (recordTypeValue && !recordType) {
+              throw new NodeOperationError(context.getNode(), 'LifeSpace Record Type selector is invalid. Choose a Record Type from Discovery or pass a Trigger recordType value.');
+            }
+            const discovery = await loadRuntimeDiscovery.call(context);
+            const space = discoverySpace(discovery, spaceId);
+            const model = recordType
+              ? discoveryModel(discovery, spaceId, recordType.modelKey)
+              : space?.models.find((entry) => entry.route === legacyModelRoute);
+            return model ? { model, spaceId } : null;
+          }""")
+
+          replace_once(node, """  const operation = String(context.getNodeParameter('operation', 'create'));""", """  const operation = loadOptionParameter(context, 'operation') || 'create';""")
+
+          replace_once(node, """        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
+                  if (!spaceId) return [];
+                  const discovery = await loadRuntimeDiscovery.call(this);
+                  const space = discoverySpace(discovery, spaceId);
+                  if (!space) return [];
+                  const operation = String(this.getNodeParameter('operation', 'list'));""", """        const spaceId = loadOptionParameter(this, 'spaceId');
+                  if (!spaceId) return [];
+                  const discovery = await loadRuntimeDiscovery.call(this);
+                  const space = discoverySpace(discovery, spaceId);
+                  if (!space) return [];
+                  const operation = loadOptionParameter(this, 'operation') || 'list';""")
+
+          replace_once(node, """        const operation = String(this.getNodeParameter('operation', 'create'));
+                  return selected.model.fields""", """        const operation = loadOptionParameter(this, 'operation') || 'create';
+                  return selected.model.fields""")
+
+          replace_once(node, """        const operation = String(this.getNodeParameter('operation', 'create'));
+                  const writableFields = selected.model.fields""", """        const operation = loadOptionParameter(this, 'operation') || 'create';
+                  const writableFields = selected.model.fields""")
+
+          replace_once(node, """        const actionKey = String(this.getNodeParameter('actionKey', '')).trim();
+                  const action = selected?.model.actions.find((entry) => entry.key === actionKey);""", """        const actionKey = loadOptionParameter(this, 'actionKey');
+                  const action = selected?.model.actions.find((entry) => entry.key === actionKey);""")
+
+          # Preserve 0.1.3 saved workflows. New selector paths stay request-free; only a legacy modelRoute needs compatibility Discovery.
+          replace_once(node, """async function executionModel(
+            context: IExecuteFunctions,
+            itemIndex: number,
+            baseUrl: string,
+            spaceId: string,
+            modelKey: string,
+          ): Promise<DiscoveryModel> {""", """async function resolveExecutionRecordType(
+            context: IExecuteFunctions,
+            itemIndex: number,
+            baseUrl: string,
+            spaceId: string,
+          ): Promise<{ modelKey: string; route: string }> {
+            const recordTypeValue = String(context.getNodeParameter('recordType', itemIndex, '') ?? '').trim();
+            if (recordTypeValue) {
+              const recordType = decodeRecordTypeSelector(recordTypeValue);
+              if (!recordType) {
+                throw new NodeOperationError(
+                  context.getNode(),
+                  'LifeSpace Record Type selector is invalid. Choose a Record Type from Discovery or pass a Trigger recordType value.',
+                  { itemIndex },
+                );
+              }
+              return recordType;
+            }
+
+            const legacyModelRoute = String(context.getNodeParameter('modelRoute', itemIndex, '') ?? '').trim();
+            if (!legacyModelRoute) {
+              throw new NodeOperationError(
+                context.getNode(),
+                'LifeSpace Record Type is missing. Re-select the Record Type or provide a Trigger recordType value.',
+                { itemIndex },
+              );
+            }
+
+            const discovery = await loadExecutionRuntimeDiscovery(context, baseUrl);
+            const model = discoverySpace(discovery, spaceId)?.models.find((entry) => entry.route === legacyModelRoute);
+            if (!model) {
+              throw new NodeOperationError(context.getNode(), `LifeSpace legacy Record Type route ${legacyModelRoute} is not available`, { itemIndex });
+            }
+            return { modelKey: model.key, route: model.route };
+          }
+
+          async function executionModel(
+            context: IExecuteFunctions,
+            itemIndex: number,
+            baseUrl: string,
+            spaceId: string,
+            modelKey: string,
+          ): Promise<DiscoveryModel> {""")
+
+          replace_once(node, """          const rawSpaceId = String(this.getNodeParameter('spaceId', itemIndex));
+                  const recordType = decodeRecordTypeSelector(this.getNodeParameter('recordType', itemIndex));
+                  if (!recordType) {
+                    throw new NodeOperationError(
+                      this.getNode(),
+                      'LifeSpace Record Type selector is invalid. Choose a Record Type from Discovery or pass a Trigger recordType value.',
+                      { itemIndex },
+                    );
+                  }
+                  const rawModelKey = recordType.modelKey;
+                  const rawModelRoute = recordType.route;""", """          const rawSpaceId = String(this.getNodeParameter('spaceId', itemIndex));
+                  const recordType = await resolveExecutionRecordType(this, itemIndex, baseUrl, rawSpaceId);
+                  const rawModelKey = recordType.modelKey;
+                  const rawModelRoute = recordType.route;""")
+
+          test_path = 'test/progressive-discovery.test.mjs'
+          replace_once(test_path, """function progressiveContext(parameters = {}) {
+            const calls = [];
+            return {
+              calls,
+              getCredentials: async () => ({ baseUrl: `${BASE_URL}/` }),
+              getNodeParameter(name, defaultValue) {
+                return Object.prototype.hasOwnProperty.call(parameters, name) ? parameters[name] : defaultValue;
+              },
+              getCurrentNodeParameter(name) {
+                return Object.prototype.hasOwnProperty.call(parameters, name) ? parameters[name] : undefined;
+              },
+              getNode: () => ({ name: 'LifeSpace' }),""", """function progressiveContext(parameters = {}, savedParameters = parameters) {
+            const calls = [];
+            return {
+              calls,
+              getCredentials: async () => ({ baseUrl: `${BASE_URL}/` }),
+              getNodeParameter(name, defaultValue) {
+                return Object.prototype.hasOwnProperty.call(savedParameters, name) ? savedParameters[name] : defaultValue;
+              },
+              getCurrentNodeParameter(name) {
+                return Object.prototype.hasOwnProperty.call(parameters, name) ? parameters[name] : undefined;
+              },
+              getCurrentNodeParameters() {
+                return parameters;
+              },
+              getNode: () => ({ name: 'LifeSpace' }),""")
+
+          marker = """test('Relation options remain lazy and field-scoped after progressive detail', async () => {"""
+          insertion = r"""test('Field and Action UI use editor-current Record Type before the node is saved', async () => {
+            const node = new LifeSpace();
+            const current = {
+              spaceId: 'spc_test',
+              recordType: TASK_RECORD_TYPE,
+              operation: 'executeAction',
+            };
+            const saved = {
+              spaceId: 'spc_test',
+              operation: 'executeAction',
+            };
+
+            const fieldContext = progressiveContext(current, saved);
+            const fields = await node.methods.resourceMapping.getRecordFields.call(fieldContext);
+            assert.deepEqual(fields.fields.map((field) => field.id), ['name']);
+            assert.deepEqual(fieldContext.calls.map((call) => call.url), [
+              `${BASE_URL}/me/_discovery/inventory`,
+              `${BASE_URL}/spaces/spc_test/_discovery/models/task`,
+            ]);
+
+            const actionContext = progressiveContext(current, saved);
+            const actions = await node.methods.loadOptions.getActions.call(actionContext);
+            assert.deepEqual(actions.map((action) => action.value), ['complete']);
+            assert.deepEqual(actionContext.calls.map((call) => call.url), [
+              `${BASE_URL}/me/_discovery/inventory`,
+              `${BASE_URL}/spaces/spc_test/_discovery/models/task`,
+            ]);
+          });
+
+          test('0.1.3 modelRoute remains a design-time compatibility fallback', async () => {
+            const node = new LifeSpace();
+            const context = progressiveContext({
+              spaceId: 'spc_test',
+              modelRoute: 'tasks',
+              operation: 'create',
+            });
+
+            const fields = await node.methods.resourceMapping.getRecordFields.call(context);
+            assert.deepEqual(fields.fields.map((field) => field.id), ['name']);
+            assert.deepEqual(context.calls.map((call) => call.url), [
+              `${BASE_URL}/me/_discovery/inventory`,
+              `${BASE_URL}/spaces/spc_test/_discovery/models/task`,
+            ]);
+          });
+
+          """
+          p = Path(test_path)
+          text = p.read_text()
+          if marker not in text:
+              raise SystemExit('progressive test insertion marker missing')
+          p.write_text(text.replace(marker, insertion + marker, 1))
+
+          # Let legacy execution compatibility resolve old route through the aggregate fallback in the test fixture.
+          replace_once(test_path, """        if (options.url === `${BASE_URL}/me/_discovery/inventory`) return inventory;
+                  if (options.url === `${BASE_URL}/spaces/spc_test/_discovery/models/task`) return taskDetail;""", """        if (options.url === `${BASE_URL}/me/_discovery/inventory`) return inventory;
+                  if (options.url === `${BASE_URL}/me/_discovery`) {
+                    return { data: { spaces: [{ spaceId: 'spc_test', models: [{ key: 'task', route: 'tasks' }] }] } };
+                  }
+                  if (options.url === `${BASE_URL}/spaces/spc_test/_discovery/models/task`) return taskDetail;""")
+
+          legacy_marker = """test('Record Type selectors preserve model identity and REST route for multiple models', () => {"""
+          legacy_test = r"""test('0.1.3 modelRoute executes through a compatibility lookup without changing new selector hot paths', async () => {
+            const node = new LifeSpace();
+            const context = progressiveExecuteContext({
+              resource: 'modelRecord',
+              operation: 'create',
+              spaceId: 'spc_test',
+              modelRoute: 'tasks',
+              'fields.value': { name: 'Legacy execution' },
+              'dateFields.date': [],
+              'singleRelations.relation': [],
+              'multiRelations.relation': [],
+            });
+
+            await node.execute.call(context);
+            assert.deepEqual(context.calls.map((call) => [call.method, call.url]), [
+              ['GET', `${BASE_URL}/me/_discovery`],
+              ['POST', `${BASE_URL}/spaces/spc_test/tasks`],
+            ]);
+          });
+
+          """
+          p = Path(test_path)
+          text = p.read_text()
+          if legacy_marker not in text:
+              raise SystemExit('legacy test insertion marker missing')
+          p.write_text(text.replace(legacy_marker, legacy_test + legacy_marker, 1))
+
+          readme = 'README.md'
+          readme_marker = """Execution is deliberately narrower. Get/List/Delete derive the REST route locally from the persisted Record Type selector."""
+          p = Path(readme)
+          text = p.read_text()
+          if readme_marker not in text:
+              raise SystemExit('README marker missing')
+          text = text.replace(
+              readme_marker,
+              "Existing workflows saved by 0.1.3 with the legacy `modelRoute` parameter remain supported as a compatibility fallback; re-selecting Record Type upgrades configuration to the composable selector. Design-time callbacks prefer n8n editor-current parameters so Fields and Actions update immediately before the node is saved.\n\n" + readme_marker,
+              1,
+          )
+          p.write_text(text)
+          PY
+
+          git diff --check
+          git status --short
+          git rm .github/workflows/temporary-p0-31-patcher.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add nodes/lifespaceDiscovery.ts nodes/LifeSpace/LifeSpace.node.ts test/progressive-discovery.test.mjs README.md
+          git commit -m "fix: restore design-time model detail after 0.1.4"
+          git push origin HEAD:fix/0.1.4-design-time-discovery
