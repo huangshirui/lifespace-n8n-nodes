@@ -4,6 +4,10 @@ import { test } from 'node:test';
 
 const require = createRequire(import.meta.url);
 const { LifeSpace } = require('../dist/nodes/LifeSpace/LifeSpace.node.js');
+const { decodeRecordTypeSelector, encodeRecordTypeSelector } = require('../dist/nodes/lifespaceDiscovery.js');
+
+const TASK_RECORD_TYPE = encodeRecordTypeSelector('task', 'tasks');
+const NOTE_RECORD_TYPE = encodeRecordTypeSelector('note', 'notes');
 
 const BASE_URL = 'https://example.invalid/api/v1';
 
@@ -164,6 +168,9 @@ function progressiveExecuteContext(parameters = {}) {
         if (options.url === `${BASE_URL}/spaces/spc_test/tasks` && options.method === 'POST') {
           return { data: { id: 'tsk_created', version: 1, ...options.body } };
         }
+        if (options.url === `${BASE_URL}/spaces/spc_test/tasks/rec_test` && options.method === 'GET') {
+          return { data: { id: 'rec_test', version: 1, name: 'Direct selector Get' } };
+        }
         throw new Error(`Unexpected request ${options.method} ${options.url}`);
       },
     },
@@ -180,7 +187,10 @@ test('Space and Record Type selectors use compact inventory only', async () => {
 
   const modelContext = progressiveContext({ spaceId: 'spc_test', operation: 'list' });
   const models = await node.methods.loadOptions.getRecordTypes.call(modelContext);
-  assert.deepEqual(models.map((item) => item.value), ['tasks', 'notes']);
+  assert.deepEqual(models.map((item) => decodeRecordTypeSelector(item.value)), [
+    { modelKey: 'task', route: 'tasks' },
+    { modelKey: 'note', route: 'notes' },
+  ]);
   assert.deepEqual(modelContext.calls.map((call) => call.url), [`${BASE_URL}/me/_discovery/inventory`]);
 });
 
@@ -188,7 +198,7 @@ test('Field UI fetches only the selected model semantic detail', async () => {
   const node = new LifeSpace();
   const context = progressiveContext({
     spaceId: 'spc_test',
-    modelRoute: 'tasks',
+    recordType: TASK_RECORD_TYPE,
     operation: 'create',
   });
 
@@ -206,7 +216,7 @@ test('Relation options remain lazy and field-scoped after progressive detail', a
   const node = new LifeSpace();
   const context = progressiveContext({
     spaceId: 'spc_test',
-    modelRoute: 'tasks',
+    recordType: TASK_RECORD_TYPE,
     '&field': 'assigneePersonIds',
   });
 
@@ -225,7 +235,7 @@ test('non-Calendar create reads execution inventory without fetching semantic de
     resource: 'modelRecord',
     operation: 'create',
     spaceId: 'spc_test',
-    modelRoute: 'tasks',
+    recordType: TASK_RECORD_TYPE,
     'fields.value': { name: 'Inventory-only execution' },
     'dateFields.date': [],
     'singleRelations.relation': [],
@@ -238,4 +248,27 @@ test('non-Calendar create reads execution inventory without fetching semantic de
     ['POST', `${BASE_URL}/spaces/spc_test/tasks`],
   ]);
   assert.equal(context.calls.some((call) => call.url.includes('/_discovery/models/')), false);
+});
+
+
+test('Record Type selectors preserve model identity and REST route for multiple models', () => {
+  assert.deepEqual(decodeRecordTypeSelector(TASK_RECORD_TYPE), { modelKey: 'task', route: 'tasks' });
+  assert.deepEqual(decodeRecordTypeSelector(NOTE_RECORD_TYPE), { modelKey: 'note', route: 'notes' });
+});
+
+test('Get decodes Record Type locally without a Discovery request', async () => {
+  const node = new LifeSpace();
+  const context = progressiveExecuteContext({
+    resource: 'modelRecord',
+    operation: 'get',
+    spaceId: 'spc_test',
+    recordType: TASK_RECORD_TYPE,
+    recordId: 'rec_test',
+  });
+
+  const result = await node.execute.call(context);
+  assert.equal(result[0][0].json.data.id, 'rec_test');
+  assert.deepEqual(context.calls.map((call) => [call.method, call.url]), [
+    ['GET', `${BASE_URL}/spaces/spc_test/tasks/rec_test`],
+  ]);
 });

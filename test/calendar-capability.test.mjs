@@ -4,6 +4,9 @@ import { test } from 'node:test';
 
 const require = createRequire(import.meta.url);
 const { LifeSpace } = require('../dist/nodes/LifeSpace/LifeSpace.node.js');
+const { encodeRecordTypeSelector } = require('../dist/nodes/lifespaceDiscovery.js');
+
+const CALENDAR_RECORD_TYPE = encodeRecordTypeSelector('synthetic_calendar', 'synthetic-calendars');
 
 const BASE_URL = 'https://example.invalid/api/v1';
 
@@ -106,7 +109,7 @@ const common = {
   resource: 'modelRecord',
   operation: 'create',
   spaceId: 'spc_test',
-  modelRoute: 'synthetic-calendars',
+  recordType: CALENDAR_RECORD_TYPE,
   'singleRelations.relation': [],
   'multiRelations.relation': [],
 };

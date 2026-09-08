@@ -14,7 +14,9 @@ import type {
 } from 'n8n-workflow';
 import { NodeConnectionTypes } from 'n8n-workflow';
 import {
+  decodeRecordTypeSelector,
   discoverySpace,
+  encodeRecordTypeSelector,
   loadRuntimeDiscovery,
 } from '../lifespaceDiscovery';
 
@@ -85,7 +87,7 @@ export class LifeSpaceTrigger implements INodeType {
       },
       {
         displayName: 'Record Type Names or IDs',
-        name: 'recordTypeKeys',
+        name: 'recordTypes',
         type: 'multiOptions',
         typeOptions: {
           loadOptionsMethod: 'getTriggerRecordTypes',
@@ -141,7 +143,7 @@ export class LifeSpaceTrigger implements INodeType {
           .filter((model) => model.access.includes('read'))
           .map((model) => ({
             name: `${model.display.plural} (${model.key})`,
-            value: model.key,
+            value: encodeRecordTypeSelector(model.key, model.route),
             description: model.description ?? undefined,
           }));
       },
@@ -228,7 +230,10 @@ export class LifeSpaceTrigger implements INodeType {
 
     const selectedEventTypes = this.getNodeParameter('eventTypes') as string[];
     const selectedSpaceId = String(this.getNodeParameter('spaceId', '')).trim();
-    const selectedRecordTypeKeys = this.getNodeParameter('recordTypeKeys', []) as string[];
+    const selectedRecordTypes = this.getNodeParameter('recordTypes', []) as string[];
+    const matchedRecordType = selectedRecordTypes.find((value) =>
+      decodeRecordTypeSelector(value)?.modelKey === String(bodyData.modelKey ?? ''),
+    );
 
     if (!selectedEventTypes.includes(eventType)) {
       response.status(204).end();
@@ -237,14 +242,14 @@ export class LifeSpaceTrigger implements INodeType {
 
     if (
       String(bodyData.spaceId ?? '') !== selectedSpaceId ||
-      !selectedRecordTypeKeys.includes(String(bodyData.modelKey ?? ''))
+      !matchedRecordType
     ) {
       response.status(204).end();
       return { noWebhookResponse: true };
     }
 
     return {
-      workflowData: [this.helpers.returnJsonArray(bodyData)],
+      workflowData: [this.helpers.returnJsonArray({ ...bodyData, recordType: matchedRecordType })],
     };
   }
 }
