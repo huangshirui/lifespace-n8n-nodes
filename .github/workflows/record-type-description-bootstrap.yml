@@ -1,0 +1,48 @@
+name: Record Type Help Text Bootstrap
+
+on:
+  push:
+    branches:
+      - fix/model-key-workflow-composability
+    paths:
+      - .github/workflows/record-type-description-bootstrap.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/model-key-workflow-composability
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.22.0'
+          package-manager-cache: false
+      - run: npm install --global npm@11.15.0
+      - name: Clean help text
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('nodes/LifeSpace/LifeSpace.node.ts')
+          source = path.read_text()
+          old = 'Choose from Discovery, or pass the recordType selector emitted by a LifeSpace Trigger using an <a href="https://docs.n8n.io/code/expressions/">expression</a>. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.'
+          new = 'Choose from the list, or pass the recordType selector emitted by a LifeSpace Trigger using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.'
+          if old not in source:
+            raise SystemExit('Record Type help text target not found')
+          path.write_text(source.replace(old, new, 1))
+          Path('.github/workflows/record-type-description-bootstrap.yml').unlink()
+          PY
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - name: Commit cleanup
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "docs: clarify record type selector help"
+          git push origin HEAD:fix/model-key-workflow-composability
