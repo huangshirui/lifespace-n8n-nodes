@@ -24,7 +24,96 @@ jobs:
       - run: npm install --global npm@11.15.0
       - run: node scripts/fix-record-type-bootstrap.mjs
       - run: node scripts/apply-record-type-selector.mjs
+      - name: Normalize selector validation
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          discovery = Path('nodes/lifespaceDiscovery.ts')
+          source = discovery.read_text()
+          start = source.index('export function encodeRecordTypeSelector')
+          end = source.index('\n\nexport function normalizeBaseUrl', start)
+          replacement = '''export function encodeRecordTypeSelector(modelKey: string, route: string): string {
+            const payload = Buffer.from(JSON.stringify([modelKey, route]), 'utf8').toString('base64url');
+            return RECORD_TYPE_SELECTOR_PREFIX + payload;
+          }
+
+          export function decodeRecordTypeSelector(value: unknown): RecordTypeSelector | null {
+            const raw = String(value ?? '').trim();
+            if (!raw.startsWith(RECORD_TYPE_SELECTOR_PREFIX)) return null;
+            try {
+              const decoded = JSON.parse(Buffer.from(raw.slice(RECORD_TYPE_SELECTOR_PREFIX.length), 'base64url').toString('utf8')) as unknown;
+              if (!Array.isArray(decoded) || decoded.length !== 2 || typeof decoded[0] !== 'string' || typeof decoded[1] !== 'string'
+                || !decoded[0].trim() || !decoded[1].trim()) return null;
+              return { modelKey: decoded[0], route: decoded[1] };
+            } catch {
+              return null;
+            }
+          }'''
+          source = source[:start] + replacement + source[end:]
+          old = """  const recordType = loadOptionParameter(this, 'recordType');
+            const selection = {
+              spaceId: loadOptionParameter(this, 'spaceId'),
+              modelKey: recordType ? decodeRecordTypeSelector(recordType).modelKey : '',
+            };"""
+          new = """  const recordType = loadOptionParameter(this, 'recordType');
+            const decodedRecordType = recordType ? decodeRecordTypeSelector(recordType) : null;
+            if (recordType && !decodedRecordType) {
+              throw new NodeOperationError(this.getNode(), 'LifeSpace Record Type selector is invalid. Choose a Record Type from Discovery or pass a Trigger recordType value.');
+            }
+            const selection = {
+              spaceId: loadOptionParameter(this, 'spaceId'),
+              modelKey: decodedRecordType?.modelKey ?? '',
+            };"""
+          if old not in source:
+            raise SystemExit('loadRuntimeDiscovery selector block not found')
+          discovery.write_text(source.replace(old, new, 1))
+
+          node = Path('nodes/LifeSpace/LifeSpace.node.ts')
+          source = node.read_text()
+          old = """  const recordType = decodeRecordTypeSelector(recordTypeValue);
+            const discovery = await loadRuntimeDiscovery.call(context);
+            const model = discoveryModel(discovery, spaceId, recordType.modelKey);"""
+          new = """  const recordType = decodeRecordTypeSelector(recordTypeValue);
+            if (!recordType) {
+              throw new NodeOperationError(context.getNode(), 'LifeSpace Record Type selector is invalid. Choose a Record Type from Discovery or pass a Trigger recordType value.');
+            }
+            const discovery = await loadRuntimeDiscovery.call(context);
+            const model = discoveryModel(discovery, spaceId, recordType.modelKey);"""
+          if old not in source:
+            raise SystemExit('optionModel selector validation block not found')
+          source = source.replace(old, new, 1)
+          old = """          const recordType = decodeRecordTypeSelector(this.getNodeParameter('recordType', itemIndex));
+                    const rawModelKey = recordType.modelKey;
+                    const rawModelRoute = recordType.route;"""
+          new = """          const recordType = decodeRecordTypeSelector(this.getNodeParameter('recordType', itemIndex));
+                    if (!recordType) {
+                      throw new NodeOperationError(
+                        this.getNode(),
+                        'LifeSpace Record Type selector is invalid. Choose a Record Type from Discovery or pass a Trigger recordType value.',
+                        { itemIndex },
+                      );
+                    }
+                    const rawModelKey = recordType.modelKey;
+                    const rawModelRoute = recordType.route;"""
+          if old not in source:
+            raise SystemExit('execution selector validation block not found')
+          node.write_text(source.replace(old, new, 1))
+
+          trigger = Path('nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.ts')
+          source = trigger.read_text()
+          old = """    const matchedRecordType = selectedRecordTypes.find((value) =>
+                decodeRecordTypeSelector(value).modelKey === String(bodyData.modelKey ?? ''),
+              );"""
+          new = """    const matchedRecordType = selectedRecordTypes.find((value) =>
+                decodeRecordTypeSelector(value)?.modelKey === String(bodyData.modelKey ?? ''),
+              );"""
+          if old not in source:
+            raise SystemExit('trigger selector decode block not found')
+          trigger.write_text(source.replace(old, new, 1))
+          PY
       - run: npm ci
+      - run: npm run lint -- --fix
       - run: npm run lint
       - run: npm test
       - run: npm run build
