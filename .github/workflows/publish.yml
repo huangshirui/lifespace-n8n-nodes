@@ -9,7 +9,7 @@ on:
 
 jobs:
   publish:
-    if: github.ref_type == 'tag' || startsWith(github.event.head_commit.message, 'release: publish ')
+    if: github.ref_type == 'tag' || startsWith(github.event.head_commit.message, 'release-publish-')
     name: Publish to npm
     runs-on: ubuntu-latest
     permissions:
