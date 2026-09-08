@@ -72,7 +72,7 @@ The node displays the authorized human-readable `spaceName` when present while c
 
 Record Type identity and REST routing remain distinct. LifeSpace `modelKey` is the stable semantic identity, while the Discovery `route` is a REST transport detail. The n8n adapter persists an adapter-local `recordType` selector containing both values when the workflow is configured. At execution time the selector is decoded locally, so Get/List/Delete do not add a Discovery request merely to translate `modelKey` to a REST route.
 
-Calendar-backed models use canonical `capabilityBindings.calendar` field roles instead of Event-specific field names. Date-only values are normalized to `YYYY-MM-DD`, and contradictory all-day/timed state is rejected locally before the mutation request while Core remains the final validation authority.
+Calendar-backed models use canonical `capabilityBindings.calendar` field roles instead of Event-specific field names while the node is being configured. Date-only values are normalized to `YYYY-MM-DD`. Create/Update execution does not fetch fresh semantic Discovery solely to produce an adapter-local Calendar conflict error; the canonical mutation goes directly to LifeSpace Core, which remains authoritative for Calendar validation and current authorization.
 
 ## LifeSpace contract compatibility
 
@@ -95,17 +95,19 @@ The UX depends on these Kernel capabilities:
 - `0.30.0`: explicit paginated Change History collection and Model Control Plane ownership split;
 - `0.31.0`: Integration/Eventing wire representation moves to the independent Integration/Eventing `0.1.0` contract while Core remains the Runtime authority.
 
-The adapter prefers the `0.27+` progressive flow:
+The adapter prefers the `0.27+` progressive flow while configuring a node:
 
 ```text
 GET /me/_discovery/inventory
   -> choose current Space / Record Type
   -> GET /spaces/{spaceId}/_discovery/models/{modelKey}
   -> relation target lookup / reference resolution only when needed
-  -> canonical Runtime request
+  -> persist stable workflow configuration
 ```
 
-The legacy aggregate `GET /me/_discovery` remains an intentional compatibility fallback. Neither cached Discovery nor relation lookup is treated as authorization proof; every mutation still goes through canonical LifeSpace Runtime enforcement.
+Execution is deliberately narrower. Get/List/Delete derive the REST route locally from the persisted Record Type selector. Create/Update submit the configured mutation without a fresh Runtime Discovery preflight. Execute Action loads only the selected model's `0.26+` static semantic detail, and reuses that detail within the same node execution for repeated items using the same Space/Record Type. No cached Discovery result is treated as authorization proof; every CRUD or Action request still goes through canonical LifeSpace Core current-state enforcement.
+
+The legacy aggregate `GET /me/_discovery` remains an intentional design-time compatibility fallback. Neither cached Discovery nor relation lookup is treated as authorization proof; every mutation still goes through canonical LifeSpace Runtime enforcement.
 
 Ordinary Record CRUD/Action routes remain model-contract surfaces derived from published Model Definitions; the n8n adapter does not maintain a second copy of those schemas.
 
@@ -176,13 +178,15 @@ Older compatible Discovery responses without relation lookup metadata retain the
 
 The current n8n UI loads bounded relation options when the relevant field is configured. Very large target sets should use expressions with stable IDs until n8n exposes a searchable dynamic relation option surface that can consume LifeSpace's paginated/searchable lookup directly.
 
+At execution time Create uses the already-configured Record Type selector and sends the canonical mutation directly. This avoids paying a current-principal inventory round trip merely to rediscover whether adapter-side semantic preflight would improve an error message. Core remains the final authority for schema, Capability, Policy and authorization checks.
+
 ### Update and Delete
 
 LifeSpace uses optimistic concurrency.
 
 By default the node reads the current Record version immediately before Update/Delete and sends that version with the mutation. This keeps the ordinary n8n UI free from mandatory internal `version` entry while preserving stale-write protection for the actual mutation race.
 
-For Calendar-backed Update, the node also combines the current record with the proposed patch and checks the discovered all-day/timed field roles before sending the mutation. Core validation remains authoritative.
+Update does not add a Runtime Discovery request before the mutation. When no explicit version is configured, the current-record read is for optimistic concurrency rather than semantic discovery. Core validates Calendar and other Capability semantics against the resulting mutation.
 
 If a workflow intentionally needs to bind a known version, add **Concurrency Options → Version**.
 
@@ -207,7 +211,7 @@ Choose an Action from Runtime Discovery.
 
 **Action Input** contains only semantic/domain inputs. LifeSpace concurrency metadata is not rendered as a business field. For the current `record-version` contract, the node reads the current Record version immediately before Action execution and sends it using the transport declared by Runtime Discovery.
 
-Execution-time Action metadata uses the same progressive inventory + selected-model detail path rather than loading the full cross-Space Discovery document.
+Execution-time Action metadata is loaded directly from the selected model's static semantic-detail endpoint rather than first loading the broad current-principal inventory. The static detail is reused for repeated items of the same Space/Record Type during one node execution. It is semantic input only, not cached authority; Core rechecks current Action authority on every invocation.
 
 This means actions such as `complete` / `reopen` no longer ask users to type an internal version value.
 

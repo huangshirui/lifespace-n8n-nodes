@@ -237,12 +237,12 @@ type DiscoverySelection = {
   modelKey: string;
 };
 
-type ProgressiveDetailMode = 'selected' | 'calendar-if-present';
-
 const RELATION_TARGET_PAGE_SIZE = 100;
 const RELATION_TARGET_OPTION_LIMIT = 1000;
 const RELATION_TARGET_LOOKUP_PATH = '/api/v1/spaces/{spaceId}/_relation-targets/{modelKey}/{fieldKey}';
+const MODEL_SEMANTIC_DETAIL_PATH = '/api/v1/spaces/{spaceId}/_discovery/models/{modelKey}';
 const RECORD_TYPE_SELECTOR_PREFIX = 'lsrt1.';
+const executionSemanticCache = new WeakMap<IExecuteFunctions, Map<string, Promise<DiscoveryResponse>>>();
 
 export type RecordTypeSelector = {
   modelKey: string;
@@ -404,11 +404,58 @@ function replacePathTemplate(template: string, values: Record<string, string>): 
   );
 }
 
+async function requestSelectedExecutionSemanticDetail(
+  context: IExecuteFunctions,
+  baseUrl: string,
+  spaceId: string,
+  modelKey: string,
+): Promise<DiscoveryResponse> {
+  const path = replacePathTemplate(MODEL_SEMANTIC_DETAIL_PATH, { spaceId, modelKey });
+  let response: SemanticDetailResponse;
+  try {
+    response = await authenticatedGet<SemanticDetailResponse>(context, baseUrl, path);
+  } catch (error) {
+    throw new NodeApiError(context.getNode(), error as JsonObject);
+  }
+  const detail = response?.data;
+  if (!detail || detail.key !== modelKey) {
+    throw new NodeOperationError(context.getNode(), 'LifeSpace Runtime Discovery semantic detail returned an invalid response');
+  }
+  return {
+    data: {
+      spaces: [{
+        spaceId,
+        models: [detailedModel(detail, detail.declaredAccess)],
+      }],
+    },
+  };
+}
+
+function cachedExecutionSemanticDetail(
+  context: IExecuteFunctions,
+  baseUrl: string,
+  spaceId: string,
+  modelKey: string,
+): Promise<DiscoveryResponse> {
+  let cache = executionSemanticCache.get(context);
+  if (!cache) {
+    cache = new Map();
+    executionSemanticCache.set(context, cache);
+  }
+  const key = `${baseUrl}\n${spaceId}\n${modelKey}`;
+  const existing = cache.get(key);
+  if (existing) return existing;
+
+  const pending = requestSelectedExecutionSemanticDetail(context, baseUrl, spaceId, modelKey);
+  cache.set(key, pending);
+  void pending.catch(() => cache?.delete(key));
+  return pending;
+}
+
 async function requestProgressiveRuntimeDiscovery(
   context: ILoadOptionsFunctions | IExecuteFunctions,
   baseUrl: string,
   selection?: DiscoverySelection,
-  detailMode: ProgressiveDetailMode = 'selected',
 ): Promise<DiscoveryResponse | null> {
   let inventory: InventoryResponse;
   try {
@@ -431,10 +478,8 @@ async function requestProgressiveRuntimeDiscovery(
     const selectedIdentity = identities.get(selectedModelKey);
     const visible = selectedSpace && selectedIdentity
       && selectedSpace.models.some((edge) => edge.modelKey === selectedIdentity.key);
-    const needsDetail = selectedIdentity
-      && (detailMode === 'selected' || selectedIdentity.capabilities.includes('calendar'));
 
-    if (visible && selectedIdentity && needsDetail) {
+    if (visible && selectedIdentity) {
       const path = replacePathTemplate(inventory.data.semanticDetailPathTemplate, {
         spaceId: selectedSpaceId,
         modelKey: selectedIdentity.key,
@@ -576,18 +621,10 @@ export async function loadExecutionRuntimeDiscovery(
   spaceId?: string,
   modelKey?: string,
 ): Promise<DiscoveryResponse> {
-  const selection = spaceId && modelKey ? { spaceId, modelKey } : undefined;
-  let detailMode: ProgressiveDetailMode = 'selected';
-  if (selection) {
-    try {
-      const operation = String(context.getNodeParameter('operation', 0, '') ?? '').trim();
-      if (operation === 'create' || operation === 'update') detailMode = 'calendar-if-present';
-    } catch {
-      detailMode = 'selected';
-    }
+  if (spaceId && modelKey) {
+    return cachedExecutionSemanticDetail(context, baseUrl, spaceId, modelKey);
   }
-  const progressive = await requestProgressiveRuntimeDiscovery(context, baseUrl, selection, detailMode);
-  return progressive ?? requestFullRuntimeDiscovery(context, baseUrl);
+  return requestFullRuntimeDiscovery(context, baseUrl);
 }
 
 export function discoverySpace(discovery: DiscoveryResponse, spaceId: string): DiscoverySpace | undefined {

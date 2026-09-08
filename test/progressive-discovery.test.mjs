@@ -150,14 +150,20 @@ function progressiveContext(parameters = {}) {
   };
 }
 
-function progressiveExecuteContext(parameters = {}) {
+function parameterValue(parameters, name, itemIndex, defaultValue) {
+  if (!Object.prototype.hasOwnProperty.call(parameters, name)) return defaultValue;
+  const value = parameters[name];
+  return typeof value === 'function' ? value(itemIndex) : value;
+}
+
+function progressiveExecuteContext(parameters = {}, itemCount = 1) {
   const calls = [];
   return {
     calls,
-    getInputData: () => [{ json: {} }],
+    getInputData: () => Array.from({ length: itemCount }, () => ({ json: {} })),
     getCredentials: async () => ({ baseUrl: `${BASE_URL}/` }),
-    getNodeParameter(name, _itemIndex, defaultValue) {
-      return Object.prototype.hasOwnProperty.call(parameters, name) ? parameters[name] : defaultValue;
+    getNodeParameter(name, itemIndex, defaultValue) {
+      return parameterValue(parameters, name, itemIndex, defaultValue);
     },
     getNode: () => ({ name: 'LifeSpace' }),
     continueOnFail: () => false,
@@ -165,8 +171,17 @@ function progressiveExecuteContext(parameters = {}) {
       async httpRequestWithAuthentication(_credentialName, options) {
         calls.push(options);
         if (options.url === `${BASE_URL}/me/_discovery/inventory`) return inventory;
+        if (options.url === `${BASE_URL}/spaces/spc_test/_discovery/models/task`) return taskDetail;
         if (options.url === `${BASE_URL}/spaces/spc_test/tasks` && options.method === 'POST') {
           return { data: { id: 'tsk_created', version: 1, ...options.body } };
+        }
+        const recordMatch = new RegExp(`^${BASE_URL}/spaces/spc_test/tasks/(rec_[^/]+)$`, 'u').exec(options.url);
+        if (recordMatch && options.method === 'GET') {
+          return { data: { id: recordMatch[1], version: 3, name: 'Current task' } };
+        }
+        const actionMatch = new RegExp(`^${BASE_URL}/spaces/spc_test/tasks/(rec_[^/]+)/actions/complete$`, 'u').exec(options.url);
+        if (actionMatch && options.method === 'POST') {
+          return { data: { id: actionMatch[1], version: 4, status: 'completed' } };
         }
         if (options.url === `${BASE_URL}/spaces/spc_test/tasks/rec_test` && options.method === 'GET') {
           return { data: { id: 'rec_test', version: 1, name: 'Direct selector Get' } };
@@ -229,14 +244,14 @@ test('Relation options remain lazy and field-scoped after progressive detail', a
   ]);
 });
 
-test('non-Calendar create reads execution inventory without fetching semantic detail', async () => {
+test('non-Calendar create performs only the business mutation at execution time', async () => {
   const node = new LifeSpace();
   const context = progressiveExecuteContext({
     resource: 'modelRecord',
     operation: 'create',
     spaceId: 'spc_test',
     recordType: TASK_RECORD_TYPE,
-    'fields.value': { name: 'Inventory-only execution' },
+    'fields.value': { name: 'Direct execution' },
     'dateFields.date': [],
     'singleRelations.relation': [],
     'multiRelations.relation': [],
@@ -244,12 +259,9 @@ test('non-Calendar create reads execution inventory without fetching semantic de
 
   await node.execute.call(context);
   assert.deepEqual(context.calls.map((call) => [call.method, call.url]), [
-    ['GET', `${BASE_URL}/me/_discovery/inventory`],
     ['POST', `${BASE_URL}/spaces/spc_test/tasks`],
   ]);
-  assert.equal(context.calls.some((call) => call.url.includes('/_discovery/models/')), false);
 });
-
 
 test('Record Type selectors preserve model identity and REST route for multiple models', () => {
   assert.deepEqual(decodeRecordTypeSelector(TASK_RECORD_TYPE), { modelKey: 'task', route: 'tasks' });
@@ -270,5 +282,53 @@ test('Get decodes Record Type locally without a Discovery request', async () => 
   assert.equal(result[0][0].json.data.id, 'rec_test');
   assert.deepEqual(context.calls.map((call) => [call.method, call.url]), [
     ['GET', `${BASE_URL}/spaces/spc_test/tasks/rec_test`],
+  ]);
+});
+
+test('Action execution goes directly to selected semantic detail without inventory', async () => {
+  const node = new LifeSpace();
+  const context = progressiveExecuteContext({
+    resource: 'modelRecord',
+    operation: 'executeAction',
+    spaceId: 'spc_test',
+    recordType: TASK_RECORD_TYPE,
+    recordId: 'rec_one',
+    actionKey: 'complete',
+    'actionInput.value': {},
+  });
+
+  await node.execute.call(context);
+  assert.deepEqual(context.calls.map((call) => [call.method, call.url]), [
+    ['GET', `${BASE_URL}/spaces/spc_test/_discovery/models/task`],
+    ['GET', `${BASE_URL}/spaces/spc_test/tasks/rec_one`],
+    ['POST', `${BASE_URL}/spaces/spc_test/tasks/rec_one/actions/complete`],
+  ]);
+  assert.equal(context.calls.some((call) => call.url.endsWith('/me/_discovery/inventory')), false);
+});
+
+test('Action semantic detail is reused once per node execution for multiple items of the same model', async () => {
+  const node = new LifeSpace();
+  const context = progressiveExecuteContext({
+    resource: 'modelRecord',
+    operation: 'executeAction',
+    spaceId: 'spc_test',
+    recordType: TASK_RECORD_TYPE,
+    recordId: (itemIndex) => `rec_${itemIndex + 1}`,
+    actionKey: 'complete',
+    'actionInput.value': {},
+  }, 2);
+
+  await node.execute.call(context);
+  assert.equal(
+    context.calls.filter((call) => call.url === `${BASE_URL}/spaces/spc_test/_discovery/models/task`).length,
+    1,
+  );
+  assert.equal(context.calls.some((call) => call.url.endsWith('/me/_discovery/inventory')), false);
+  assert.deepEqual(context.calls.map((call) => [call.method, call.url]), [
+    ['GET', `${BASE_URL}/spaces/spc_test/_discovery/models/task`],
+    ['GET', `${BASE_URL}/spaces/spc_test/tasks/rec_1`],
+    ['POST', `${BASE_URL}/spaces/spc_test/tasks/rec_1/actions/complete`],
+    ['GET', `${BASE_URL}/spaces/spc_test/tasks/rec_2`],
+    ['POST', `${BASE_URL}/spaces/spc_test/tasks/rec_2/actions/complete`],
   ]);
 });

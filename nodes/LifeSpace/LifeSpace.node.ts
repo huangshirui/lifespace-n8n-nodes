@@ -11,7 +11,6 @@ import type {
   ResourceMapperFields,
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
-import { validateCalendarMutation } from '../calendarMutation';
 import {
   decodeRecordTypeSelector,
   discoveryModel,
@@ -366,16 +365,13 @@ async function mutationVersion(
   itemIndex: number,
   baseUrl: string,
   recordPath: string,
-  loadedRecord?: IDataObject,
 ): Promise<number> {
   const options = context.getNodeParameter('mutationOptions', itemIndex, {}) as IDataObject;
   const configuredVersion = options.version;
   if (typeof configuredVersion === 'number' && Number.isInteger(configuredVersion) && configuredVersion >= 1) {
     return configuredVersion;
   }
-  return loadedRecord
-    ? recordVersion(context, itemIndex, loadedRecord)
-    : currentRecordVersion(context, itemIndex, baseUrl, recordPath);
+  return currentRecordVersion(context, itemIndex, baseUrl, recordPath);
 }
 
 async function executionModel(
@@ -912,8 +908,6 @@ export class LifeSpace implements INodeType {
             }
           } else if (operation === 'create') {
             const body = mutationMappedValues(this, itemIndex);
-            const model = await executionModel(this, itemIndex, baseUrl, rawSpaceId, rawModelKey);
-            validateCalendarMutation(this, itemIndex, model, body);
             response = await this.helpers.httpRequestWithAuthentication.call(
               this,
               'lifeSpaceApi',
@@ -928,17 +922,12 @@ export class LifeSpace implements INodeType {
               options = { method: 'GET', url: `${baseUrl}${recordPath}`, json: true };
             } else if (operation === 'update') {
               const body = mutationMappedValues(this, itemIndex);
-              const model = await executionModel(this, itemIndex, baseUrl, rawSpaceId, rawModelKey);
-              const loadedRecord = model.capabilityBindings?.calendar
-                ? await currentRecord(this, itemIndex, baseUrl, recordPath)
-                : undefined;
-              validateCalendarMutation(this, itemIndex, model, body, loadedRecord);
               options = {
                 method: 'PATCH',
                 url: `${baseUrl}${recordPath}`,
                 body: {
                   ...body,
-                  version: await mutationVersion(this, itemIndex, baseUrl, recordPath, loadedRecord),
+                  version: await mutationVersion(this, itemIndex, baseUrl, recordPath),
                 },
                 json: true,
               };
