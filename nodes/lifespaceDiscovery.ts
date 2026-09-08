@@ -242,7 +242,10 @@ type ProgressiveDetailMode = 'selected' | 'calendar-if-present';
 const RELATION_TARGET_PAGE_SIZE = 100;
 const RELATION_TARGET_OPTION_LIMIT = 1000;
 const RELATION_TARGET_LOOKUP_PATH = '/api/v1/spaces/{spaceId}/_relation-targets/{modelKey}/{fieldKey}';
+const MODEL_SEMANTIC_DETAIL_PATH = '/api/v1/spaces/{spaceId}/_discovery/models/{modelKey}';
 const RECORD_TYPE_SELECTOR_PREFIX = 'lsrt1.';
+const EXECUTION_PREFLIGHT_BYPASS_SCHEMA_HASH = 'adapter:execution-preflight-disabled';
+const executionSemanticCache = new WeakMap<IExecuteFunctions, Map<string, Promise<DiscoveryResponse>>>();
 
 export type RecordTypeSelector = {
   modelKey: string;
@@ -397,11 +400,105 @@ function detailedModel(detail: SemanticDetail, access: DiscoveryAccess[]): Disco
   };
 }
 
+function executionPreflightBypassModel(modelKey: string): DiscoveryModel {
+  // Create/Update no longer pay a remote semantic read solely for adapter-side
+  // Calendar error wording. This is an internal no-preflight sentinel, not a
+  // LifeSpace semantic snapshot or authorization result; Core still validates
+  // the actual mutation and current authority on every business request.
+  return {
+    key: modelKey,
+    route: modelKey,
+    version: 0,
+    schemaHash: EXECUTION_PREFLIGHT_BYPASS_SCHEMA_HASH,
+    display: { singular: modelKey, plural: modelKey },
+    description: null,
+    access: [],
+    fields: [],
+    defaults: {},
+    query: {
+      searchable: [],
+      filterable: [],
+      sortable: [],
+      sort: {
+        parameter: 'sort',
+        syntax: 'field:direction',
+        repeatable: true,
+        ordered: true,
+        maxCriteria: 0,
+        default: [],
+        envelopeFields: [],
+      },
+    },
+    actions: [],
+    capabilities: [],
+    capabilityBindings: {},
+  };
+}
+
+function executionPreflightBypassDiscovery(spaceId: string, modelKey: string): DiscoveryResponse {
+  return {
+    data: {
+      spaces: [{
+        spaceId,
+        models: [executionPreflightBypassModel(modelKey)],
+      }],
+    },
+  };
+}
+
 function replacePathTemplate(template: string, values: Record<string, string>): string {
   return Object.entries(values).reduce(
     (path, [key, value]) => path.replace(`{${key}}`, encodeURIComponent(value)),
     template,
   );
+}
+
+async function requestSelectedExecutionSemanticDetail(
+  context: IExecuteFunctions,
+  baseUrl: string,
+  spaceId: string,
+  modelKey: string,
+): Promise<DiscoveryResponse> {
+  const path = replacePathTemplate(MODEL_SEMANTIC_DETAIL_PATH, { spaceId, modelKey });
+  let response: SemanticDetailResponse;
+  try {
+    response = await authenticatedGet<SemanticDetailResponse>(context, baseUrl, path);
+  } catch (error) {
+    throw new NodeApiError(context.getNode(), error as JsonObject);
+  }
+  const detail = response?.data;
+  if (!detail || detail.key !== modelKey) {
+    throw new NodeOperationError(context.getNode(), 'LifeSpace Runtime Discovery semantic detail returned an invalid response');
+  }
+  return {
+    data: {
+      spaces: [{
+        spaceId,
+        models: [detailedModel(detail, detail.declaredAccess)],
+      }],
+    },
+  };
+}
+
+function cachedExecutionSemanticDetail(
+  context: IExecuteFunctions,
+  baseUrl: string,
+  spaceId: string,
+  modelKey: string,
+): Promise<DiscoveryResponse> {
+  let cache = executionSemanticCache.get(context);
+  if (!cache) {
+    cache = new Map();
+    executionSemanticCache.set(context, cache);
+  }
+  const key = `${baseUrl}\n${spaceId}\n${modelKey}`;
+  const existing = cache.get(key);
+  if (existing) return existing;
+
+  const pending = requestSelectedExecutionSemanticDetail(context, baseUrl, spaceId, modelKey);
+  cache.set(key, pending);
+  void pending.catch(() => cache?.delete(key));
+  return pending;
 }
 
 async function requestProgressiveRuntimeDiscovery(
@@ -577,17 +674,22 @@ export async function loadExecutionRuntimeDiscovery(
   modelKey?: string,
 ): Promise<DiscoveryResponse> {
   const selection = spaceId && modelKey ? { spaceId, modelKey } : undefined;
-  let detailMode: ProgressiveDetailMode = 'selected';
   if (selection) {
+    let operation = '';
     try {
-      const operation = String(context.getNodeParameter('operation', 0, '') ?? '').trim();
-      if (operation === 'create' || operation === 'update') detailMode = 'calendar-if-present';
+      operation = String(context.getNodeParameter('operation', 0, '') ?? '').trim();
     } catch {
-      detailMode = 'selected';
+      operation = '';
     }
+
+    if (operation === 'create' || operation === 'update') {
+      return executionPreflightBypassDiscovery(selection.spaceId, selection.modelKey);
+    }
+
+    return cachedExecutionSemanticDetail(context, baseUrl, selection.spaceId, selection.modelKey);
   }
-  const progressive = await requestProgressiveRuntimeDiscovery(context, baseUrl, selection, detailMode);
-  return progressive ?? requestFullRuntimeDiscovery(context, baseUrl);
+
+  return requestFullRuntimeDiscovery(context, baseUrl);
 }
 
 export function discoverySpace(discovery: DiscoveryResponse, spaceId: string): DiscoverySpace | undefined {
