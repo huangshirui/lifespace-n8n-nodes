@@ -18,6 +18,7 @@ import {
   encodeRecordTypeSelector,
   humanizeKey,
   loadExecutionRuntimeDiscovery,
+  loadOptionParameter,
   loadRelationTargets,
   loadRuntimeDiscovery,
   normalizeBaseUrl,
@@ -432,15 +433,19 @@ function actionOption(action: DiscoveryAction): INodePropertyOptions {
 }
 
 async function optionModel(context: ILoadOptionsFunctions): Promise<{ model: DiscoveryModel; spaceId: string } | null> {
-  const spaceId = String(context.getNodeParameter('spaceId', '')).trim();
-  const recordTypeValue = String(context.getNodeParameter('recordType', '')).trim();
-  if (!spaceId || !recordTypeValue) return null;
-  const recordType = decodeRecordTypeSelector(recordTypeValue);
-  if (!recordType) {
+  const spaceId = loadOptionParameter(context, 'spaceId');
+  const recordTypeValue = loadOptionParameter(context, 'recordType');
+  const legacyModelRoute = recordTypeValue ? '' : loadOptionParameter(context, 'modelRoute');
+  if (!spaceId || (!recordTypeValue && !legacyModelRoute)) return null;
+  const recordType = recordTypeValue ? decodeRecordTypeSelector(recordTypeValue) : null;
+  if (recordTypeValue && !recordType) {
     throw new NodeOperationError(context.getNode(), 'LifeSpace Record Type selector is invalid. Choose a Record Type from Discovery or pass a Trigger recordType value.');
   }
   const discovery = await loadRuntimeDiscovery.call(context);
-  const model = discoveryModel(discovery, spaceId, recordType.modelKey);
+  const space = discoverySpace(discovery, spaceId);
+  const model = recordType
+    ? discoveryModel(discovery, spaceId, recordType.modelKey)
+    : space?.models.find((entry) => entry.route === legacyModelRoute);
   return model ? { model, spaceId } : null;
 }
 
@@ -468,7 +473,7 @@ async function relationFieldOptions(
 ): Promise<INodePropertyOptions[]> {
   const selected = await optionModel(context);
   if (!selected) return [];
-  const operation = String(context.getNodeParameter('operation', 'create'));
+  const operation = loadOptionParameter(context, 'operation') || 'create';
   const filterable = new Set(selected.model.query.filterable);
   return selected.model.fields
     .filter((field) => field.relation?.lookup.supported === true)
@@ -744,12 +749,12 @@ export class LifeSpace implements INodeType {
         }));
       },
       async getRecordTypes(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-        const spaceId = String(this.getNodeParameter('spaceId', '')).trim();
+        const spaceId = loadOptionParameter(this, 'spaceId');
         if (!spaceId) return [];
         const discovery = await loadRuntimeDiscovery.call(this);
         const space = discoverySpace(discovery, spaceId);
         if (!space) return [];
-        const operation = String(this.getNodeParameter('operation', 'list'));
+        const operation = loadOptionParameter(this, 'operation') || 'list';
         return space.models
           .filter((model) => operation === 'executeAction'
             ? model.actions.length > 0
@@ -779,7 +784,7 @@ export class LifeSpace implements INodeType {
       async getWritableDateFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const selected = await optionModel(this);
         if (!selected) return [];
-        const operation = String(this.getNodeParameter('operation', 'create'));
+        const operation = loadOptionParameter(this, 'operation') || 'create';
         return selected.model.fields
           .filter((field) => field.type === 'date' && !field.readOnly && (operation !== 'update' || !field.immutable))
           .map((field) => ({ name: field.title?.trim() || humanizeKey(field.key), value: field.key, description: field.description }));
@@ -827,7 +832,7 @@ export class LifeSpace implements INodeType {
       async getRecordFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
         const selected = await optionModel(this);
         if (!selected) return { fields: [] };
-        const operation = String(this.getNodeParameter('operation', 'create'));
+        const operation = loadOptionParameter(this, 'operation') || 'create';
         const writableFields = selected.model.fields
           .filter((field) => !field.readOnly && (operation !== 'update' || !field.immutable))
           .filter((field) => field.type !== 'date')
@@ -841,7 +846,7 @@ export class LifeSpace implements INodeType {
       },
       async getActionInputFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
         const selected = await optionModel(this);
-        const actionKey = String(this.getNodeParameter('actionKey', '')).trim();
+        const actionKey = loadOptionParameter(this, 'actionKey');
         const action = selected?.model.actions.find((entry) => entry.key === actionKey);
         return action
           ? { fields: action.input.fields.map((field) => mapperField(field, field.required === true)) }

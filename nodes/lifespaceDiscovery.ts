@@ -302,7 +302,13 @@ async function requestFullRuntimeDiscovery(
   }
 }
 
-function loadOptionParameter(context: ILoadOptionsFunctions, name: string): string {
+export function loadOptionParameter(context: ILoadOptionsFunctions, name: string): string {
+  try {
+    const current = context.getCurrentNodeParameter(name);
+    if (current !== undefined) return String(current ?? '').trim();
+  } catch {
+    // Fall through for compatible contexts without an editor-current value.
+  }
   try {
     return String(context.getNodeParameter(name, '') ?? '').trim();
   } catch {
@@ -607,6 +613,8 @@ export async function loadRuntimeDiscovery(this: ILoadOptionsFunctions): Promise
   if (recordType && !decodedRecordType) {
     throw new NodeOperationError(this.getNode(), 'LifeSpace Record Type selector is invalid. Choose a Record Type from Discovery or pass a Trigger recordType value.');
   }
+  const legacyModelRoute = recordType ? '' : loadOptionParameter(this, 'modelRoute');
+  if (legacyModelRoute) return requestFullRuntimeDiscovery(this, baseUrl);
   const selection = {
     spaceId: loadOptionParameter(this, 'spaceId'),
     modelKey: decodedRecordType?.modelKey ?? '',
