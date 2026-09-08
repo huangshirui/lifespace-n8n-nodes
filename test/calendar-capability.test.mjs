@@ -80,7 +80,7 @@ const detail = {
   },
 };
 
-function context(parameters) {
+function context(parameters, { rejectMutation = false } = {}) {
   const calls = [];
   return {
     calls,
@@ -97,6 +97,7 @@ function context(parameters) {
         if (options.url === `${BASE_URL}/me/_discovery/inventory`) return inventory;
         if (options.url === `${BASE_URL}/spaces/spc_test/_discovery/models/synthetic_calendar`) return detail;
         if (options.url === `${BASE_URL}/spaces/spc_test/synthetic-calendars`) {
+          if (rejectMutation) throw new Error('Core rejected contradictory Calendar semantics');
           return { data: { id: 'rec_created', version: 1, ...options.body } };
         }
         throw new Error(`Unexpected request ${options.method} ${options.url}`);
@@ -114,7 +115,7 @@ const common = {
   'multiRelations.relation': [],
 };
 
-test('all-day Calendar create uses discovered roles and normalizes date values', async () => {
+test('all-day Calendar create normalizes configured date values without execution-time Discovery', async () => {
   const node = new LifeSpace();
   const ctx = context({
     ...common,
@@ -126,8 +127,10 @@ test('all-day Calendar create uses discovered roles and normalizes date values',
   });
 
   await node.execute.call(ctx);
+  assert.deepEqual(ctx.calls.map((call) => [call.method, call.url]), [
+    ['POST', `${BASE_URL}/spaces/spc_test/synthetic-calendars`],
+  ]);
   const mutation = ctx.calls.at(-1);
-  assert.equal(mutation.method, 'POST');
   assert.deepEqual(mutation.body, {
     headline: 'All day',
     wholeDay: true,
@@ -136,7 +139,7 @@ test('all-day Calendar create uses discovered roles and normalizes date values',
   });
 });
 
-test('timed Calendar create uses discovered roles without model-specific field names', async () => {
+test('timed Calendar create executes directly without model-specific field names or Discovery', async () => {
   const node = new LifeSpace();
   const ctx = context({
     ...common,
@@ -152,13 +155,15 @@ test('timed Calendar create uses discovered roles without model-specific field n
   });
 
   await node.execute.call(ctx);
+  assert.deepEqual(ctx.calls.map((call) => [call.method, call.url]), [
+    ['POST', `${BASE_URL}/spaces/spc_test/synthetic-calendars`],
+  ]);
   const mutation = ctx.calls.at(-1);
-  assert.equal(mutation.method, 'POST');
   assert.equal(mutation.body.wholeDay, false);
   assert.equal(mutation.body.instantBegin, '2026-09-08T09:00:00.000Z');
 });
 
-test('contradictory Calendar fields fail before the HTTP mutation', async () => {
+test('Calendar semantic conflicts are left to authoritative Core validation instead of a Discovery preflight', async () => {
   const node = new LifeSpace();
   const ctx = context({
     ...common,
@@ -168,11 +173,13 @@ test('contradictory Calendar fields fail before the HTTP mutation', async () => 
       instantBegin: '2026-09-08T09:00:00.000Z',
     },
     'dateFields.date': [{ field: 'calendarBegin', value: '2026-09-08' }],
-  });
+  }, { rejectMutation: true });
 
   await assert.rejects(
     () => node.execute.call(ctx),
-    /Whole Day selects all-day Calendar semantics.*Instant Begin/u,
+    /Core rejected contradictory Calendar semantics/u,
   );
-  assert.equal(ctx.calls.some((call) => call.url === `${BASE_URL}/spaces/spc_test/synthetic-calendars`), false);
+  assert.deepEqual(ctx.calls.map((call) => [call.method, call.url]), [
+    ['POST', `${BASE_URL}/spaces/spc_test/synthetic-calendars`],
+  ]);
 });
