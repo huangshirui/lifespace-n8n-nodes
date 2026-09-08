@@ -95,7 +95,7 @@ export class LifeSpaceTrigger implements INodeType {
         options: [],
         default: [],
         required: true,
-        description: 'Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a> (IDs are LifeSpace modelKeys)',
+        description: 'Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
       },
       {
         displayName: 'Event Types',
