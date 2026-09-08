@@ -70,13 +70,13 @@ Create/Update keep scalar fields in n8n Resource Mapper while using native n8n c
 
 The node displays the authorized human-readable `spaceName` when present while continuing to submit the stable `spc_*` ID.
 
-Record Type identity and REST routing remain distinct. LifeSpace `modelKey` is the stable semantic identity, while the Discovery `route` is a REST transport detail. The n8n adapter persists an adapter-local `recordType` selector containing both values when the workflow is configured. At execution time the selector is decoded locally, so Get/List/Delete do not add a Discovery request merely to translate `modelKey` to a REST route.
+Record Type is the LifeSpace `modelKey` (for example `task`). Design-time options, expressions, Trigger output and downstream Record nodes all use that plain value. CRUD calls go directly to `/spaces/{spaceId}/models/{modelKey}/records/...`, so execution adds no Discovery request and the adapter maintains no modelKey-to-route mapping. Existing `lsrt1...` workflow values are decoded only as a deprecated read-compatibility path and are never emitted or written by new configuration.
 
 Calendar-backed models use canonical `capabilityBindings.calendar` field roles instead of Event-specific field names while the node is being configured. Date-only values are normalized to `YYYY-MM-DD`. Create/Update execution does not fetch fresh semantic Discovery solely to produce an adapter-local Calendar conflict error; the canonical mutation goes directly to LifeSpace Core, which remains authoritative for Calendar validation and current authorization.
 
 ## LifeSpace contract compatibility
 
-This package follows the current LifeSpace Core Kernel `0.31.0` contract family. It consumes Runtime/Discovery semantics only; Eventing configuration and webhook delivery semantics are owned independently by Integration/Eventing `0.1.0`.
+This package follows the current LifeSpace Core Kernel `0.32.0` contract family. It consumes Runtime/Discovery semantics only; Eventing configuration and webhook delivery semantics are owned independently by Integration/Eventing `0.1.0`.
 
 The UX depends on these Kernel capabilities:
 
@@ -94,6 +94,7 @@ The UX depends on these Kernel capabilities:
 - `0.29.0`: canonical ordinary-record `referenceLabel` semantics plus `record` / `record_list` lookup and resolution;
 - `0.30.0`: explicit paginated Change History collection and Model Control Plane ownership split;
 - `0.31.0`: Integration/Eventing wire representation moves to the independent Integration/Eventing `0.1.0` contract while Core remains the Runtime authority.
+- `0.32.0`: `modelKey` becomes the sole Runtime address and canonical CRUD/Action paths move under `/models/{modelKey}/records`.
 
 The adapter prefers the `0.27+` progressive flow while configuring a node:
 
@@ -105,9 +106,9 @@ GET /me/_discovery/inventory
   -> persist stable workflow configuration
 ```
 
-Design-time callbacks prefer n8n editor-current parameters, so Fields and Actions refresh immediately after Record Type selection. A legacy 0.1.3 `modelRoute` is still readable for design-time compatibility; re-selecting Record Type moves configuration to the composable selector.
+Design-time callbacks prefer n8n editor-current parameters, so Fields and Actions refresh immediately after Record Type selection. A legacy 0.1.3 `modelRoute` remains readable only for the four previously deployed baseline models; re-selecting Record Type writes the plain `modelKey`.
 
-Execution is deliberately narrower. Get/List/Delete derive the REST route locally from the persisted Record Type selector. Create/Update submit the configured mutation without a fresh Runtime Discovery preflight. Execute Action loads only the selected model's `0.26+` static semantic detail, and reuses that detail within the same node execution for repeated items using the same Space/Record Type. No cached Discovery result is treated as authorization proof; every CRUD or Action request still goes through canonical LifeSpace Core current-state enforcement.
+Execution is deliberately narrower. Get/List/Create/Update/Delete call the canonical modelKey-addressed Runtime path directly without a fresh Runtime Discovery preflight. Execute Action loads only the selected model's `0.26+` static semantic detail, and reuses that detail within the same node execution for repeated items using the same Space/Record Type. No cached Discovery result is treated as authorization proof; every CRUD or Action request still goes through canonical LifeSpace Core current-state enforcement.
 
 The legacy aggregate `GET /me/_discovery` remains an intentional design-time compatibility fallback. Neither cached Discovery nor relation lookup is treated as authorization proof; every mutation still goes through canonical LifeSpace Runtime enforcement.
 
@@ -126,7 +127,7 @@ Examples:
 {{$vars.lifeSpaceRecordType}}
 ```
 
-Discovery-backed selectors such as **Space**, **Filter Field**, **Sort Field** and **Action** support the normal n8n pattern: choose a value from the list, or switch the parameter to an expression and provide the corresponding stable ID/key. **Record Type** uses the adapter-local `recordType` selector so a LifeSpace Trigger can feed a Record node directly without a mapping step or an extra Discovery request.
+Discovery-backed selectors such as **Space**, **Filter Field**, **Sort Field** and **Action** support the normal n8n pattern: choose a value from the list, or switch the parameter to an expression and provide the corresponding stable ID/key. **Record Type** stores the plain LifeSpace `modelKey`, so a LifeSpace Trigger can feed a Record node directly without a mapping step or an extra Discovery request.
 
 The same applies to ordinary values such as Record ID, Search, Filter Value, Return All, Limit, Sort Direction, Cursor, explicit Version, API Method, API Path and JSON Body.
 
@@ -256,7 +257,7 @@ One Webhook Endpoint can therefore carry events for multiple Record Types throug
 
 The Trigger verifies `X-LifeSpace-Timestamp` and `X-LifeSpace-Signature` with the LifeSpace HMAC-SHA256 contract before emitting workflow data. `endpoint.test` payloads are always accepted after signature verification.
 
-For ordinary record events, the Trigger preserves the LifeSpace `modelKey` exactly as delivered and additionally emits the n8n adapter-local `recordType` selector for the matching configured Record Type. Pass `{{$json.recordType}}` and `{{$json.recordId}}` directly to a downstream LifeSpace Record node. The downstream node derives the REST route locally from that selector.
+For ordinary record events, the Trigger preserves the LifeSpace `modelKey` exactly as delivered and emits the same plain value as `recordType` for n8n composition. Pass `{{$json.recordType}}` and `{{$json.recordId}}` directly to a downstream LifeSpace Record node; it calls the canonical modelKey-addressed Runtime path with zero Discovery.
 
 Webhook Endpoint / Event Subscription creation is intentionally not performed by the n8n Service API Token today because LifeSpace treats that configuration as a Space-management operation. The adapter does not bypass that authority boundary.
 

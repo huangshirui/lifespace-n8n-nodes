@@ -104,7 +104,6 @@ export type DiscoveryCapabilityBindings = {
 
 export type DiscoveryModel = {
   key: string;
-  route: string;
   version: number;
   schemaHash: string;
   display: { singular: string; plural: string };
@@ -163,7 +162,6 @@ type InventoryAction = {
 
 type InventoryModel = {
   key: string;
-  route: string;
   version: number;
   schemaHash: string;
   display: { singular: string; plural: string };
@@ -201,7 +199,6 @@ type SemanticField = Omit<DiscoveryField, 'relation'> & {
 
 type SemanticDetail = {
   key: string;
-  route: string;
   version: number;
   schemaHash: string;
   display: { singular: string; plural: string };
@@ -246,22 +243,21 @@ const executionSemanticCache = new WeakMap<IExecuteFunctions, Map<string, Promis
 
 export type RecordTypeSelector = {
   modelKey: string;
-  route: string;
 };
 
-export function encodeRecordTypeSelector(modelKey: string, route: string): string {
-  const payload = Buffer.from(JSON.stringify([modelKey, route]), 'utf8').toString('base64url');
-  return RECORD_TYPE_SELECTOR_PREFIX + payload;
+export function encodeRecordTypeSelector(modelKey: string): string {
+  return modelKey.trim();
 }
 
 export function decodeRecordTypeSelector(value: unknown): RecordTypeSelector | null {
   const raw = String(value ?? '').trim();
+  if (/^[a-z][a-z0-9_]{1,62}$/u.test(raw)) return { modelKey: raw };
   if (!raw.startsWith(RECORD_TYPE_SELECTOR_PREFIX)) return null;
   try {
     const decoded = JSON.parse(Buffer.from(raw.slice(RECORD_TYPE_SELECTOR_PREFIX.length), 'base64url').toString('utf8')) as unknown;
     if (!Array.isArray(decoded) || decoded.length !== 2 || typeof decoded[0] !== 'string' || typeof decoded[1] !== 'string'
       || !decoded[0].trim() || !decoded[1].trim()) return null;
-    return { modelKey: decoded[0], route: decoded[1] };
+    return { modelKey: decoded[0] };
   } catch {
     return null;
   }
@@ -344,7 +340,6 @@ function normalizedField(field: SemanticField): DiscoveryField {
 function stubModel(identity: InventoryModel, access: DiscoveryAccess[]): DiscoveryModel {
   return {
     key: identity.key,
-    route: identity.route,
     version: identity.version,
     schemaHash: identity.schemaHash,
     display: identity.display,
@@ -375,7 +370,6 @@ function stubModel(identity: InventoryModel, access: DiscoveryAccess[]): Discove
 function detailedModel(detail: SemanticDetail, access: DiscoveryAccess[]): DiscoveryModel {
   return {
     key: detail.key,
-    route: detail.route,
     version: detail.version,
     schemaHash: detail.schemaHash,
     display: detail.display,

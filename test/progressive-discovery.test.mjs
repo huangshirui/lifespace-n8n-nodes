@@ -6,8 +6,8 @@ const require = createRequire(import.meta.url);
 const { LifeSpace } = require('../dist/nodes/LifeSpace/LifeSpace.node.js');
 const { decodeRecordTypeSelector, encodeRecordTypeSelector } = require('../dist/nodes/lifespaceDiscovery.js');
 
-const TASK_RECORD_TYPE = encodeRecordTypeSelector('task', 'tasks');
-const NOTE_RECORD_TYPE = encodeRecordTypeSelector('note', 'notes');
+const TASK_RECORD_TYPE = encodeRecordTypeSelector('task');
+const NOTE_RECORD_TYPE = encodeRecordTypeSelector('note');
 
 const BASE_URL = 'https://example.invalid/api/v1';
 
@@ -17,7 +17,6 @@ const inventory = {
     models: [
       {
         key: 'task',
-        route: 'tasks',
         version: 7,
         schemaHash: 'sha256:task-v7',
         display: { singular: 'Task', plural: 'Tasks' },
@@ -26,7 +25,6 @@ const inventory = {
       },
       {
         key: 'note',
-        route: 'notes',
         version: 2,
         schemaHash: 'sha256:note-v2',
         display: { singular: 'Note', plural: 'Notes' },
@@ -50,7 +48,6 @@ const inventory = {
 const taskDetail = {
   data: {
     key: 'task',
-    route: 'tasks',
     version: 7,
     schemaHash: 'sha256:task-v7',
     display: { singular: 'Task', plural: 'Tasks' },
@@ -115,7 +112,7 @@ const taskDetail = {
         },
         invocation: {
           method: 'POST',
-          pathTemplate: '/api/v1/spaces/{spaceId}/tasks/{recordId}/actions/complete',
+          pathTemplate: '/api/v1/spaces/{spaceId}/models/task/records/{recordId}/actions/complete',
         },
       },
     ],
@@ -172,18 +169,18 @@ function progressiveExecuteContext(parameters = {}, itemCount = 1) {
         calls.push(options);
         if (options.url === `${BASE_URL}/me/_discovery/inventory`) return inventory;
         if (options.url === `${BASE_URL}/spaces/spc_test/_discovery/models/task`) return taskDetail;
-        if (options.url === `${BASE_URL}/spaces/spc_test/tasks` && options.method === 'POST') {
+        if (options.url === `${BASE_URL}/spaces/spc_test/models/task/records` && options.method === 'POST') {
           return { data: { id: 'tsk_created', version: 1, ...options.body } };
         }
-        const recordMatch = new RegExp(`^${BASE_URL}/spaces/spc_test/tasks/(rec_[^/]+)$`, 'u').exec(options.url);
+        const recordMatch = new RegExp(`^${BASE_URL}/spaces/spc_test/models/task/records/(rec_[^/]+)$`, 'u').exec(options.url);
         if (recordMatch && options.method === 'GET') {
           return { data: { id: recordMatch[1], version: 3, name: 'Current task' } };
         }
-        const actionMatch = new RegExp(`^${BASE_URL}/spaces/spc_test/tasks/(rec_[^/]+)/actions/complete$`, 'u').exec(options.url);
+        const actionMatch = new RegExp(`^${BASE_URL}/spaces/spc_test/models/task/records/(rec_[^/]+)/actions/complete$`, 'u').exec(options.url);
         if (actionMatch && options.method === 'POST') {
           return { data: { id: actionMatch[1], version: 4, status: 'completed' } };
         }
-        if (options.url === `${BASE_URL}/spaces/spc_test/tasks/rec_test` && options.method === 'GET') {
+        if (options.url === `${BASE_URL}/spaces/spc_test/models/task/records/rec_test` && options.method === 'GET') {
           return { data: { id: 'rec_test', version: 1, name: 'Direct selector Get' } };
         }
         throw new Error(`Unexpected request ${options.method} ${options.url}`);
@@ -203,8 +200,8 @@ test('Space and Record Type selectors use compact inventory only', async () => {
   const modelContext = progressiveContext({ spaceId: 'spc_test', operation: 'list' });
   const models = await node.methods.loadOptions.getRecordTypes.call(modelContext);
   assert.deepEqual(models.map((item) => decodeRecordTypeSelector(item.value)), [
-    { modelKey: 'task', route: 'tasks' },
-    { modelKey: 'note', route: 'notes' },
+    { modelKey: 'task' },
+    { modelKey: 'note' },
   ]);
   assert.deepEqual(modelContext.calls.map((call) => call.url), [`${BASE_URL}/me/_discovery/inventory`]);
 });
@@ -259,13 +256,13 @@ test('non-Calendar create performs only the business mutation at execution time'
 
   await node.execute.call(context);
   assert.deepEqual(context.calls.map((call) => [call.method, call.url]), [
-    ['POST', `${BASE_URL}/spaces/spc_test/tasks`],
+    ['POST', `${BASE_URL}/spaces/spc_test/models/task/records`],
   ]);
 });
 
 test('Record Type selectors preserve model identity and REST route for multiple models', () => {
-  assert.deepEqual(decodeRecordTypeSelector(TASK_RECORD_TYPE), { modelKey: 'task', route: 'tasks' });
-  assert.deepEqual(decodeRecordTypeSelector(NOTE_RECORD_TYPE), { modelKey: 'note', route: 'notes' });
+  assert.deepEqual(decodeRecordTypeSelector(TASK_RECORD_TYPE), { modelKey: 'task' });
+  assert.deepEqual(decodeRecordTypeSelector(NOTE_RECORD_TYPE), { modelKey: 'note' });
 });
 
 test('Get decodes Record Type locally without a Discovery request', async () => {
@@ -281,7 +278,7 @@ test('Get decodes Record Type locally without a Discovery request', async () => 
   const result = await node.execute.call(context);
   assert.equal(result[0][0].json.data.id, 'rec_test');
   assert.deepEqual(context.calls.map((call) => [call.method, call.url]), [
-    ['GET', `${BASE_URL}/spaces/spc_test/tasks/rec_test`],
+    ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/rec_test`],
   ]);
 });
 
@@ -300,8 +297,8 @@ test('Action execution goes directly to selected semantic detail without invento
   await node.execute.call(context);
   assert.deepEqual(context.calls.map((call) => [call.method, call.url]), [
     ['GET', `${BASE_URL}/spaces/spc_test/_discovery/models/task`],
-    ['GET', `${BASE_URL}/spaces/spc_test/tasks/rec_one`],
-    ['POST', `${BASE_URL}/spaces/spc_test/tasks/rec_one/actions/complete`],
+    ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/rec_one`],
+    ['POST', `${BASE_URL}/spaces/spc_test/models/task/records/rec_one/actions/complete`],
   ]);
   assert.equal(context.calls.some((call) => call.url.endsWith('/me/_discovery/inventory')), false);
 });
@@ -326,9 +323,10 @@ test('Action semantic detail is reused once per node execution for multiple item
   assert.equal(context.calls.some((call) => call.url.endsWith('/me/_discovery/inventory')), false);
   assert.deepEqual(context.calls.map((call) => [call.method, call.url]), [
     ['GET', `${BASE_URL}/spaces/spc_test/_discovery/models/task`],
-    ['GET', `${BASE_URL}/spaces/spc_test/tasks/rec_1`],
-    ['POST', `${BASE_URL}/spaces/spc_test/tasks/rec_1/actions/complete`],
-    ['GET', `${BASE_URL}/spaces/spc_test/tasks/rec_2`],
-    ['POST', `${BASE_URL}/spaces/spc_test/tasks/rec_2/actions/complete`],
+    ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/rec_1`],
+    ['POST', `${BASE_URL}/spaces/spc_test/models/task/records/rec_1/actions/complete`],
+    ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/rec_2`],
+    ['POST', `${BASE_URL}/spaces/spc_test/models/task/records/rec_2/actions/complete`],
   ]);
 });
+

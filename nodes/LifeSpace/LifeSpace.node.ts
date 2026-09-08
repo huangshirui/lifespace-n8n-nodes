@@ -15,7 +15,6 @@ import {
   decodeRecordTypeSelector,
   discoveryModel,
   discoverySpace,
-  encodeRecordTypeSelector,
   humanizeKey,
   loadExecutionRuntimeDiscovery,
   loadOptionParameter,
@@ -442,10 +441,8 @@ async function optionModel(context: ILoadOptionsFunctions): Promise<{ model: Dis
     throw new NodeOperationError(context.getNode(), 'LifeSpace Record Type selector is invalid. Choose a Record Type from Discovery or pass a Trigger recordType value.');
   }
   const discovery = await loadRuntimeDiscovery.call(context);
-  const space = discoverySpace(discovery, spaceId);
-  const model = recordType
-    ? discoveryModel(discovery, spaceId, recordType.modelKey)
-    : space?.models.find((entry) => entry.route === legacyModelRoute);
+  const legacyModelKey = ({ tasks: 'task', wishes: 'wish', 'day-records': 'day_record', events: 'event' } as const)[legacyModelRoute as 'tasks' | 'wishes' | 'day-records' | 'events'];
+  const model = discoveryModel(discovery, spaceId, recordType?.modelKey ?? legacyModelKey ?? '');
   return model ? { model, spaceId } : null;
 }
 
@@ -551,7 +548,7 @@ export class LifeSpace implements INodeType {
         displayName: 'Record Type Name or ID', name: 'recordType', type: 'options',
         typeOptions: { loadOptionsMethod: 'getRecordTypes', loadOptionsDependsOn: ['spaceId', 'operation'] },
         options: [], default: '', required: true, displayOptions: { show: { resource: ['modelRecord'] } },
-        description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+        description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a> (the ID is the LifeSpace modelKey)',
       },
       {
         displayName: 'Record ID', name: 'recordId', type: 'string', default: '', required: true,
@@ -761,7 +758,7 @@ export class LifeSpace implements INodeType {
             : model.access.includes(requiredAccessForOperation(operation)))
           .map((model) => ({
             name: `${model.display.plural} (${model.key})`,
-            value: encodeRecordTypeSelector(model.key, model.route),
+            value: model.key,
             description: model.description ?? undefined,
           }));
       },
@@ -878,10 +875,9 @@ export class LifeSpace implements INodeType {
             );
           }
           const rawModelKey = recordType.modelKey;
-          const rawModelRoute = recordType.route;
           const spaceId = encodeURIComponent(rawSpaceId);
-          const modelRoute = encodeURIComponent(rawModelRoute);
-          const collectionPath = `/spaces/${spaceId}/${modelRoute}`;
+          const modelKey = encodeURIComponent(rawModelKey);
+          const collectionPath = `/spaces/${spaceId}/models/${modelKey}/records`;
 
           if (operation === 'list') {
             const returnAll = this.getNodeParameter('returnAll', itemIndex, false) as boolean;

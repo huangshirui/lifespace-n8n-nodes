@@ -8,8 +8,8 @@ const { LifeSpace } = require('../dist/nodes/LifeSpace/LifeSpace.node.js');
 const { LifeSpaceTrigger } = require('../dist/nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.js');
 const { decodeRecordTypeSelector, encodeRecordTypeSelector } = require('../dist/nodes/lifespaceDiscovery.js');
 
-const TASK_RECORD_TYPE = encodeRecordTypeSelector('task', 'tasks');
-const NOTE_RECORD_TYPE = encodeRecordTypeSelector('note', 'notes');
+const TASK_RECORD_TYPE = encodeRecordTypeSelector('task');
+const NOTE_RECORD_TYPE = encodeRecordTypeSelector('note');
 
 const BASE_URL = 'https://example.invalid/api/v1';
 
@@ -23,7 +23,6 @@ function discoveryFixture({ legacyAction = false } = {}) {
           models: [
             {
               key: 'task',
-              route: 'tasks',
               version: 4,
               schemaHash: 'sha256:test-task',
               display: { singular: 'Task', plural: 'Tasks' },
@@ -75,7 +74,6 @@ function discoveryFixture({ legacyAction = false } = {}) {
             },
             {
               key: 'note',
-              route: 'notes',
               version: 1,
               schemaHash: 'sha256:test-note',
               display: { singular: 'Note', plural: 'Notes' },
@@ -93,7 +91,6 @@ function discoveryFixture({ legacyAction = false } = {}) {
           models: [
             {
               key: 'note',
-              route: 'notes',
               version: 1,
               schemaHash: 'sha256:test-note',
               display: { singular: 'Note', plural: 'Notes' },
@@ -116,7 +113,6 @@ function semanticDetailFixture({ legacyAction = false } = {}) {
   return {
     data: {
       key: model.key,
-      route: model.route,
       version: model.version,
       schemaHash: model.schemaHash,
       display: model.display,
@@ -224,15 +220,15 @@ test('Runtime Discovery drives Space and Record Type selection', async () => {
     loadOptionsContext(discovery, { spaceId: 'spc_test', operation: 'create' }),
   );
   assert.deepEqual(createRecordTypes.map((item) => decodeRecordTypeSelector(item.value)), [
-    { modelKey: 'task', route: 'tasks' },
+    { modelKey: 'task' },
   ]);
 
   const listRecordTypes = await node.methods.loadOptions.getRecordTypes.call(
     loadOptionsContext(discovery, { spaceId: 'spc_test', operation: 'list' }),
   );
   assert.deepEqual(listRecordTypes.map((item) => decodeRecordTypeSelector(item.value)), [
-    { modelKey: 'task', route: 'tasks' },
-    { modelKey: 'note', route: 'notes' },
+    { modelKey: 'task' },
+    { modelKey: 'note' },
   ]);
 });
 
@@ -288,7 +284,7 @@ test('Create sends only mapped semantic fields and leaves defaults authoritative
   assert.equal(context.calls.length, 1);
   assert.deepEqual(context.calls[0].options, {
     method: 'POST',
-    url: `${BASE_URL}/spaces/spc_test/tasks`,
+    url: `${BASE_URL}/spaces/spc_test/models/task/records`,
     body: { name: 'Buy milk' },
     json: true,
   });
@@ -319,7 +315,7 @@ test('List omits sort and cursor unless the user configures them', async () => {
   assert.equal(context.calls.length, 1);
   assert.deepEqual(context.calls[0].options, {
     method: 'GET',
-    url: `${BASE_URL}/spaces/spc_test/tasks`,
+    url: `${BASE_URL}/spaces/spc_test/models/task/records`,
     qs: {
       q: 'milk',
       limit: 25,
@@ -473,8 +469,8 @@ test('Update fetches current version by default and sends it with the mutation',
   await node.execute.call(context);
 
   assert.deepEqual(context.calls.map((call) => [call.options.method, call.options.url]), [
-    ['GET', `${BASE_URL}/spaces/spc_test/tasks/tsk_test`],
-    ['PATCH', `${BASE_URL}/spaces/spc_test/tasks/tsk_test`],
+    ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/tsk_test`],
+    ['PATCH', `${BASE_URL}/spaces/spc_test/models/task/records/tsk_test`],
   ]);
   assert.deepEqual(context.calls[1].options.body, { name: 'Updated', version: 7 });
 });
@@ -515,10 +511,10 @@ test('Execute Action resolves record-version concurrency from selected-model sem
     },
     (options) => {
       if (options.url.endsWith('/spaces/spc_test/_discovery/models/task')) return semanticDetailFixture();
-      if (options.method === 'GET' && options.url.endsWith('/tasks/tsk_test')) {
+      if (options.method === 'GET' && options.url.endsWith('/models/task/records/tsk_test')) {
         return { data: { id: 'tsk_test', version: 7 } };
       }
-      if (options.method === 'POST' && options.url.endsWith('/tasks/tsk_test/actions/complete')) {
+      if (options.method === 'POST' && options.url.endsWith('/models/task/records/tsk_test/actions/complete')) {
         return { data: { id: 'tsk_test', status: 'completed', version: 8 } };
       }
       throw new Error(`Unexpected request: ${options.method} ${options.url}`);
@@ -530,8 +526,8 @@ test('Execute Action resolves record-version concurrency from selected-model sem
   assert.equal(context.calls.length, 3);
   assert.deepEqual(context.calls.map((call) => [call.options.method, call.options.url]), [
     ['GET', `${BASE_URL}/spaces/spc_test/_discovery/models/task`],
-    ['GET', `${BASE_URL}/spaces/spc_test/tasks/tsk_test`],
-    ['POST', `${BASE_URL}/spaces/spc_test/tasks/tsk_test/actions/complete`],
+    ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/tsk_test`],
+    ['POST', `${BASE_URL}/spaces/spc_test/models/task/records/tsk_test/actions/complete`],
   ]);
   assert.deepEqual(context.calls[2].options.body, { version: 7 });
 });
@@ -550,7 +546,7 @@ test('Execute Action preserves compatibility when semantic detail still carries 
     },
     (options) => {
       if (options.url.endsWith('/spaces/spc_test/_discovery/models/task')) return semanticDetailFixture({ legacyAction: true });
-      if (options.method === 'POST' && options.url.endsWith('/tasks/tsk_legacy/actions/complete')) {
+      if (options.method === 'POST' && options.url.endsWith('/models/task/records/tsk_legacy/actions/complete')) {
         return { data: { id: 'tsk_legacy', status: 'completed', version: 5 } };
       }
       throw new Error(`Unexpected request: ${options.method} ${options.url}`);
@@ -562,7 +558,7 @@ test('Execute Action preserves compatibility when semantic detail still carries 
   assert.equal(context.calls.length, 2);
   assert.deepEqual(context.calls.map((call) => [call.options.method, call.options.url]), [
     ['GET', `${BASE_URL}/spaces/spc_test/_discovery/models/task`],
-    ['POST', `${BASE_URL}/spaces/spc_test/tasks/tsk_legacy/actions/complete`],
+    ['POST', `${BASE_URL}/spaces/spc_test/models/task/records/tsk_legacy/actions/complete`],
   ]);
   assert.deepEqual(context.calls[1].options.body, { version: 4 });
 });
@@ -750,7 +746,7 @@ test('Trigger recordType output feeds Get directly without a model mapping or Di
       recordId: 'rec_from_trigger',
     },
     (options) => {
-      assert.equal(options.url, `${BASE_URL}/spaces/spc_test/tasks/rec_from_trigger`);
+      assert.equal(options.url, `${BASE_URL}/spaces/spc_test/models/task/records/rec_from_trigger`);
       return { data: { id: 'rec_from_trigger', version: 1 } };
     },
   );
@@ -759,3 +755,4 @@ test('Trigger recordType output feeds Get directly without a model mapping or Di
   assert.equal(result[0][0].json.data.id, 'rec_from_trigger');
   assert.equal(context.calls.length, 1);
 });
+
