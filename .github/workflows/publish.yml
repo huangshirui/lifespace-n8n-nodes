@@ -4,9 +4,12 @@ on:
   push:
     tags:
       - '*.*.*'
+    branches:
+      - main
 
 jobs:
   publish:
+    if: github.ref_type == 'tag' || startsWith(github.event.head_commit.message, 'release: publish ')
     name: Publish to npm
     runs-on: ubuntu-latest
     permissions:
@@ -38,6 +41,18 @@ jobs:
           NPM_VERSION="$npm_version" node -e "const [major, minor] = process.env.NPM_VERSION.split('.').map(Number); if (major < 11 || (major === 11 && minor < 5)) throw new Error('Trusted Publishing requires npm >= 11.5.1')"
           test -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" || { echo 'Missing GitHub Actions OIDC request URL; ensure id-token: write is enabled.' >&2; exit 1; }
           test -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" || { echo 'Missing GitHub Actions OIDC request token; ensure id-token: write is enabled.' >&2; exit 1; }
+
+      - name: Verify release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version="$(node -p "require('./package.json').version")"
+          lock_version="$(node -p "require('./package-lock.json').version")"
+          test "$package_version" = "$lock_version"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            test "$package_version" = "${GITHUB_REF_NAME}"
+          fi
+          echo "Publishing n8n-nodes-lifespace@${package_version}"
 
       - name: Install dependencies
         run: npm ci
