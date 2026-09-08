@@ -24,7 +24,7 @@ jobs:
       - run: npm install --global npm@11.15.0
       - run: node scripts/fix-record-type-bootstrap.mjs
       - run: node scripts/apply-record-type-selector.mjs
-      - name: Normalize selector validation
+      - name: Normalize selector validation and regression fixtures
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -98,6 +98,15 @@ jobs:
                     const rawModelRoute = recordType.route;"""
           if old not in source:
             raise SystemExit('execution selector validation block not found')
+          source = source.replace(old, new, 1)
+          old = """                  rawSpaceId,
+                            rawModelRoute,
+                            recordPath,"""
+          new = """                  rawSpaceId,
+                            rawModelKey,
+                            recordPath,"""
+          if old not in source:
+            raise SystemExit('Action execution modelKey argument not found')
           node.write_text(source.replace(old, new, 1))
 
           trigger = Path('nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.ts')
@@ -111,6 +120,16 @@ jobs:
           if old not in source:
             raise SystemExit('trigger selector decode block not found')
           trigger.write_text(source.replace(old, new, 1))
+
+          contract = Path('test/contract.test.mjs')
+          source = contract.read_text()
+          source = source.replace("recordTypeKeys: ['task', 'note']", "recordTypes: [TASK_RECORD_TYPE, NOTE_RECORD_TYPE]")
+          contract.write_text(source)
+
+          source_contract = Path('test/source-contract.test.mjs')
+          source = source_contract.read_text()
+          source = source.replace("/name: 'recordType'[\\s\\S]{0,420}specify an ID using an <a href=/u", "/name: 'recordType'[\\s\\S]{0,800}specify an ID using an <a href=/u")
+          source_contract.write_text(source)
           PY
       - run: npm ci
       - run: npm run lint -- --fix
