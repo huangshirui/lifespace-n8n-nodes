@@ -44,6 +44,13 @@ type QueryPage = {
   nextCursor: string | null;
 };
 
+const LEGACY_MODEL_ROUTE_TO_KEY: Readonly<Record<string, string>> = Object.freeze({
+  tasks: 'task',
+  wishes: 'wish',
+  'day-records': 'day_record',
+  events: 'event',
+});
+
 function parseJsonObject(
   context: IExecuteFunctions,
   itemIndex: number,
@@ -441,8 +448,7 @@ async function optionModel(context: ILoadOptionsFunctions): Promise<{ model: Dis
     throw new NodeOperationError(context.getNode(), 'LifeSpace Record Type selector is invalid. Choose a Record Type from Discovery or pass a Trigger recordType value.');
   }
   const discovery = await loadRuntimeDiscovery.call(context);
-  const legacyModelKey = ({ tasks: 'task', wishes: 'wish', 'day-records': 'day_record', events: 'event' } as const)[legacyModelRoute as 'tasks' | 'wishes' | 'day-records' | 'events'];
-  const model = discoveryModel(discovery, spaceId, recordType?.modelKey ?? legacyModelKey ?? '');
+  const model = discoveryModel(discovery, spaceId, recordType?.modelKey ?? LEGACY_MODEL_ROUTE_TO_KEY[legacyModelRoute] ?? '');
   return model ? { model, spaceId } : null;
 }
 
@@ -548,7 +554,7 @@ export class LifeSpace implements INodeType {
         displayName: 'Record Type Name or ID', name: 'recordType', type: 'options',
         typeOptions: { loadOptionsMethod: 'getRecordTypes', loadOptionsDependsOn: ['spaceId', 'operation'] },
         options: [], default: '', required: true, displayOptions: { show: { resource: ['modelRecord'] } },
-        description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a> (the ID is the LifeSpace modelKey)',
+        description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
       },
       {
         displayName: 'Record ID', name: 'recordId', type: 'string', default: '', required: true,
@@ -866,15 +872,16 @@ export class LifeSpace implements INodeType {
         if (resource === 'modelRecord') {
           const operation = this.getNodeParameter('operation', itemIndex) as string;
           const rawSpaceId = String(this.getNodeParameter('spaceId', itemIndex));
-          const recordType = decodeRecordTypeSelector(this.getNodeParameter('recordType', itemIndex));
-          if (!recordType) {
+          const recordType = decodeRecordTypeSelector(this.getNodeParameter('recordType', itemIndex, ''));
+          const legacyModelRoute = String(this.getNodeParameter('modelRoute', itemIndex, '') ?? '').trim();
+          const rawModelKey = recordType?.modelKey ?? LEGACY_MODEL_ROUTE_TO_KEY[legacyModelRoute];
+          if (!rawModelKey) {
             throw new NodeOperationError(
               this.getNode(),
               'LifeSpace Record Type selector is invalid. Choose a Record Type from Discovery or pass a Trigger recordType value.',
               { itemIndex },
             );
           }
-          const rawModelKey = recordType.modelKey;
           const spaceId = encodeURIComponent(rawSpaceId);
           const modelKey = encodeURIComponent(rawModelKey);
           const collectionPath = `/spaces/${spaceId}/models/${modelKey}/records`;
