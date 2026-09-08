@@ -4,15 +4,63 @@
   "description": "Official n8n community nodes for integrating workflows and AI agents with LifeSpace.",
   "license": "MIT",
   "homepage": "https://github.com/huangshirui/lifespace-n8n-nodes#readme",
-  "bugs": {"url": "https://github.com/huangshirui/lifespace-n8n-nodes/issues"},
-  "keywords": ["n8n-community-node-package", "n8n", "lifespace", "automation", "workflow"],
-  "author": {"name": "Shirui Huang", "email": "3366046+huangshirui@users.noreply.github.com"},
-  "repository": {"type": "git", "url": "git+https://github.com/huangshirui/lifespace-n8n-nodes.git"},
-  "publishConfig": {"access": "public", "provenance": true},
-  "scripts": {"build": "n8n-node build", "dev": "n8n-node dev", "lint": "n8n-node lint", "lint:fix": "n8n-node lint --fix", "test": "npm run build && node --test test/*.test.mjs", "release": "n8n-node release", "prepublishOnly": "n8n-node prerelease"},
-  "files": ["dist"],
-  "n8n": {"n8nNodesApiVersion": 1, "strict": true, "credentials": ["dist/credentials/LifeSpaceApi.credentials.js", "dist/credentials/LifeSpaceWebhookApi.credentials.js"], "nodes": ["dist/nodes/LifeSpace/LifeSpace.node.js", "dist/nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.js"]},
-  "devDependencies": {"@n8n/node-cli": "0.44.5", "eslint": "9.39.4", "prettier": "3.8.3", "release-it": "20.2.0", "typescript": "5.9.3"},
-  "peerDependencies": {"n8n-workflow": "*"},
-  "engines": {"node": ">=22.22.0"}
+  "bugs": {
+    "url": "https://github.com/huangshirui/lifespace-n8n-nodes/issues"
+  },
+  "keywords": [
+    "n8n-community-node-package",
+    "n8n",
+    "lifespace",
+    "automation",
+    "workflow"
+  ],
+  "author": {
+    "name": "Shirui Huang",
+    "email": "3366046+huangshirui@users.noreply.github.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/huangshirui/lifespace-n8n-nodes.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "n8n-node build",
+    "dev": "n8n-node dev",
+    "lint": "n8n-node lint",
+    "lint:fix": "n8n-node lint --fix",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "release": "n8n-node release",
+    "prepublishOnly": "n8n-node prerelease"
+  },
+  "files": [
+    "dist"
+  ],
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "strict": true,
+    "credentials": [
+      "dist/credentials/LifeSpaceApi.credentials.js",
+      "dist/credentials/LifeSpaceWebhookApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/LifeSpace/LifeSpace.node.js",
+      "dist/nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.js"
+    ]
+  },
+  "devDependencies": {
+    "@n8n/node-cli": "0.44.5",
+    "eslint": "9.39.4",
+    "prettier": "3.8.3",
+    "release-it": "20.2.0",
+    "typescript": "5.9.3"
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  },
+  "engines": {
+    "node": ">=22.22.0"
+  }
 }
