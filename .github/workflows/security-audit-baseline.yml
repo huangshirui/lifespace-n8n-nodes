@@ -1,0 +1,56 @@
+name: Security Audit Baseline
+
+on:
+  push:
+    branches:
+      - chore/dev-dependency-security-baseline
+    paths:
+      - .github/workflows/security-audit-baseline.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.22.0'
+          package-manager-cache: false
+      - run: npm install --global npm@11.15.0
+      - run: npm ci
+      - name: Capture npm audit
+        run: npm audit --json > audit.json || true
+      - name: Summarize npm audit
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync('audit.json', 'utf8'));
+          console.log('VULNERABILITY_COUNTS', JSON.stringify(report.metadata?.vulnerabilities ?? {}));
+          for (const [name, vuln] of Object.entries(report.vulnerabilities ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
+            const via = (vuln.via ?? []).map((entry) => typeof entry === 'string' ? entry : `${entry.name}:${entry.severity}:${entry.range}`).join(', ');
+            console.log(JSON.stringify({
+              name,
+              severity: vuln.severity,
+              direct: vuln.isDirect,
+              range: vuln.range,
+              via,
+              effects: vuln.effects,
+              fixAvailable: vuln.fixAvailable,
+            }));
+          }
+          NODE
+      - name: Capture outdated direct dependencies
+        run: npm outdated --json > outdated.json || true
+      - name: Summarize outdated direct dependencies
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const raw = fs.readFileSync('outdated.json', 'utf8').trim();
+          const report = raw ? JSON.parse(raw) : {};
+          for (const [name, value] of Object.entries(report).sort(([a], [b]) => a.localeCompare(b))) {
+            console.log(JSON.stringify({ name, current: value.current, wanted: value.wanted, latest: value.latest, location: value.location }));
+          }
+          NODE
