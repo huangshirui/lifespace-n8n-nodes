@@ -21,9 +21,13 @@ jobs:
           package-manager-cache: false
       - run: npm install --global npm@11.15.0
       - run: npm ci
-      - name: Capture npm audit
+      - name: Apply candidate direct dependency upgrades
+        run: npm install --save-dev @n8n/node-cli@0.47.0 release-it@21.0.2 prettier@3.9.6
+      - name: Show candidate package changes
+        run: git diff -- package.json package-lock.json
+      - name: Capture candidate npm audit
         run: npm audit --json > audit.json || true
-      - name: Summarize npm audit
+      - name: Summarize candidate npm audit
         run: |
           node <<'NODE'
           const fs = require('node:fs');
@@ -42,15 +46,9 @@ jobs:
             }));
           }
           NODE
-      - name: Capture outdated direct dependencies
-        run: npm outdated --json > outdated.json || true
-      - name: Summarize outdated direct dependencies
-        run: |
-          node <<'NODE'
-          const fs = require('node:fs');
-          const raw = fs.readFileSync('outdated.json', 'utf8').trim();
-          const report = raw ? JSON.parse(raw) : {};
-          for (const [name, value] of Object.entries(report).sort(([a], [b]) => a.localeCompare(b))) {
-            console.log(JSON.stringify({ name, current: value.current, wanted: value.wanted, latest: value.latest, location: value.location }));
-          }
-          NODE
+      - name: Lint
+        run: npm run lint
+      - name: Test
+        run: npm test
+      - name: Build
+        run: npm run build
