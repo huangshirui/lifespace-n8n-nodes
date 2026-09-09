@@ -8,26 +8,28 @@ on:
       - .github/workflows/security-audit-baseline.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  audit:
+  baseline:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: chore/dev-dependency-security-baseline
       - uses: actions/setup-node@v5
         with:
           node-version: '22.22.0'
           package-manager-cache: false
       - run: npm install --global npm@11.15.0
       - run: npm ci
-      - name: Apply candidate direct dependency upgrades
-        run: npm install --save-dev @n8n/node-cli@0.47.0 release-it@21.0.2 prettier@3.9.6
-      - name: Show candidate package changes
-        run: git diff -- package.json package-lock.json
-      - name: Capture candidate npm audit
+      - name: Apply stable dependency baseline
+        run: |
+          npm uninstall --save-dev release-it
+          npm install --save-dev @n8n/node-cli@0.46.4 prettier@3.9.6
+      - name: Capture npm audit
         run: npm audit --json > audit.json || true
-      - name: Summarize candidate npm audit
+      - name: Summarize npm audit
         run: |
           node <<'NODE'
           const fs = require('node:fs');
@@ -35,20 +37,17 @@ jobs:
           console.log('VULNERABILITY_COUNTS', JSON.stringify(report.metadata?.vulnerabilities ?? {}));
           for (const [name, vuln] of Object.entries(report.vulnerabilities ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
             const via = (vuln.via ?? []).map((entry) => typeof entry === 'string' ? entry : `${entry.name}:${entry.severity}:${entry.range}`).join(', ');
-            console.log(JSON.stringify({
-              name,
-              severity: vuln.severity,
-              direct: vuln.isDirect,
-              range: vuln.range,
-              via,
-              effects: vuln.effects,
-              fixAvailable: vuln.fixAvailable,
-            }));
+            console.log(JSON.stringify({ name, severity: vuln.severity, direct: vuln.isDirect, range: vuln.range, via, effects: vuln.effects, fixAvailable: vuln.fixAvailable }));
           }
           NODE
-      - name: Lint
-        run: npm run lint
-      - name: Test
-        run: npm test
-      - name: Build
-        run: npm run build
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - name: Commit baseline
+        run: |
+          rm .github/workflows/security-audit-baseline.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add package.json package-lock.json .github/workflows/security-audit-baseline.yml
+          git commit -m "chore: refresh development dependency security baseline"
+          git push origin HEAD:chore/dev-dependency-security-baseline
