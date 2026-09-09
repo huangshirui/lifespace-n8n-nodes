@@ -114,7 +114,7 @@ test('npm releases use a committed lockfile and GitHub OIDC Trusted Publishing',
   assert.equal(lockfile.packages[''].version, packageJson.version);
 
   assert.match(workflow, /id-token: write/u);
-  assert.match(workflow, /node-version: '22\.22\.0'/u);
+  assert.match(workflow, /node-version: '24\.20\.0'/u);
   assert.match(workflow, /package-manager-cache: false/u);
   assert.match(workflow, /npm install --global npm@11\.15\.0/u);
   assert.match(workflow, /ACTIONS_ID_TOKEN_REQUEST_URL/u);

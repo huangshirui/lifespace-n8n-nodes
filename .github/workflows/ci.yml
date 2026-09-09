@@ -23,7 +23,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '22.22.0'
+          node-version: '24.20.0'
 
       - name: Install pinned npm
         run: npm install --global npm@11.15.0
