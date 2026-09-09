@@ -25,7 +25,7 @@ jobs:
       - run: npm ci
       - name: Pin stable development dependencies
         run: npm install --save-dev --save-exact @n8n/node-cli@0.46.4 prettier@3.9.6
-      - name: Align CI and release build runtime with current n8n toolchain
+      - name: Validate future CI and release build runtime
         run: |
           sed -i "s/node-version: '22.22.0'/node-version: '24.20.0'/g" .github/workflows/ci.yml .github/workflows/publish.yml
           python3 <<'PY'
@@ -86,11 +86,10 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
-      - name: Commit final baseline
+      - name: Commit non-workflow baseline files
         run: |
-          rm .github/workflows/security-baseline-finalize.yml
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add package.json package-lock.json .github/workflows/ci.yml .github/workflows/publish.yml docs/dependency-security-baseline.md test/source-contract.test.mjs .github/workflows/security-baseline-finalize.yml
+          git add package.json package-lock.json docs/dependency-security-baseline.md test/source-contract.test.mjs
           git commit -m "chore: finalize development dependency security baseline"
           git push origin HEAD:chore/dev-dependency-security-baseline
