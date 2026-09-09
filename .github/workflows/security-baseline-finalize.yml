@@ -28,6 +28,16 @@ jobs:
       - name: Align CI and release build runtime with current n8n toolchain
         run: |
           sed -i "s/node-version: '22.22.0'/node-version: '24.20.0'/g" .github/workflows/ci.yml .github/workflows/publish.yml
+          python3 <<'PY'
+          from pathlib import Path
+          path = Path('test/source-contract.test.mjs')
+          text = path.read_text()
+          old = "node-version: '22\\.22\\.0'"
+          new = "node-version: '24\\.20\\.0'"
+          if old not in text:
+              raise SystemExit('expected pinned Node source-contract assertion not found')
+          path.write_text(text.replace(old, new))
+          PY
       - name: Record security baseline
         run: |
           mkdir -p docs
@@ -81,6 +91,6 @@ jobs:
           rm .github/workflows/security-baseline-finalize.yml
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add package.json package-lock.json .github/workflows/ci.yml .github/workflows/publish.yml docs/dependency-security-baseline.md .github/workflows/security-baseline-finalize.yml
+          git add package.json package-lock.json .github/workflows/ci.yml .github/workflows/publish.yml docs/dependency-security-baseline.md test/source-contract.test.mjs .github/workflows/security-baseline-finalize.yml
           git commit -m "chore: finalize development dependency security baseline"
           git push origin HEAD:chore/dev-dependency-security-baseline
