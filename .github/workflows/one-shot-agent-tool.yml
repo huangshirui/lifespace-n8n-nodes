@@ -27,58 +27,8 @@ jobs:
       - name: Install pinned npm
         run: npm install --global npm@11.15.0
 
-      - name: Align guarded transform anchors
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('infra/scripts/one-shot-agent-tool.py')
-          text = path.read_text()
-          before = '''    if count != 1:\n        raise RuntimeError(f"{label}: expected one anchor, found {count}")\n    target.write_text(text.replace(before, after, 1))\n'''
-          after = '''    if count != 1:\n        if label == "DiscoveryModel search and filters" and count == 2:\n            target.write_text(text.replace(before, after, 1))\n            return\n        raise RuntimeError(f"{label}: expected one anchor, found {count}")\n    target.write_text(text.replace(before, after, 1))\n'''
-          if text.count(before) != 1:
-              raise SystemExit('one-shot replace_once guard drifted')
-          text = text.replace(before, after, 1)
-          old_marker = 'marker = "## Compatibility\\n"'
-          new_marker = 'marker = "## LifeSpace contract compatibility\\n"'
-          if text.count(old_marker) != 1:
-              raise SystemExit('README compatibility marker drifted')
-          path.write_text(text.replace(old_marker, new_marker, 1))
-          PY
-
       - name: Apply guarded Agent Tool integration
         run: python3 infra/scripts/one-shot-agent-tool.py
-
-      - name: Apply n8n community compatibility fixes
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import json
-
-          package_path = Path('package.json')
-          package = json.loads(package_path.read_text())
-          dependencies = package.get('dependencies', {})
-          if dependencies.pop('@langchain/core', None) is None:
-              raise SystemExit('@langchain/core runtime dependency missing after transform')
-          if not dependencies:
-              package.pop('dependencies', None)
-          package.setdefault('peerDependencies', {})['@langchain/core'] = '^1.2.8'
-          package_path.write_text(json.dumps(package, indent=2) + '\n')
-
-          factory_path = Path('nodes/agent/lifeSpaceToolFactory.ts')
-          factory = factory_path.read_text()
-          unused = "const COMPARABLE_TYPES = new Set(['date', 'datetime', 'integer', 'number']);\n"
-          if factory.count(unused) != 1:
-              raise SystemExit('COMPARABLE_TYPES anchor drifted')
-          factory_path.write_text(factory.replace(unused, '', 1))
-
-          tool_path = Path('nodes/LifeSpaceTool/LifeSpaceTool.node.ts')
-          tool = tool_path.read_text()
-          old = """        options: [\n          { name: 'Create Record', value: 'create', description: 'Create one record using fields published by Runtime Discovery' },\n          { name: 'Delete Record', value: 'delete', description: 'Delete one record using current optimistic concurrency' },\n          { name: 'Execute Action', value: 'action', description: 'Execute one published semantic Action on a record' },\n          { name: 'Query Records', value: 'query', description: 'Query records using the published LifeSpace query contract' },\n          { name: 'Update Record', value: 'update', description: 'Update only fields the Agent explicitly supplies' },\n        ],\n"""
-          new = """        options: [\n          {\n            name: 'Create Record',\n            value: 'create',\n            description: 'Create one record using fields published by Runtime Discovery',\n          },\n          {\n            name: 'Delete Record',\n            value: 'delete',\n            description: 'Delete one record using current optimistic concurrency',\n          },\n          {\n            name: 'Execute Action',\n            value: 'action',\n            description: 'Execute one published semantic Action on a record',\n          },\n          {\n            name: 'Query Records',\n            value: 'query',\n            description: 'Query records using the published LifeSpace query contract',\n          },\n          {\n            name: 'Update Record',\n            value: 'update',\n            description: 'Update only fields the Agent explicitly supplies',\n          },\n        ],\n"""
-          if tool.count(old) != 1:
-              raise SystemExit('LifeSpace Tool operation options anchor drifted')
-          tool_path.write_text(tool.replace(old, new, 1))
-          PY
 
       - name: Install and refresh lockfile
         run: npm install
