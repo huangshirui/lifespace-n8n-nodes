@@ -27,7 +27,7 @@ jobs:
       - name: Install pinned npm
         run: npm install --global npm@11.15.0
 
-      - name: Disambiguate guarded DiscoveryModel anchor
+      - name: Align guarded transform anchors
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -37,7 +37,12 @@ jobs:
           after = '''    if count != 1:\n        if label == "DiscoveryModel search and filters" and count == 2:\n            target.write_text(text.replace(before, after, 1))\n            return\n        raise RuntimeError(f"{label}: expected one anchor, found {count}")\n    target.write_text(text.replace(before, after, 1))\n'''
           if text.count(before) != 1:
               raise SystemExit('one-shot replace_once guard drifted')
-          path.write_text(text.replace(before, after, 1))
+          text = text.replace(before, after, 1)
+          old_marker = 'marker = "## Compatibility\\n"'
+          new_marker = 'marker = "## LifeSpace contract compatibility\\n"'
+          if text.count(old_marker) != 1:
+              raise SystemExit('README compatibility marker drifted')
+          path.write_text(text.replace(old_marker, new_marker, 1))
           PY
 
       - name: Apply guarded Agent Tool integration
