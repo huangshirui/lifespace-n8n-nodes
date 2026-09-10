@@ -36,6 +36,7 @@ jobs:
           path = Path('.github/scripts/one-shot-time-query-semantics.mjs')
           lines = path.read_text().splitlines(keepends=True)
           output = []
+          inside_replace_once = False
           inside_multiline_template = False
 
           def escape_nested(value: str) -> str:
@@ -44,23 +45,32 @@ jobs:
               return value
 
           for line in lines:
-              if not inside_multiline_template:
+              if not inside_replace_once and 'replaceOnce(' in line:
+                  inside_replace_once = True
+
+              if inside_replace_once and not inside_multiline_template:
                   match = re.match(r'^(\s*)`', line)
                   if match:
                       start = match.end()
                       line = line[:start] + escape_nested(line[start:])
                       inside_multiline_template = True
+                  elif re.fullmatch(r'\s*\);\s*\n?', line):
+                      inside_replace_once = False
                   output.append(line)
                   continue
 
-              if re.fullmatch(r'\s*`,\s*\n?', line):
-                  output.append(line)
-                  inside_multiline_template = False
-              else:
-                  output.append(escape_nested(line))
+              if inside_multiline_template:
+                  if re.fullmatch(r'\s*`,\s*\n?', line):
+                      output.append(line)
+                      inside_multiline_template = False
+                  else:
+                      output.append(escape_nested(line))
+                  continue
+
+              output.append(line)
 
           if inside_multiline_template:
-              raise SystemExit('unterminated multiline transform template')
+              raise SystemExit('unterminated replaceOnce template')
 
           path.write_text(''.join(output))
           PY
