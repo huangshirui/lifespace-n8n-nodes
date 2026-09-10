@@ -82,6 +82,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Normalize n8n node metadata
+        run: npm run lint:fix
+
       - name: Lint
         run: npm run lint
 
