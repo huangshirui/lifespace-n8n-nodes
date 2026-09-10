@@ -65,7 +65,6 @@ export type AgentToolRequest = {
 
 const RECORD_ID = 'recordId';
 const TOOL_NAME_MAX_LENGTH = 64;
-const COMPARABLE_TYPES = new Set(['date', 'datetime', 'integer', 'number']);
 
 function hasOwn(value: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
@@ -609,26 +608,23 @@ export function buildAgentToolRequest(
   }
 
   const action = selectedAction(model, text(config.actionKey));
-  const body = semanticBody(schema, validated, [RECORD_ID]);
-  if (!action.concurrency?.required) {
-    return { method: 'POST', path: `${path}/actions/${encodeURIComponent(action.key)}`, body };
-  }
-  const concurrency = action.concurrency;
-  if (concurrency.strategy !== 'record-version' || concurrency.transport.in !== 'body' || !concurrency.transport.name) {
+  if (!action.concurrency || action.concurrency.strategy !== 'record-version' || action.concurrency.transport.in !== 'body') {
     throw new Error(`LifeSpace Action ${action.key} uses an unsupported concurrency contract`);
   }
+  const actionPath = `${path}/actions/${encodeURIComponent(action.key)}`;
+  const body = semanticBody(schema, validated, [RECORD_ID]);
   if (currentVersion === undefined) {
     return {
       method: 'POST',
-      path: `${path}/actions/${encodeURIComponent(action.key)}`,
+      path: actionPath,
       body,
       needsCurrentVersion: true,
-      versionParameter: concurrency.transport.name,
+      versionParameter: action.concurrency.transport.name,
     };
   }
   return {
     method: 'POST',
-    path: `${path}/actions/${encodeURIComponent(action.key)}`,
-    body: { ...body, [concurrency.transport.name]: currentVersion },
+    path: actionPath,
+    body: { ...body, [action.concurrency.transport.name]: currentVersion },
   };
 }
