@@ -76,7 +76,7 @@ Calendar-backed models use canonical `capabilityBindings.calendar` field roles i
 
 ## LifeSpace contract compatibility
 
-This package follows the current LifeSpace Core Kernel `0.32.0` contract family. It consumes Runtime/Discovery semantics only; Eventing configuration and webhook delivery semantics are owned independently by Integration/Eventing `0.1.0`.
+This package follows the current LifeSpace Core Kernel `0.35.0` contract family. It consumes Runtime/Discovery semantics only; Eventing configuration and webhook delivery semantics are owned independently by Integration/Eventing `0.1.0`.
 
 The UX depends on these Kernel capabilities:
 
@@ -95,6 +95,9 @@ The UX depends on these Kernel capabilities:
 - `0.30.0`: explicit paginated Change History collection and Model Control Plane ownership split;
 - `0.31.0`: Integration/Eventing wire representation moves to the independent Integration/Eventing `0.1.0` contract while Core remains the Runtime authority.
 - `0.32.0`: `modelKey` becomes the sole Runtime address and canonical CRUD/Action paths move under `/models/{modelKey}/records`.
+- `0.33.0`: canonical structural `timeRanges` become available in progressive semantic detail without implying an overlap query API.
+- `0.34.0`: explicit `eq/lt/lte/gt/gte` comparison transports, first-class `createdAt` / `updatedAt` envelope comparisons and Core-owned datetime local-date-window conversion become discoverable.
+- `0.35.0`: grouped `query.capabilityQueries` adds the preferred `calendar.window` viewing-window query with explicit IANA viewing timezone and deterministic mixed all-day/timed ordering.
 
 The adapter prefers the `0.27+` progressive flow while configuring a node:
 
@@ -199,8 +202,13 @@ The normal UI supports:
 
 - optional **Search**;
 - one or more typed **Filters**;
+- Discovery-driven explicit **Number Comparison** and **Date / Time Comparison** rows using the exact LifeSpace-published operator transport;
+- generic **Local Date Windows** for datetime fields advertised by Time Semantics, including envelope `createdAt` / `updatedAt`, with local dates + IANA timezone sent unchanged to Core;
+- optional grouped **Semantic Query** input generated from `query.capabilityQueries` (for example `calendar.window`) plus its published semantic ordering;
 - **Return All** to follow `nextCursor` automatically;
 - **Limit** when Return All is disabled.
+
+The adapter never derives explicit comparison parameter names from field naming and never converts local calendar windows to UTC. Those transport names and timezone/DST semantics come from LifeSpace Runtime Semantic Detail. Existing `exact/from/to` filters remain available as compatibility UI and preserve the legacy inclusive `To` behavior.
 
 Use **Sorts → Add Sort** to add zero or more sort criteria in priority order. Sortable model fields use authoritative `title` metadata from Runtime Discovery, while envelope fields such as `createdAt` / `updatedAt` are offered only when Discovery advertises them. Multiple criteria are sent as ordered repeated `sort=field:direction` query parameters.
 

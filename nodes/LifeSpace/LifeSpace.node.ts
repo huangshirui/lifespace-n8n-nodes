@@ -23,6 +23,8 @@ import {
   normalizeBaseUrl,
   type DiscoveryAccess,
   type DiscoveryAction,
+  type DiscoveryCapabilityQueryParameter,
+  type DiscoveryComparison,
   type DiscoveryField,
   type DiscoveryModel,
   type RelationTarget,
@@ -32,6 +34,19 @@ type QueryFilter = {
   field?: string;
   operator?: 'exact' | 'from' | 'to';
   value?: string;
+};
+
+type QueryComparison = {
+  field?: string;
+  parameter?: string;
+  value?: unknown;
+};
+
+type QueryLocalDateWindow = {
+  field?: string;
+  dateStart?: unknown;
+  dateEndExclusive?: unknown;
+  timezone?: unknown;
 };
 
 type QuerySort = {
@@ -50,6 +65,80 @@ const LEGACY_MODEL_ROUTE_TO_KEY: Readonly<Record<string, string>> = Object.freez
   'day-records': 'day_record',
   events: 'event',
 });
+const LOCAL_DATE_WINDOW_SELECTOR_PREFIX = 'lsqw1.';
+
+const COMPARISON_OPERATOR_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  eq: 'Equals',
+  lt: 'Less Than',
+  lte: 'Less Than or Equal',
+  gt: 'Greater Than',
+  gte: 'Greater Than or Equal',
+});
+
+type LocalDateWindowSelector = {
+  field: string;
+  valueType: 'datetime';
+  dateStartParameter: string;
+  dateEndExclusiveParameter: string;
+  timezoneParameter: string;
+};
+
+function comparisonFieldParts(value: unknown): { field: string; valueType: string } {
+  const raw = String(value ?? '').trim();
+  const separator = raw.indexOf(':');
+  if (separator <= 0) return { field: raw, valueType: '' };
+  return { valueType: raw.slice(0, separator), field: raw.slice(separator + 1) };
+}
+
+function encodeLocalDateWindowSelector(comparison: DiscoveryComparison): string {
+  const window = comparison.localDateWindow;
+  if (!window || comparison.valueType !== 'datetime') return '';
+  return `${LOCAL_DATE_WINDOW_SELECTOR_PREFIX}${Buffer.from(JSON.stringify([
+    comparison.field,
+    comparison.valueType,
+    window.dateStartParameter,
+    window.dateEndExclusiveParameter,
+    window.timezoneParameter,
+  ])).toString('base64url')}`;
+}
+
+function decodeLocalDateWindowSelector(value: unknown): LocalDateWindowSelector | null {
+  const raw = String(value ?? '').trim();
+  if (!raw.startsWith(LOCAL_DATE_WINDOW_SELECTOR_PREFIX)) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(raw.slice(LOCAL_DATE_WINDOW_SELECTOR_PREFIX.length), 'base64url').toString('utf8')) as unknown;
+    if (!Array.isArray(decoded) || decoded.length !== 5 || decoded.some((entry) => typeof entry !== 'string' || !entry)) return null;
+    if (decoded[1] !== 'datetime') return null;
+    return {
+      field: decoded[0],
+      valueType: 'datetime',
+      dateStartParameter: decoded[2],
+      dateEndExclusiveParameter: decoded[3],
+      timezoneParameter: decoded[4],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function semanticQueryMapperType(parameter: DiscoveryCapabilityQueryParameter): FieldType {
+  if (parameter.type === 'boolean') return 'boolean';
+  if (parameter.type === 'integer' || parameter.type === 'number') return 'number';
+  return 'string';
+}
+
+function semanticQueryMapperField(parameter: DiscoveryCapabilityQueryParameter) {
+  return {
+    id: parameter.parameter,
+    displayName: humanizeKey(parameter.role?.trim() || parameter.parameter),
+    required: parameter.required === true,
+    defaultMatch: false,
+    canBeUsedToMatch: false,
+    display: true,
+    type: semanticQueryMapperType(parameter),
+    description: `${parameter.type}${parameter.role ? ` · ${parameter.role}` : ''} · LifeSpace query parameter ${parameter.parameter}`,
+  };
+}
 
 function parseJsonObject(
   context: IExecuteFunctions,
@@ -175,6 +264,7 @@ function queryParameters(
   const search = String(context.getNodeParameter('search', itemIndex, '')).trim();
   const options = context.getNodeParameter('options', itemIndex, {}) as IDataObject;
   const configuredSorts = context.getNodeParameter('sorts.sort', itemIndex, []) as QuerySort[];
+  const semanticSort = String(context.getNodeParameter('semanticSort', itemIndex, '') ?? '').trim();
   const legacySortField = String(options.sortField ?? '').trim();
   const legacySortDirection = String(options.sortDirection ?? 'desc').trim();
   const configuredCursor = String(options.cursor ?? '').trim();
@@ -199,20 +289,27 @@ function queryParameters(
     orderedSorts.push(`${field}:${direction}`);
   }
 
-  if (orderedSorts.length === 1) qs.sort = orderedSorts[0];
-  if (orderedSorts.length > 1) qs.sort = orderedSorts;
-  if (orderedSorts.length === 0 && legacySortField) qs.sort = `${legacySortField}:${legacySortDirection}`;
+  if (semanticSort && (orderedSorts.length > 0 || legacySortField)) {
+    throw new NodeOperationError(context.getNode(), 'Semantic Sort cannot be combined with field Sorts', { itemIndex });
+  }
+  if (semanticSort) qs.sort = semanticSort;
+  if (!semanticSort && orderedSorts.length === 1) qs.sort = orderedSorts[0];
+  if (!semanticSort && orderedSorts.length > 1) qs.sort = orderedSorts;
+  if (!semanticSort && orderedSorts.length === 0 && legacySortField) qs.sort = `${legacySortField}:${legacySortDirection}`;
   qs.limit = limit;
   if (cursor) qs.cursor = cursor;
 
   const usedKeys = new Set<string>();
-  const setFilter = (field: string, operator: 'exact' | 'from' | 'to', value: string | number | boolean) => {
-    const key = operator === 'from' ? `${field}From` : operator === 'to' ? `${field}To` : field;
+  const setQueryParameter = (key: string, value: string | number | boolean) => {
     if (usedKeys.has(key)) {
-      throw new NodeOperationError(context.getNode(), `Query filter ${key} may be supplied only once`, { itemIndex });
+      throw new NodeOperationError(context.getNode(), `Query parameter ${key} may be supplied only once`, { itemIndex });
     }
     usedKeys.add(key);
     qs[key] = typeof value === 'boolean' ? String(value) : value;
+  };
+  const setFilter = (field: string, operator: 'exact' | 'from' | 'to', value: string | number | boolean) => {
+    const key = operator === 'from' ? `${field}From` : operator === 'to' ? `${field}To` : field;
+    setQueryParameter(key, value);
   };
 
   for (const filter of filters) {
@@ -255,6 +352,46 @@ function queryParameters(
     const field = String(row.field ?? '').trim();
     const target = String(row.target ?? '').trim();
     if (field && target) setFilter(field, 'exact', target);
+  }
+  for (const row of (typedFilters.numberComparison ?? []) as QueryComparison[]) {
+    const field = comparisonFieldParts(row.field).field;
+    const parameter = String(row.parameter ?? '').trim();
+    const value = Number(row.value);
+    if (field && parameter && Number.isFinite(value)) setQueryParameter(parameter, value);
+  }
+  for (const row of (typedFilters.temporalComparison ?? []) as QueryComparison[]) {
+    const { field, valueType } = comparisonFieldParts(row.field);
+    const parameter = String(row.parameter ?? '').trim();
+    if (!field || !parameter || row.value === undefined || row.value === '') continue;
+    const raw = String(row.value);
+    const value = valueType === 'date' ? dateOnlyValue(context, itemIndex, raw, field) : raw;
+    if (value !== null) setQueryParameter(parameter, value);
+  }
+
+  const localDateWindows = context.getNodeParameter('localDateWindows.window', itemIndex, []) as QueryLocalDateWindow[];
+  for (const row of localDateWindows) {
+    const selector = decodeLocalDateWindowSelector(row.field);
+    if (!selector) {
+      if (String(row.field ?? '').trim()) {
+        throw new NodeOperationError(context.getNode(), 'Local Date Window selector is invalid. Re-select the field from Runtime Discovery.', { itemIndex });
+      }
+      continue;
+    }
+    const dateStart = dateOnlyValue(context, itemIndex, row.dateStart, selector.field);
+    const dateEndExclusive = dateOnlyValue(context, itemIndex, row.dateEndExclusive, selector.field);
+    const timezone = String(row.timezone ?? '').trim();
+    if (dateStart !== null) setQueryParameter(selector.dateStartParameter, dateStart);
+    if (dateEndExclusive !== null) setQueryParameter(selector.dateEndExclusiveParameter, dateEndExclusive);
+    if (timezone) setQueryParameter(selector.timezoneParameter, timezone);
+  }
+
+  const semanticQueryInput = mappedValue(context, itemIndex, 'semanticQueryInput');
+  for (const [parameter, value] of Object.entries(semanticQueryInput)) {
+    if (value === null || value === undefined || value === '') continue;
+    if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+      throw new NodeOperationError(context.getNode(), `Semantic Query parameter ${parameter} must be a scalar value`, { itemIndex });
+    }
+    setQueryParameter(parameter, value);
   }
 
   return qs;
@@ -469,6 +606,25 @@ async function filterFieldOptions(
     }));
 }
 
+async function comparisonFieldOptions(
+  context: ILoadOptionsFunctions,
+  types: DiscoveryComparison['valueType'][],
+): Promise<INodePropertyOptions[]> {
+  const selected = await optionModel(context);
+  if (!selected) return [];
+  const allowed = new Set(types);
+  return (selected.model.query.comparisons ?? [])
+    .filter((comparison) => allowed.has(comparison.valueType))
+    .map((comparison) => {
+      const field = selected.model.fields.find((entry) => entry.key === comparison.field);
+      return {
+        name: field?.title?.trim() || humanizeKey(comparison.field),
+        value: `${comparison.valueType}:${comparison.field}`,
+        description: `${comparison.source} · ${comparison.valueType} · explicit LifeSpace comparison operators`,
+      };
+    });
+}
+
 async function relationFieldOptions(
   context: ILoadOptionsFunctions,
   cardinality?: 'one' | 'many',
@@ -660,6 +816,16 @@ export class LifeSpace implements INodeType {
             { displayName: 'Operator', name: 'operator', type: 'options', options: [{ name: 'Equals', value: 'exact' }, { name: 'From / Greater Than or Equal', value: 'from' }, { name: 'To / Less Than or Equal', value: 'to' }], default: 'exact' },
             { displayName: 'Value', name: 'value', type: 'dateTime', default: '', required: true },
           ] },
+          { displayName: 'Number Comparison', name: 'numberComparison', values: [
+            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Fields and envelope values advertised by LifeSpace explicit comparison semantics. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.', typeOptions: { loadOptionsMethod: 'getNumericComparisonFields', loadOptionsDependsOn: ['spaceId', 'recordType'] }, options: [], default: '', required: true },
+            { displayName: 'Operator Name or ID', name: 'parameter', type: 'options', description: 'The option value is the exact query parameter published by LifeSpace; the adapter does not derive transport names. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.', typeOptions: { loadOptionsMethod: 'getComparisonOperatorsForCurrentField', loadOptionsDependsOn: ['spaceId', 'recordType', '&field'] }, options: [], default: '', required: true },
+            { displayName: 'Value', name: 'value', type: 'number', default: 0, required: true },
+          ] },
+          { displayName: 'Date / Time Comparison', name: 'temporalComparison', values: [
+            { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Includes model date/datetime fields plus LifeSpace envelope timestamps such as createdAt/updatedAt when advertised. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.', typeOptions: { loadOptionsMethod: 'getTemporalComparisonFields', loadOptionsDependsOn: ['spaceId', 'recordType'] }, options: [], default: '', required: true },
+            { displayName: 'Operator Name or ID', name: 'parameter', type: 'options', description: 'Uses the exact explicit comparison transport advertised by LifeSpace. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.', typeOptions: { loadOptionsMethod: 'getComparisonOperatorsForCurrentField', loadOptionsDependsOn: ['spaceId', 'recordType', '&field'] }, options: [], default: '', required: true },
+            { displayName: 'Value', name: 'value', type: 'dateTime', default: '', required: true },
+          ] },
           { displayName: 'Person Filter', name: 'person', values: [
             { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getPersonFilterableFields', loadOptionsDependsOn: ['spaceId', 'recordType'] }, options: [], default: '', required: true },
             { displayName: 'Person Name or ID', name: 'target', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getRelationTargetsForCurrentField', loadOptionsDependsOn: ['spaceId', 'recordType', '&field'] }, options: [], default: '', required: true },
@@ -670,6 +836,45 @@ export class LifeSpace implements INodeType {
             { displayName: 'Value', name: 'value', type: 'string', default: '', required: true },
           ] },
         ],
+      },
+      {
+        displayName: 'Local Date Windows', name: 'localDateWindows', type: 'fixedCollection', default: {},
+        placeholder: 'Add Local Date Window', typeOptions: { multipleValues: true },
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+        options: [{ displayName: 'Window', name: 'window', values: [
+          { displayName: 'Field Name or ID', name: 'field', type: 'options', typeOptions: { loadOptionsMethod: 'getLocalDateWindowFields', loadOptionsDependsOn: ['spaceId', 'recordType'] }, options: [], default: '', required: true, description: 'Only datetime fields whose published comparison semantics include a local-date-window transport are offered. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.' },
+          { displayName: 'Start Date', name: 'dateStart', type: 'dateTime', default: '', required: true, description: 'Inclusive local calendar start date. The adapter submits YYYY-MM-DD and does not calculate UTC boundaries.' },
+          { displayName: 'End Date (Exclusive)', name: 'dateEndExclusive', type: 'dateTime', default: '', required: true, description: 'Exclusive local calendar end date' },
+          { displayName: 'Viewing Timezone', name: 'timezone', type: 'string', default: '', required: true, placeholder: 'Europe/Amsterdam', description: 'IANA timezone passed unchanged to LifeSpace Core' },
+        ] }],
+      },
+      {
+        displayName: 'Semantic Query Name or ID', name: 'semanticQueryKey', type: 'options',
+        typeOptions: { loadOptionsMethod: 'getCapabilityQueries', loadOptionsDependsOn: ['spaceId', 'recordType'] },
+        options: [], default: '',
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+        description: 'Optional grouped capability query published by LifeSpace, for example Calendar Window. The adapter does not hard-code Event fields. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+      },
+      {
+        displayName: 'Semantic Query Input', name: 'semanticQueryInput', type: 'resourceMapper',
+        default: { mappingMode: 'defineBelow', value: null }, noDataExpression: true,
+        typeOptions: {
+          loadOptionsDependsOn: ['spaceId', 'recordType', 'semanticQueryKey'],
+          resourceMapper: {
+            resourceMapperMethod: 'getSemanticQueryInputFields', mode: 'add',
+            fieldWords: { singular: 'parameter', plural: 'parameters' }, addAllFields: true, supportAutoMap: false,
+            noFieldsError: 'Choose a Semantic Query to load its LifeSpace-published parameters.',
+          },
+        },
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+        description: 'Parameters are projected directly from query.capabilityQueries. Calendar local dates/timezone are sent to Core unchanged; Core owns overlap and DST semantics.',
+      },
+      {
+        displayName: 'Semantic Sort Name or ID', name: 'semanticSort', type: 'options',
+        typeOptions: { loadOptionsMethod: 'getSemanticSorts', loadOptionsDependsOn: ['spaceId', 'recordType', 'semanticQueryKey'] },
+        options: [], default: '',
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+        description: 'Optional capability-specific sort published with the selected Semantic Query. Do not combine with field Sorts. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
       },
       {
         displayName: 'Return All', name: 'returnAll', type: 'boolean', default: false,
@@ -812,6 +1017,52 @@ export class LifeSpace implements INodeType {
       async getBooleanFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> { return filterFieldOptions(this, ['boolean']); },
       async getNumericFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> { return filterFieldOptions(this, ['integer', 'number']); },
       async getTemporalFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> { return filterFieldOptions(this, ['date', 'datetime'], true); },
+      async getNumericComparisonFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> { return comparisonFieldOptions(this, ['integer', 'number']); },
+      async getTemporalComparisonFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> { return comparisonFieldOptions(this, ['date', 'datetime']); },
+      async getComparisonOperatorsForCurrentField(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const selected = await optionModel(this);
+        const { field } = comparisonFieldParts(this.getCurrentNodeParameter('&field'));
+        const comparison = selected?.model.query.comparisons?.find((entry) => entry.field === field);
+        return (comparison?.operators ?? [])
+          .filter((operator) => operator.transport === 'explicit')
+          .map((operator) => ({
+            name: COMPARISON_OPERATOR_LABELS[operator.operator] ?? humanizeKey(operator.operator),
+            value: operator.parameter,
+            description: `${operator.operator} · ${operator.transport} · ${operator.parameter}`,
+          }));
+      },
+      async getLocalDateWindowFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const selected = await optionModel(this);
+        if (!selected) return [];
+        return (selected.model.query.comparisons ?? [])
+          .filter((comparison) => comparison.valueType === 'datetime' && comparison.localDateWindow)
+          .map((comparison) => {
+            const field = selected.model.fields.find((entry) => entry.key === comparison.field);
+            return {
+              name: field?.title?.trim() || humanizeKey(comparison.field),
+              value: encodeLocalDateWindowSelector(comparison),
+              description: `${comparison.source} · [start,end) local calendar window · Core resolves timezone/DST`,
+            };
+          });
+      },
+      async getCapabilityQueries(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const selected = await optionModel(this);
+        return (selected?.model.query.capabilityQueries ?? []).map((query) => ({
+          name: `${humanizeKey(query.capability)} · ${humanizeKey(query.key)}`,
+          value: query.key,
+          description: `${query.semantics}${query.recurrenceExpansion === false ? ' · recurrence not expanded' : ''}`,
+        }));
+      },
+      async getSemanticSorts(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+        const selected = await optionModel(this);
+        const queryKey = loadOptionParameter(this, 'semanticQueryKey');
+        const query = selected?.model.query.capabilityQueries?.find((entry) => entry.key === queryKey);
+        return (query?.ordering?.values ?? []).map((value) => ({
+          name: value === query?.ordering?.default ? `${value} (Default)` : value,
+          value,
+          description: `${query?.key ?? 'semantic query'} ordering`,
+        }));
+      },
       async getPersonFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> { return relationFieldOptions(this, undefined, true); },
       async getEnumValuesForCurrentFilter(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const selected = await optionModel(this);
@@ -854,6 +1105,12 @@ export class LifeSpace implements INodeType {
         return action
           ? { fields: action.input.fields.map((field) => mapperField(field, field.required === true)) }
           : { fields: [] };
+      },
+      async getSemanticQueryInputFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
+        const selected = await optionModel(this);
+        const queryKey = loadOptionParameter(this, 'semanticQueryKey');
+        const query = selected?.model.query.capabilityQueries?.find((entry) => entry.key === queryKey);
+        return query ? { fields: query.parameters.map(semanticQueryMapperField) } : { fields: [] };
       },
     },
   };
