@@ -26,6 +26,46 @@ jobs:
       - name: Install pinned npm
         run: npm install --global npm@11.15.0
 
+      - name: Sanitize nested TypeScript templates in one-shot transform
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('.github/scripts/one-shot-time-query-semantics.mjs')
+          lines = path.read_text().splitlines(keepends=True)
+          output = []
+          inside_multiline_template = False
+
+          def escape_nested(value: str) -> str:
+              value = re.sub(r'(?<!\\)`', r'\\`', value)
+              value = re.sub(r'(?<!\\)\$\{', r'\\${', value)
+              return value
+
+          for line in lines:
+              if not inside_multiline_template:
+                  match = re.match(r'^(\s*)`', line)
+                  if match:
+                      start = match.end()
+                      line = line[:start] + escape_nested(line[start:])
+                      inside_multiline_template = True
+                  output.append(line)
+                  continue
+
+              if re.fullmatch(r'\s*`,\s*\n?', line):
+                  output.append(line)
+                  inside_multiline_template = False
+              else:
+                  output.append(escape_nested(line))
+
+          if inside_multiline_template:
+              raise SystemExit('unterminated multiline transform template')
+
+          path.write_text(''.join(output))
+          PY
+          node --check .github/scripts/one-shot-time-query-semantics.mjs
+
       - name: Apply one-shot transform
         run: node .github/scripts/one-shot-time-query-semantics.mjs
 
