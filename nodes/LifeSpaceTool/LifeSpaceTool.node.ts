@@ -1,4 +1,3 @@
-import { DynamicStructuredTool } from '@langchain/core/tools';
 import type {
   IDataObject,
   IHttpRequestOptions,
@@ -33,7 +32,16 @@ import {
   type AgentToolOperation,
   type AgentToolQueryMode,
   type AgentToolRequest,
+  type AgentToolSchema,
 } from '../agent/lifeSpaceToolFactory';
+
+type StructuralAiTool = {
+  name: string;
+  description: string;
+  schema: AgentToolSchema;
+  metadata: Record<string, unknown>;
+  invoke: (query: unknown) => Promise<string>;
+};
 
 function requiredAccess(operation: string): DiscoveryAccess | null {
   if (operation === 'query') return 'read';
@@ -78,17 +86,20 @@ function currentRecordPath(request: AgentToolRequest): string {
   return actionIndex >= 0 ? request.path.slice(0, actionIndex) : request.path;
 }
 
-function currentRecordVersion(response: unknown): number {
+function currentRecordVersion(context: ISupplyDataFunctions, response: unknown): number {
   if (!response || typeof response !== 'object' || Array.isArray(response)) {
-    throw new Error('LifeSpace record lookup returned an invalid response');
+    throw new NodeOperationError(context.getNode(), 'LifeSpace record lookup returned an invalid response');
   }
   const data = (response as { data?: unknown }).data;
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    throw new Error('LifeSpace record lookup returned an invalid data envelope');
+    throw new NodeOperationError(context.getNode(), 'LifeSpace record lookup returned an invalid data envelope');
   }
   const version = (data as { version?: unknown }).version;
   if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
-    throw new Error('LifeSpace record did not expose a usable version for optimistic concurrency');
+    throw new NodeOperationError(
+      context.getNode(),
+      'LifeSpace record did not expose a usable version for optimistic concurrency',
+    );
   }
   return version;
 }
@@ -143,6 +154,7 @@ export class LifeSpaceTool implements INodeType {
     },
     group: ['transform'],
     version: 1,
+    subtitle: '={{$parameter["operation"] + " · " + $parameter["recordType"]}}',
     description: 'Expose one metadata-driven LifeSpace operation to an AI Agent',
     defaults: {
       name: 'LifeSpace Tool',
@@ -174,11 +186,31 @@ export class LifeSpaceTool implements INodeType {
         type: 'options',
         noDataExpression: true,
         options: [
-          { name: 'Create Record', value: 'create', description: 'Create one record using fields published by Runtime Discovery' },
-          { name: 'Delete Record', value: 'delete', description: 'Delete one record using current optimistic concurrency' },
-          { name: 'Execute Action', value: 'action', description: 'Execute one published semantic Action on a record' },
-          { name: 'Query Records', value: 'query', description: 'Query records using the published LifeSpace query contract' },
-          { name: 'Update Record', value: 'update', description: 'Update only fields the Agent explicitly supplies' },
+          {
+            name: 'Create Record',
+            value: 'create',
+            description: 'Create one record using fields published by Runtime Discovery',
+          },
+          {
+            name: 'Delete Record',
+            value: 'delete',
+            description: 'Delete one record using current optimistic concurrency',
+          },
+          {
+            name: 'Execute Action',
+            value: 'action',
+            description: 'Execute one published semantic Action on a record',
+          },
+          {
+            name: 'Query Records',
+            value: 'query',
+            description: 'Query records using the published LifeSpace query contract',
+          },
+          {
+            name: 'Update Record',
+            value: 'update',
+            description: 'Update only fields the Agent explicitly supplies',
+          },
         ],
         default: 'query',
       },
@@ -199,8 +231,16 @@ export class LifeSpaceTool implements INodeType {
         type: 'options',
         noDataExpression: true,
         options: [
-          { name: 'Generic Query', value: 'generic', description: 'Use search, filters, explicit comparisons, local-date windows, sort, and pagination published by LifeSpace' },
-          { name: 'Capability Query', value: 'capability', description: 'Use one grouped capability-owned query such as Calendar viewing window' },
+          {
+            name: 'Generic Query',
+            value: 'generic',
+            description: 'Use search, filters, explicit comparisons, local-date windows, sort, and pagination published by LifeSpace',
+          },
+          {
+            name: 'Capability Query',
+            value: 'capability',
+            description: 'Use one grouped capability-owned query such as Calendar viewing window',
+          },
         ],
         default: 'generic',
         displayOptions: { show: { operation: ['query'] } },
@@ -329,11 +369,12 @@ export class LifeSpaceTool implements INodeType {
       throw new NodeOperationError(this.getNode(), error as Error, { itemIndex });
     }
 
-    const tool = new DynamicStructuredTool({
+    const tool: StructuralAiTool = {
       name: definition.name,
       description: definition.description,
       schema: definition.schema,
-      func: async (query: unknown): Promise<string> => {
+      metadata: {},
+      invoke: async (query: unknown): Promise<string> => {
         const { index } = this.addInputData(NodeConnectionTypes.AiTool, [[{ json: { query: inputForLog(query) } }]]);
         let output: string;
         let executionError: NodeOperationError | undefined;
@@ -344,7 +385,7 @@ export class LifeSpaceTool implements INodeType {
               method: 'GET',
               path: currentRecordPath(request),
             });
-            request = buildAgentToolRequest(model, config, query, currentRecordVersion(recordResponse));
+            request = buildAgentToolRequest(model, config, query, currentRecordVersion(this, recordResponse));
           }
           const response = await performRequest(this, baseUrl, request);
           output = stringifyToolOutput(response);
@@ -360,7 +401,7 @@ export class LifeSpaceTool implements INodeType {
         }
         return output;
       },
-    });
+    };
 
     return { response: tool };
   }
