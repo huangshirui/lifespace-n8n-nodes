@@ -49,6 +49,8 @@ test('Runtime Discovery UX is cross-Space and Record-facing', async () => {
   assert.match(discovery, /title\?: string/u);
   assert.match(discovery, /repeatable: true/u);
   assert.match(discovery, /envelopeFields: string\[\]/u);
+  assert.match(discovery, /comparisons\?: DiscoveryComparison\[\]/u);
+  assert.match(discovery, /capabilityQueries\?: DiscoveryCapabilityQuery\[\]/u);
   assert.match(discovery, /spaceName\?: string \| null/u);
   assert.match(discovery, /relation\?: DiscoveryRelation/u);
   assert.match(discovery, /lookup: DiscoveryRelationLookup/u);
@@ -84,11 +86,12 @@ test('runtime node inputs remain expression-capable except structural controls',
   // n8n parameters accept expressions unless noDataExpression is set. Keep that
   // escape hatch limited to controls that define the node schema itself plus the
   // resourceMapper containers whose individual mapped values remain expression-capable.
-  assert.equal((node.match(/noDataExpression: true/gu) ?? []).length, 5);
+  assert.equal((node.match(/noDataExpression: true/gu) ?? []).length, 6);
   assert.match(node, /name: 'resource',[\s\S]{0,80}noDataExpression: true/u);
   assert.match(node, /name: 'operation',[\s\S]{0,80}noDataExpression: true/u);
   assert.match(node, /name: 'fields',[\s\S]{0,140}noDataExpression: true/u);
   assert.match(node, /name: 'actionInput',[\s\S]{0,140}noDataExpression: true/u);
+  assert.match(node, /name: 'semanticQueryInput',[\s\S]{0,180}noDataExpression: true/u);
   assert.doesNotMatch(trigger, /noDataExpression: true/u);
 
   // Discovery-backed runtime selectors keep the standard n8n "select or expression"

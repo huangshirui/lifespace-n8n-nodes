@@ -102,6 +102,53 @@ export type DiscoveryCapabilityBindings = {
   temporal?: DiscoveryTemporalCapabilityBinding;
 };
 
+export type DiscoveryComparisonOperator = 'eq' | 'lt' | 'lte' | 'gt' | 'gte';
+
+export type DiscoveryComparisonTransport = {
+  operator: DiscoveryComparisonOperator;
+  parameter: string;
+  transport: 'legacy' | 'explicit';
+};
+
+export type DiscoveryLocalDateWindow = {
+  dateStartParameter: string;
+  dateEndExclusiveParameter: string;
+  timezoneParameter: string;
+  bounds: '[)';
+  lowerOperator: 'gte';
+  upperOperator: 'lt';
+};
+
+export type DiscoveryComparison = {
+  field: string;
+  source: 'model' | 'envelope';
+  valueType: 'date' | 'datetime' | 'integer' | 'number';
+  operators: DiscoveryComparisonTransport[];
+  localDateWindow?: DiscoveryLocalDateWindow;
+};
+
+export type DiscoveryCapabilityQueryParameter = {
+  parameter: string;
+  type: 'string' | 'boolean' | 'integer' | 'number' | 'date' | 'datetime' | 'timezone';
+  required?: boolean;
+  role?: string;
+  default?: unknown;
+};
+
+export type DiscoveryCapabilityQuery = {
+  key: string;
+  capability: string;
+  semantics: string;
+  recurrenceExpansion?: boolean;
+  parameters: DiscoveryCapabilityQueryParameter[];
+  ordering?: {
+    parameter: string;
+    values: string[];
+    default?: string;
+    [key: string]: unknown;
+  };
+};
+
 export type DiscoveryModel = {
   key: string;
   version: number;
@@ -115,6 +162,8 @@ export type DiscoveryModel = {
     searchable: string[];
     filterable: string[];
     sortable: string[];
+    comparisons?: DiscoveryComparison[];
+    capabilityQueries?: DiscoveryCapabilityQuery[];
     sort: {
       parameter: 'sort';
       syntax: 'field:direction';
@@ -210,6 +259,8 @@ type SemanticDetail = {
     searchable: string[];
     filterable: string[];
     sortable: string[];
+    comparisons?: DiscoveryComparison[];
+    capabilityQueries?: DiscoveryCapabilityQuery[];
     sort: {
       parameter: 'sort';
       syntax: 'field:direction';
@@ -351,6 +402,8 @@ function stubModel(identity: InventoryModel, access: DiscoveryAccess[]): Discove
       searchable: [],
       filterable: [],
       sortable: [],
+      comparisons: [],
+      capabilityQueries: [],
       sort: {
         parameter: 'sort',
         syntax: 'field:direction',
@@ -381,6 +434,8 @@ function detailedModel(detail: SemanticDetail, access: DiscoveryAccess[]): Disco
       searchable: detail.query.searchable,
       filterable: detail.query.filterable,
       sortable: detail.query.sortable,
+      comparisons: detail.query.comparisons ?? [],
+      capabilityQueries: detail.query.capabilityQueries ?? [],
       sort: {
         parameter: detail.query.sort.parameter,
         syntax: detail.query.sort.syntax,
