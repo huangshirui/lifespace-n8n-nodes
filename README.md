@@ -74,6 +74,16 @@ Record Type is the LifeSpace `modelKey` (for example `task`). Design-time option
 
 Calendar-backed models use canonical `capabilityBindings.calendar` field roles instead of Event-specific field names while the node is being configured. Date-only values are normalized to `YYYY-MM-DD`. Create/Update execution does not fetch fresh semantic Discovery solely to produce an adapter-local Calendar conflict error; the canonical mutation goes directly to LifeSpace Core, which remains authoritative for Calendar validation and current authorization.
 
+## AI Agent Tool
+
+`LifeSpace Tool` is the metadata-driven AI Agent sub-node. Configure one fixed Space, Record Type and semantic operation per Tool instance, then connect multiple instances to the same n8n AI Agent. The Tool name, default description and structured AI input schema are generated from LifeSpace Progressive Runtime Discovery; hand-written descriptions are optional.
+
+- Query exposes published search/filter/comparison/local-date-window/sort/pagination semantics. Capability Query mode exposes only the capability-owned parameters and ordering that LifeSpace explicitly publishes; generic-facet composition stays narrowed until LifeSpace #228 defines it.
+- Create/Update schemas come from writable Model fields. Required fields with LifeSpace defaults are optional AI inputs, and fields the AI omits are absent from the outgoing request rather than synthesized as empty/null placeholders.
+- Delete and Action hide optimistic-concurrency `version` from the AI. The Adapter reads the current record version when required and Core remains the final authorization/concurrency/semantic authority.
+- No Task/Event/Wish-specific Tool nodes or field maps are shipped. New models become available through Discovery without source changes.
+- The ordinary `LifeSpace` workflow node remains `usableAsTool` for manually configured `$fromAI(...)` workflows, but `LifeSpace Tool` is the canonical path when the AI should receive the complete dynamic LifeSpace schema.
+
 ## LifeSpace contract compatibility
 
 This package follows the current LifeSpace Core Kernel `0.35.0` contract family. It consumes Runtime/Discovery semantics only; Eventing configuration and webhook delivery semantics are owned independently by Integration/Eventing `0.1.0`.

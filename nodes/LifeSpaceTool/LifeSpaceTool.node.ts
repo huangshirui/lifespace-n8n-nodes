@@ -178,7 +178,7 @@ export class LifeSpaceTool implements INodeType {
         default: '',
         required: true,
         noDataExpression: true,
-        description: 'Fixes this Tool instance to one authorized LifeSpace Space',
+        description: 'Fixes this Tool instance to one authorized LifeSpace Space. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
       },
       {
         displayName: 'Operation',
@@ -190,26 +190,31 @@ export class LifeSpaceTool implements INodeType {
             name: 'Create Record',
             value: 'create',
             description: 'Create one record using fields published by Runtime Discovery',
+												action: 'Create one record using fields published by runtime discovery',
           },
           {
             name: 'Delete Record',
             value: 'delete',
             description: 'Delete one record using current optimistic concurrency',
+												action: 'Delete one record using current optimistic concurrency',
           },
           {
             name: 'Execute Action',
             value: 'action',
             description: 'Execute one published semantic Action on a record',
+												action: 'Execute one published semantic action on a record',
           },
           {
             name: 'Query Records',
             value: 'query',
             description: 'Query records using the published LifeSpace query contract',
+												action: 'Query records using the published life space query contract',
           },
           {
             name: 'Update Record',
             value: 'update',
             description: 'Update only fields the Agent explicitly supplies',
+												action: 'Update only fields the agent explicitly supplies',
           },
         ],
         default: 'query',
@@ -223,7 +228,7 @@ export class LifeSpaceTool implements INodeType {
         options: [],
         default: '',
         required: true,
-        description: 'Fixes this Tool instance to one LifeSpace model key discovered for the selected Space',
+        description: 'Fixes this Tool instance to one LifeSpace model key discovered for the selected Space. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
       },
       {
         displayName: 'Query Mode',
@@ -258,7 +263,7 @@ export class LifeSpaceTool implements INodeType {
         default: '',
         required: true,
         displayOptions: { show: { operation: ['query'], queryMode: ['capability'] } },
-        description: 'Choose a semantic query published by the selected LifeSpace model',
+        description: 'Choose a semantic query published by the selected LifeSpace model. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
       },
       {
         displayName: 'Action Name or ID',
@@ -273,7 +278,7 @@ export class LifeSpaceTool implements INodeType {
         default: '',
         required: true,
         displayOptions: { show: { operation: ['action'] } },
-        description: 'Choose one published Action. Concurrency/version metadata is handled by the Adapter, not by the AI.',
+        description: 'Choose one published Action. Concurrency/version metadata is handled by the Adapter, not by the AI. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
       },
       {
         displayName: 'Description Override',
