@@ -95,7 +95,7 @@ jobs:
         run: git diff --check
 
       - name: Remove one-shot scaffolding
-        run: git rm .github/scripts/one-shot-time-query-semantics.mjs .github/workflows/apply-time-query-semantics.yml
+        run: git rm -f .github/scripts/one-shot-time-query-semantics.mjs .github/workflows/apply-time-query-semantics.yml
 
       - name: Commit verified implementation
         run: |
