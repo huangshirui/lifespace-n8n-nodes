@@ -10,6 +10,9 @@ def replace_once(path: str, before: str, after: str, label: str) -> None:
     text = target.read_text()
     count = text.count(before)
     if count != 1:
+        if label == "DiscoveryModel search and filters" and count == 2:
+            target.write_text(text.replace(before, after, 1))
+            return
         raise RuntimeError(f"{label}: expected one anchor, found {count}")
     target.write_text(text.replace(before, after, 1))
 
@@ -159,10 +162,9 @@ replace_once(
     "agent supply discovery loader",
 )
 
-# Register the native AiTool sub-node and add the single runtime dependency it needs.
+# Register the native AiTool sub-node. Community packages must not ship extra runtime dependencies.
 package_path = ROOT / "package.json"
 package_json = json.loads(package_path.read_text())
-package_json.setdefault("dependencies", {})["@langchain/core"] = "1.2.8"
 nodes = package_json["n8n"]["nodes"]
 tool_node = "dist/nodes/LifeSpaceTool/LifeSpaceTool.node.js"
 if tool_node not in nodes:
@@ -176,21 +178,15 @@ target_dir.mkdir(parents=True, exist_ok=True)
 for name in ["lifespace.svg", "lifespace.dark.svg"]:
     shutil.copyfile(source_dir / name, target_dir / name)
 
-# Update current user-facing compatibility guidance without claiming a release yet.
-replace_once(
-    "README.md",
-    "Core Kernel `0.35.0`",
-    "Core Kernel `0.35.0`",
-    "README Core 0.35 anchor",
-)
-
+# Add user-facing Agent Tool guidance without changing the already-declared Kernel baseline.
 readme = ROOT / "README.md"
 text = readme.read_text()
-marker = "## Compatibility\n"
+marker = "## LifeSpace contract compatibility\n"
 if marker not in text:
     raise RuntimeError("README compatibility heading missing")
 section = """## AI Agent Tool\n\n`LifeSpace Tool` is the metadata-driven AI Agent sub-node. Configure one fixed Space, Record Type and semantic operation per Tool instance, then connect multiple instances to the same n8n AI Agent. The Tool name, default description and structured AI input schema are generated from LifeSpace Progressive Runtime Discovery; hand-written descriptions are optional.\n\n- Query exposes published search/filter/comparison/local-date-window/sort/pagination semantics. Capability Query mode exposes only the capability-owned parameters and ordering that LifeSpace explicitly publishes; generic-facet composition stays narrowed until LifeSpace #228 defines it.\n- Create/Update schemas come from writable Model fields. Required fields with LifeSpace defaults are optional AI inputs, and fields the AI omits are absent from the outgoing request rather than synthesized as empty/null placeholders.\n- Delete and Action hide optimistic-concurrency `version` from the AI. The Adapter reads the current record version when required and Core remains the final authorization/concurrency/semantic authority.\n- No Task/Event/Wish-specific Tool nodes or field maps are shipped. New models become available through Discovery without source changes.\n- The ordinary `LifeSpace` workflow node remains `usableAsTool` for manually configured `$fromAI(...)` workflows, but `LifeSpace Tool` is the canonical path when the AI should receive the complete dynamic LifeSpace schema.\n\n"""
-text = text.replace(marker, section + marker, 1)
+if "## AI Agent Tool\n" not in text:
+    text = text.replace(marker, section + marker, 1)
 readme.write_text(text)
 
 print("Agent Tool integration transform applied")
