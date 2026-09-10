@@ -45,7 +45,7 @@ jobs:
       - name: Verify package contents
         run: |
           set -euo pipefail
-          npm pack --dry-run > /tmp/npm-pack.txt
+          npm pack --dry-run > /tmp/npm-pack.txt 2>&1
           grep -q 'dist/nodes/LifeSpaceTool/LifeSpaceTool.node.js' /tmp/npm-pack.txt
           grep -q 'dist/nodes/LifeSpaceTool/lifespace.svg' /tmp/npm-pack.txt
 
