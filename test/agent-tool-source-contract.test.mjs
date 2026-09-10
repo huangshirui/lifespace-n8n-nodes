@@ -6,16 +6,20 @@ async function text(path) {
   return readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 }
 
-test('package registers a native LifeSpace AiTool sub-node', async () => {
+test('package registers a native LifeSpace AiTool sub-node without restricted runtime dependencies', async () => {
   const packageJson = JSON.parse(await text('package.json'));
   assert.ok(packageJson.n8n.nodes.includes('dist/nodes/LifeSpaceTool/LifeSpaceTool.node.js'));
-  assert.equal(packageJson.dependencies?.['@langchain/core'], '1.2.8');
+  assert.equal(packageJson.dependencies?.['@langchain/core'], undefined);
+  assert.equal(packageJson.peerDependencies?.['@langchain/core'], undefined);
 
   const source = await text('nodes/LifeSpaceTool/LifeSpaceTool.node.ts');
   assert.match(source, /inputs: \[\]/u);
   assert.match(source, /outputs: \[NodeConnectionTypes\.AiTool\]/u);
   assert.match(source, /async supplyData\(this: ISupplyDataFunctions/u);
-  assert.match(source, /new DynamicStructuredTool/u);
+  assert.match(source, /const tool: StructuralAiTool/u);
+  assert.match(source, /invoke: async \(query: unknown\)/u);
+  assert.doesNotMatch(source, /@langchain\/core/u);
+  assert.doesNotMatch(source, /DynamicStructuredTool/u);
 });
 
 test('Agent Tool remains model-agnostic and does not copy domain schemas', async () => {
