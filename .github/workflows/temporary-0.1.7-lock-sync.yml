@@ -1,0 +1,30 @@
+name: Temporary 0.1.7 lock sync
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  sync:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24.20.0'
+          package-manager-cache: false
+      - name: Sync lockfile and self-remove
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm version 0.1.7 --no-git-tag-version --allow-same-version
+          git rm .github/workflows/temporary-0.1.7-lock-sync.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "chore: sync 0.1.7 package metadata"
+          git push origin HEAD:main
