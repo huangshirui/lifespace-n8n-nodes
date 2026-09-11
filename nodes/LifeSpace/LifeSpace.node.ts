@@ -261,15 +261,29 @@ function queryParameters(
   cursorOverride?: string,
 ): IDataObject {
   const qs: IDataObject = {};
-  const search = String(context.getNodeParameter('search', itemIndex, '')).trim();
+  const configuredQueryMode = String(context.getNodeParameter('queryMode', itemIndex, '') ?? '').trim();
+  const legacyCapabilityQueryKey = String(context.getNodeParameter('semanticQueryKey', itemIndex, '') ?? '').trim();
+  const rawCapabilityQueryInput = mappedValue(context, itemIndex, 'semanticQueryInput');
+  const rawCapabilitySort = String(context.getNodeParameter('semanticSort', itemIndex, '') ?? '').trim();
+  const hasLegacyCapabilityConfiguration = legacyCapabilityQueryKey !== ''
+    || Object.keys(rawCapabilityQueryInput).length > 0
+    || rawCapabilitySort !== '';
+  const queryMode = configuredQueryMode || (hasLegacyCapabilityConfiguration ? 'capability' : 'standard');
+  const useStandardQuery = queryMode !== 'capability';
+  const useCapabilityQuery = queryMode === 'capability';
+  const search = useStandardQuery ? String(context.getNodeParameter('search', itemIndex, '')).trim() : '';
   const options = context.getNodeParameter('options', itemIndex, {}) as IDataObject;
-  const configuredSorts = context.getNodeParameter('sorts.sort', itemIndex, []) as QuerySort[];
-  const semanticSort = String(context.getNodeParameter('semanticSort', itemIndex, '') ?? '').trim();
-  const legacySortField = String(options.sortField ?? '').trim();
+  const configuredSorts = useStandardQuery
+    ? context.getNodeParameter('sorts.sort', itemIndex, []) as QuerySort[]
+    : [];
+  const semanticSort = useCapabilityQuery ? rawCapabilitySort : '';
+  const legacySortField = useStandardQuery ? String(options.sortField ?? '').trim() : '';
   const legacySortDirection = String(options.sortDirection ?? 'desc').trim();
   const configuredCursor = String(options.cursor ?? '').trim();
   const cursor = cursorOverride ?? configuredCursor;
-  const filters = context.getNodeParameter('filters.filter', itemIndex, []) as QueryFilter[];
+  const filters = useStandardQuery
+    ? context.getNodeParameter('filters.filter', itemIndex, []) as QueryFilter[]
+    : [];
 
   if (search) qs.q = search;
 
@@ -319,7 +333,9 @@ function queryParameters(
     if (field && value !== '') setFilter(field, operator, value);
   }
 
-  const typedFilters = context.getNodeParameter('filters', itemIndex, {}) as IDataObject;
+  const typedFilters = useStandardQuery
+    ? context.getNodeParameter('filters', itemIndex, {}) as IDataObject
+    : {};
   for (const row of (typedFilters.text ?? []) as Array<{ field?: unknown; value?: unknown }>) {
     const field = String(row.field ?? '').trim();
     if (field && row.value !== undefined && row.value !== '') setFilter(field, 'exact', String(row.value));
@@ -368,7 +384,12 @@ function queryParameters(
     if (value !== null) setQueryParameter(parameter, value);
   }
 
-  const localDateWindows = context.getNodeParameter('localDateWindows.window', itemIndex, []) as QueryLocalDateWindow[];
+  const localDateWindows = useStandardQuery
+  ? [
+      ...((typedFilters.localDateWindow ?? []) as QueryLocalDateWindow[]),
+      ...(context.getNodeParameter('localDateWindows.window', itemIndex, []) as QueryLocalDateWindow[]),
+    ]
+  : [];
   for (const row of localDateWindows) {
     const selector = decodeLocalDateWindowSelector(row.field);
     if (!selector) {
@@ -385,11 +406,11 @@ function queryParameters(
     if (timezone) setQueryParameter(selector.timezoneParameter, timezone);
   }
 
-  const semanticQueryInput = mappedValue(context, itemIndex, 'semanticQueryInput');
+  const semanticQueryInput = useCapabilityQuery ? rawCapabilityQueryInput : {};
   for (const [parameter, value] of Object.entries(semanticQueryInput)) {
     if (value === null || value === undefined || value === '') continue;
     if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
-      throw new NodeOperationError(context.getNode(), `Semantic Query parameter ${parameter} must be a scalar value`, { itemIndex });
+      throw new NodeOperationError(context.getNode(), `Capability Query parameter ${parameter} must be a scalar value`, { itemIndex });
     }
     setQueryParameter(parameter, value);
   }
@@ -785,14 +806,21 @@ export class LifeSpace implements INodeType {
         ] }],
       },
       {
-        displayName: 'Search', name: 'search', type: 'string', default: '',
-        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
-        description: 'Full-text search across fields declared searchable by LifeSpace. Leave empty to disable search.',
-      },
+      displayName: 'Query Mode Name or ID', name: 'queryMode', type: 'options', noDataExpression: true,
+      typeOptions: { loadOptionsMethod: 'getQueryModes', loadOptionsDependsOn: ['spaceId', 'recordType'] },
+      options: [], default: 'standard',
+      displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+      description: 'Standard Query is always available. Capability Query is offered only when the selected Record Type publishes a grouped capability query through Runtime Discovery. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+    },
+    {
+      displayName: 'Search', name: 'search', type: 'string', default: '',
+      displayOptions: { show: { resource: ['modelRecord'], operation: ['list'], queryMode: ['standard'] } },
+      description: 'Full-text search across fields declared searchable by LifeSpace. Leave empty to disable search.',
+    },
       {
         displayName: 'Filters', name: 'filters', type: 'fixedCollection', default: {},
         placeholder: 'Add Filter', typeOptions: { multipleValues: true },
-        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'], queryMode: ['standard'] } },
         options: [
           { displayName: 'Text Filter', name: 'text', values: [
             { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getTextFilterableFields', loadOptionsDependsOn: ['spaceId', 'recordType'] }, options: [], default: '', required: true },
@@ -826,6 +854,12 @@ export class LifeSpace implements INodeType {
             { displayName: 'Operator Name or ID', name: 'parameter', type: 'options', description: 'Uses the exact explicit comparison transport advertised by LifeSpace. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.', typeOptions: { loadOptionsMethod: 'getComparisonOperatorsForCurrentField', loadOptionsDependsOn: ['spaceId', 'recordType', '&field'] }, options: [], default: '', required: true },
             { displayName: 'Value', name: 'value', type: 'dateTime', default: '', required: true },
           ] },
+          { displayName: 'Local Date Window', name: 'localDateWindow', values: [
+      { displayName: 'Field Name or ID', name: 'field', type: 'options', typeOptions: { loadOptionsMethod: 'getLocalDateWindowFields', loadOptionsDependsOn: ['spaceId', 'recordType'] }, options: [], default: '', required: true, description: 'Choose a datetime field whose published Time Semantics includes a local-date-window transport. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.' },
+      { displayName: 'Start Date', name: 'dateStart', type: 'dateTime', default: '', required: true, description: 'Inclusive local calendar start date. The adapter sends YYYY-MM-DD and does not calculate UTC boundaries.' },
+      { displayName: 'End Date (Exclusive)', name: 'dateEndExclusive', type: 'dateTime', default: '', required: true, description: 'Exclusive local calendar end date' },
+      { displayName: 'Viewing Timezone', name: 'timezone', type: 'string', default: '', required: true, placeholder: 'Europe/Amsterdam', description: 'IANA timezone passed unchanged to LifeSpace Core' },
+    ] },
           { displayName: 'Person Filter', name: 'person', values: [
             { displayName: 'Field Name or ID', name: 'field', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getPersonFilterableFields', loadOptionsDependsOn: ['spaceId', 'recordType'] }, options: [], default: '', required: true },
             { displayName: 'Person Name or ID', name: 'target', type: 'options', description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>', typeOptions: { loadOptionsMethod: 'getRelationTargetsForCurrentField', loadOptionsDependsOn: ['spaceId', 'recordType', '&field'] }, options: [], default: '', required: true },
@@ -838,44 +872,34 @@ export class LifeSpace implements INodeType {
         ],
       },
       {
-        displayName: 'Local Date Windows', name: 'localDateWindows', type: 'fixedCollection', default: {},
-        placeholder: 'Add Local Date Window', typeOptions: { multipleValues: true },
-        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
-        options: [{ displayName: 'Window', name: 'window', values: [
-          { displayName: 'Field Name or ID', name: 'field', type: 'options', typeOptions: { loadOptionsMethod: 'getLocalDateWindowFields', loadOptionsDependsOn: ['spaceId', 'recordType'] }, options: [], default: '', required: true, description: 'Only datetime fields whose published comparison semantics include a local-date-window transport are offered. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.' },
-          { displayName: 'Start Date', name: 'dateStart', type: 'dateTime', default: '', required: true, description: 'Inclusive local calendar start date. The adapter submits YYYY-MM-DD and does not calculate UTC boundaries.' },
-          { displayName: 'End Date (Exclusive)', name: 'dateEndExclusive', type: 'dateTime', default: '', required: true, description: 'Exclusive local calendar end date' },
-          { displayName: 'Viewing Timezone', name: 'timezone', type: 'string', default: '', required: true, placeholder: 'Europe/Amsterdam', description: 'IANA timezone passed unchanged to LifeSpace Core' },
-        ] }],
-      },
-      {
-        displayName: 'Semantic Query Name or ID', name: 'semanticQueryKey', type: 'options',
-        typeOptions: { loadOptionsMethod: 'getCapabilityQueries', loadOptionsDependsOn: ['spaceId', 'recordType'] },
-        options: [], default: '',
-        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
-        description: 'Optional grouped capability query published by LifeSpace, for example Calendar Window. The adapter does not hard-code Event fields. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
-      },
-      {
-        displayName: 'Semantic Query Input', name: 'semanticQueryInput', type: 'resourceMapper',
-        default: { mappingMode: 'defineBelow', value: null }, noDataExpression: true,
-        typeOptions: {
-          loadOptionsDependsOn: ['spaceId', 'recordType', 'semanticQueryKey'],
-          resourceMapper: {
-            resourceMapperMethod: 'getSemanticQueryInputFields', mode: 'add',
-            fieldWords: { singular: 'parameter', plural: 'parameters' }, addAllFields: true, supportAutoMap: false,
-            noFieldsError: 'Choose a Semantic Query to load its LifeSpace-published parameters.',
-          },
+      displayName: 'Capability Query Name or ID', name: 'semanticQueryKey', type: 'options', noDataExpression: true,
+      typeOptions: { loadOptionsMethod: 'getCapabilityQueries', loadOptionsDependsOn: ['spaceId', 'recordType'] },
+      options: [], default: '', required: true,
+      displayOptions: { show: { resource: ['modelRecord'], operation: ['list'], queryMode: ['capability'] } },
+      description: 'Choose a grouped capability query published by the selected LifeSpace Record Type. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+    },
+    {
+      displayName: 'Capability Query Parameters', name: 'semanticQueryInput', type: 'resourceMapper',
+      default: { mappingMode: 'defineBelow', value: null }, noDataExpression: true,
+      typeOptions: {
+        loadOptionsDependsOn: ['spaceId', 'recordType', 'semanticQueryKey'],
+        resourceMapper: {
+          resourceMapperMethod: 'getSemanticQueryInputFields', mode: 'add',
+          fieldWords: { singular: 'query parameter', plural: 'query parameters' },
+          addAllFields: true, supportAutoMap: false,
+          noFieldsError: 'Choose a Capability Query to load its LifeSpace-published parameters.',
         },
-        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
-        description: 'Parameters are projected directly from query.capabilityQueries. Calendar local dates/timezone are sent to Core unchanged; Core owns overlap and DST semantics.',
       },
-      {
-        displayName: 'Semantic Sort Name or ID', name: 'semanticSort', type: 'options',
-        typeOptions: { loadOptionsMethod: 'getSemanticSorts', loadOptionsDependsOn: ['spaceId', 'recordType', 'semanticQueryKey'] },
-        options: [], default: '',
-        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
-        description: 'Optional capability-specific sort published with the selected Semantic Query. Do not combine with field Sorts. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
-      },
+      displayOptions: { show: { resource: ['modelRecord'], operation: ['list'], queryMode: ['capability'] } },
+      description: 'Parameters are projected directly from query.capabilityQueries. Local dates/timezone are sent to Core unchanged; Core owns overlap and DST semantics.',
+    },
+    {
+      displayName: 'Capability Sort Name or ID', name: 'semanticSort', type: 'options',
+      typeOptions: { loadOptionsMethod: 'getSemanticSorts', loadOptionsDependsOn: ['spaceId', 'recordType', 'semanticQueryKey'] },
+      options: [], default: '',
+      displayOptions: { show: { resource: ['modelRecord'], operation: ['list'], queryMode: ['capability'] } },
+      description: 'Optional capability-specific ordering published with the selected Capability Query. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+    },
       {
         displayName: 'Return All', name: 'returnAll', type: 'boolean', default: false,
         displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
@@ -890,7 +914,7 @@ export class LifeSpace implements INodeType {
       {
         displayName: 'Sorts', name: 'sorts', type: 'fixedCollection', default: {},
         placeholder: 'Add Sort', typeOptions: { multipleValues: true },
-        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'], queryMode: ['standard'] } },
         options: [{ displayName: 'Sort', name: 'sort', values: [
           { displayName: 'Field Name or ID', name: 'field', type: 'options', typeOptions: { loadOptionsMethod: 'getSortableFields' }, options: [], default: '', required: true, description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>' },
           { displayName: 'Direction', name: 'direction', type: 'options', options: [{ name: 'Ascending', value: 'asc' }, { name: 'Descending', value: 'desc' }], default: 'asc' },
@@ -1045,6 +1069,26 @@ export class LifeSpace implements INodeType {
             };
           });
       },
+      async getQueryModes(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+      const modes: INodePropertyOptions[] = [{
+        name: 'Standard Query',
+        value: 'standard',
+        description: 'Search, filters, comparisons, local-date windows, and generic sorting',
+      }];
+      try {
+        const selected = await optionModel(this);
+        if ((selected?.model.query.capabilityQueries ?? []).length > 0) {
+          modes.push({
+            name: 'Capability Query',
+            value: 'capability',
+            description: 'Use one grouped query contract published by a LifeSpace Capability',
+          });
+        }
+      } catch {
+        // Keep Standard Query available even when optional capability metadata cannot be loaded.
+      }
+      return modes;
+    },
       async getCapabilityQueries(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const selected = await optionModel(this);
         return (selected?.model.query.capabilityQueries ?? []).map((query) => ({

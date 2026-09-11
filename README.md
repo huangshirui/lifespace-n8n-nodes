@@ -74,16 +74,6 @@ Record Type is the LifeSpace `modelKey` (for example `task`). Design-time option
 
 Calendar-backed models use canonical `capabilityBindings.calendar` field roles instead of Event-specific field names while the node is being configured. Date-only values are normalized to `YYYY-MM-DD`. Create/Update execution does not fetch fresh semantic Discovery solely to produce an adapter-local Calendar conflict error; the canonical mutation goes directly to LifeSpace Core, which remains authoritative for Calendar validation and current authorization.
 
-## AI Agent Tool
-
-`LifeSpace Tool` is the metadata-driven AI Agent sub-node. Configure one fixed Space, Record Type and semantic operation per Tool instance, then connect multiple instances to the same n8n AI Agent. The Tool name, default description and structured AI input schema are generated from LifeSpace Progressive Runtime Discovery; hand-written descriptions are optional.
-
-- Query exposes published search/filter/comparison/local-date-window/sort/pagination semantics. Capability Query mode exposes only the capability-owned parameters and ordering that LifeSpace explicitly publishes; generic-facet composition stays narrowed until LifeSpace #228 defines it.
-- Create/Update schemas come from writable Model fields. Required fields with LifeSpace defaults are optional AI inputs, and fields the AI omits are absent from the outgoing request rather than synthesized as empty/null placeholders.
-- Delete and Action hide optimistic-concurrency `version` from the AI. The Adapter reads the current record version when required and Core remains the final authorization/concurrency/semantic authority.
-- No Task/Event/Wish-specific Tool nodes or field maps are shipped. New models become available through Discovery without source changes.
-- The ordinary `LifeSpace` workflow node remains `usableAsTool` for manually configured `$fromAI(...)` workflows, but `LifeSpace Tool` is the canonical path when the AI should receive the complete dynamic LifeSpace schema.
-
 ## LifeSpace contract compatibility
 
 This package follows the current LifeSpace Core Kernel `0.35.0` contract family. It consumes Runtime/Discovery semantics only; Eventing configuration and webhook delivery semantics are owned independently by Integration/Eventing `0.1.0`.
@@ -208,19 +198,17 @@ If a workflow intentionally needs to bind a known version, add **Concurrency Opt
 
 ### List / Query
 
-The normal UI supports:
+**Query Mode** separates ordinary Generic Query UX from capability-owned query semantics:
 
-- optional **Search**;
-- one or more typed **Filters**;
-- Discovery-driven explicit **Number Comparison** and **Date / Time Comparison** rows using the exact LifeSpace-published operator transport;
-- generic **Local Date Windows** for datetime fields advertised by Time Semantics, including envelope `createdAt` / `updatedAt`, with local dates + IANA timezone sent unchanged to Core;
-- optional grouped **Semantic Query** input generated from `query.capabilityQueries` (for example `calendar.window`) plus its published semantic ordering;
-- **Return All** to follow `nextCursor` automatically;
-- **Limit** when Return All is disabled.
+- **Standard Query** is always available and exposes optional **Search**, typed **Filters**, explicit **Number Comparison** / **Date / Time Comparison**, optional **Local Date Window** filter rows, and generic **Sorts**;
+- **Capability Query** is offered only when the selected Record Type publishes `query.capabilityQueries`; its selector, parameters, and ordering are loaded from Runtime Discovery;
+- **Return All** follows `nextCursor` automatically, while **Limit** bounds a single-page query.
 
-The adapter never derives explicit comparison parameter names from field naming and never converts local calendar windows to UTC. Those transport names and timezone/DST semantics come from LifeSpace Runtime Semantic Detail. Existing `exact/from/to` filters remain available as compatibility UI and preserve the legacy inclusive `To` behavior.
+Local-date windows are optional filter rows rather than an always-visible top-level control. The adapter sends published date-window parameter names and the IANA timezone unchanged; Core owns timezone/DST conversion. Existing `exact/from/to` filters preserve the legacy inclusive `To` behavior.
 
-Use **Sorts → Add Sort** to add zero or more sort criteria in priority order. Sortable model fields use authoritative `title` metadata from Runtime Discovery, while envelope fields such as `createdAt` / `updatedAt` are offered only when Discovery advertises them. Multiple criteria are sent as ordered repeated `sort=field:direction` query parameters.
+Generic Search/Filters/Sorts are intentionally hidden in Capability Query mode until LifeSpace publishes machine-readable facet-composability metadata. This prevents the adapter from guessing which generic parameters may be mixed with a grouped capability query.
+
+Use **Sorts → Add Sort** in Standard Query to add zero or more sort criteria in priority order. Sortable model fields use authoritative `title` metadata from Runtime Discovery, while envelope fields such as `createdAt` / `updatedAt` are offered only when Discovery advertises them. Multiple criteria are sent as ordered repeated `sort=field:direction` query parameters.
 
 Advanced **Options** contain manual **Cursor** as an escape hatch.
 

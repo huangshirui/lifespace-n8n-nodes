@@ -1,7 +1,6 @@
 import type {
   IExecuteFunctions,
   ILoadOptionsFunctions,
-  ISupplyDataFunctions,
   JsonObject,
 } from 'n8n-workflow';
 import { NodeApiError, NodeOperationError } from 'n8n-workflow';
@@ -150,25 +149,6 @@ export type DiscoveryCapabilityQuery = {
   };
 };
 
-export type DiscoveryQueryFilter = {
-  field: string;
-  parameter: string;
-  mode: 'exact' | 'enum-set';
-  range?: { fromParameter: string; toParameter: string };
-  acceptsCurrentActorPersonAlias?: 'me';
-};
-
-export type DiscoveryQuerySearch = {
-  parameter: string;
-  minLength: number;
-  maxLength: number;
-};
-
-export type DiscoveryQueryPagination = {
-  limit: { parameter: string; minimum: number; maximum: number; default: number };
-  cursor: { parameter: string; type: 'string' };
-};
-
 export type DiscoveryModel = {
   key: string;
   version: number;
@@ -182,8 +162,6 @@ export type DiscoveryModel = {
     searchable: string[];
     filterable: string[];
     sortable: string[];
-    search: DiscoveryQuerySearch | null;
-    filters: DiscoveryQueryFilter[];
     comparisons?: DiscoveryComparison[];
     capabilityQueries?: DiscoveryCapabilityQuery[];
     sort: {
@@ -194,10 +172,7 @@ export type DiscoveryModel = {
       maxCriteria: number;
       default: string[];
       envelopeFields: string[];
-      nullPlacement: 'last';
-      genericValues: string[];
     };
-    pagination: DiscoveryQueryPagination;
   };
   actions: DiscoveryAction[];
   capabilities?: string[];
@@ -284,8 +259,6 @@ type SemanticDetail = {
     searchable: string[];
     filterable: string[];
     sortable: string[];
-    search: DiscoveryQuerySearch | null;
-    filters: DiscoveryQueryFilter[];
     comparisons?: DiscoveryComparison[];
     capabilityQueries?: DiscoveryCapabilityQuery[];
     sort: {
@@ -296,10 +269,7 @@ type SemanticDetail = {
       maxCriteria: number;
       genericDefault: string[];
       envelopeFields: string[];
-      nullPlacement: 'last';
-      genericValues: string[];
     };
-    pagination: DiscoveryQueryPagination;
   };
   actions: DiscoveryAction[];
   capabilities: string[];
@@ -357,7 +327,7 @@ function apiUrl(baseUrl: string, path: string): string {
 }
 
 async function authenticatedGet<T>(
-  context: ILoadOptionsFunctions | IExecuteFunctions | ISupplyDataFunctions,
+  context: ILoadOptionsFunctions | IExecuteFunctions,
   baseUrl: string,
   path: string,
 ): Promise<T> {
@@ -432,8 +402,6 @@ function stubModel(identity: InventoryModel, access: DiscoveryAccess[]): Discove
       searchable: [],
       filterable: [],
       sortable: [],
-      search: null,
-      filters: [],
       comparisons: [],
       capabilityQueries: [],
       sort: {
@@ -444,12 +412,6 @@ function stubModel(identity: InventoryModel, access: DiscoveryAccess[]): Discove
         maxCriteria: 8,
         default: ['createdAt:desc'],
         envelopeFields: ['createdAt', 'updatedAt'],
-        nullPlacement: 'last',
-        genericValues: ['createdAt:asc', 'createdAt:desc', 'updatedAt:asc', 'updatedAt:desc'],
-      },
-      pagination: {
-        limit: { parameter: 'limit', minimum: 1, maximum: 200, default: 100 },
-        cursor: { parameter: 'cursor', type: 'string' },
       },
     },
     actions: identity.actions.map((action) => ({ ...action, input: { fields: [] } })),
@@ -472,8 +434,6 @@ function detailedModel(detail: SemanticDetail, access: DiscoveryAccess[]): Disco
       searchable: detail.query.searchable,
       filterable: detail.query.filterable,
       sortable: detail.query.sortable,
-      search: detail.query.search,
-      filters: detail.query.filters,
       comparisons: detail.query.comparisons ?? [],
       capabilityQueries: detail.query.capabilityQueries ?? [],
       sort: {
@@ -484,10 +444,7 @@ function detailedModel(detail: SemanticDetail, access: DiscoveryAccess[]): Disco
         maxCriteria: detail.query.sort.maxCriteria,
         default: detail.query.sort.genericDefault,
         envelopeFields: detail.query.sort.envelopeFields,
-        nullPlacement: detail.query.sort.nullPlacement,
-        genericValues: detail.query.sort.genericValues,
       },
-      pagination: detail.query.pagination,
     },
     actions: detail.actions,
     capabilities: detail.capabilities,
@@ -551,7 +508,7 @@ function cachedExecutionSemanticDetail(
 }
 
 async function requestProgressiveRuntimeDiscovery(
-  context: ILoadOptionsFunctions | IExecuteFunctions | ISupplyDataFunctions,
+  context: ILoadOptionsFunctions | IExecuteFunctions,
   baseUrl: string,
   selection?: DiscoverySelection,
 ): Promise<DiscoveryResponse | null> {
@@ -584,14 +541,7 @@ async function requestProgressiveRuntimeDiscovery(
       });
       try {
         const response = await authenticatedGet<SemanticDetailResponse>(context, baseUrl, path);
-        const detail = response.data;
-        if (!detail || detail.key !== selectedIdentity.key || detail.version !== selectedIdentity.version || detail.schemaHash !== selectedIdentity.schemaHash) {
-          throw new NodeOperationError(
-            context.getNode(),
-            `LifeSpace Runtime Discovery semantic detail identity drifted for ${selectedIdentity.key}`,
-          );
-        }
-        selectedDetail = detail;
+        selectedDetail = response.data;
       } catch (error) {
         throw new NodeApiError(context.getNode(), error as JsonObject);
       }
@@ -732,31 +682,6 @@ export async function loadExecutionRuntimeDiscovery(
     return cachedExecutionSemanticDetail(context, baseUrl, spaceId, modelKey);
   }
   return requestFullRuntimeDiscovery(context, baseUrl);
-}
-
-
-export async function loadAgentToolRuntimeDiscovery(
-  context: ISupplyDataFunctions,
-  baseUrl: string,
-  spaceId: string,
-  modelKey: string,
-): Promise<DiscoveryResponse> {
-  const progressive = await requestProgressiveRuntimeDiscovery(context, baseUrl, { spaceId, modelKey });
-  if (!progressive) {
-    throw new NodeOperationError(
-      context.getNode(),
-      'LifeSpace Tool requires Progressive Runtime Discovery from Core Kernel 0.35.0 or newer',
-    );
-  }
-  const space = discoverySpace(progressive, spaceId);
-  const model = discoveryModel(progressive, spaceId, modelKey);
-  if (!space || !model || !model.query.pagination || !Array.isArray(model.query.filters)) {
-    throw new NodeOperationError(
-      context.getNode(),
-      `LifeSpace Runtime Discovery did not return complete semantic detail for ${modelKey}`,
-    );
-  }
-  return progressive;
 }
 
 export function discoverySpace(discovery: DiscoveryResponse, spaceId: string): DiscoverySpace | undefined {
