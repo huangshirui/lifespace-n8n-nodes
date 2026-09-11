@@ -149,6 +149,25 @@ export type DiscoveryCapabilityQuery = {
   };
 };
 
+export type DiscoveryQueryFilter = {
+  field: string;
+  parameter: string;
+  mode: 'exact' | 'enum-set';
+  range?: { fromParameter: string; toParameter: string };
+  acceptsCurrentActorPersonAlias?: 'me';
+};
+
+export type DiscoveryQuerySearch = {
+  parameter: string;
+  minLength: number;
+  maxLength: number;
+};
+
+export type DiscoveryQueryPagination = {
+  limit: { parameter: string; minimum: number; maximum: number; default: number };
+  cursor: { parameter: string; type: 'string' };
+};
+
 export type DiscoveryModel = {
   key: string;
   version: number;
@@ -162,6 +181,8 @@ export type DiscoveryModel = {
     searchable: string[];
     filterable: string[];
     sortable: string[];
+    search: DiscoveryQuerySearch | null;
+    filters: DiscoveryQueryFilter[];
     comparisons?: DiscoveryComparison[];
     capabilityQueries?: DiscoveryCapabilityQuery[];
     sort: {
@@ -172,7 +193,10 @@ export type DiscoveryModel = {
       maxCriteria: number;
       default: string[];
       envelopeFields: string[];
+      nullPlacement: 'last';
+      genericValues: string[];
     };
+    pagination: DiscoveryQueryPagination;
   };
   actions: DiscoveryAction[];
   capabilities?: string[];
@@ -259,6 +283,8 @@ type SemanticDetail = {
     searchable: string[];
     filterable: string[];
     sortable: string[];
+    search: DiscoveryQuerySearch | null;
+    filters: DiscoveryQueryFilter[];
     comparisons?: DiscoveryComparison[];
     capabilityQueries?: DiscoveryCapabilityQuery[];
     sort: {
@@ -269,7 +295,10 @@ type SemanticDetail = {
       maxCriteria: number;
       genericDefault: string[];
       envelopeFields: string[];
+      nullPlacement: 'last';
+      genericValues: string[];
     };
+    pagination: DiscoveryQueryPagination;
   };
   actions: DiscoveryAction[];
   capabilities: string[];
@@ -402,6 +431,8 @@ function stubModel(identity: InventoryModel, access: DiscoveryAccess[]): Discove
       searchable: [],
       filterable: [],
       sortable: [],
+      search: null,
+      filters: [],
       comparisons: [],
       capabilityQueries: [],
       sort: {
@@ -412,6 +443,12 @@ function stubModel(identity: InventoryModel, access: DiscoveryAccess[]): Discove
         maxCriteria: 8,
         default: ['createdAt:desc'],
         envelopeFields: ['createdAt', 'updatedAt'],
+        nullPlacement: 'last',
+        genericValues: ['createdAt:asc', 'createdAt:desc', 'updatedAt:asc', 'updatedAt:desc'],
+      },
+      pagination: {
+        limit: { parameter: 'limit', minimum: 1, maximum: 200, default: 100 },
+        cursor: { parameter: 'cursor', type: 'string' },
       },
     },
     actions: identity.actions.map((action) => ({ ...action, input: { fields: [] } })),
@@ -434,6 +471,8 @@ function detailedModel(detail: SemanticDetail, access: DiscoveryAccess[]): Disco
       searchable: detail.query.searchable,
       filterable: detail.query.filterable,
       sortable: detail.query.sortable,
+      search: detail.query.search,
+      filters: detail.query.filters,
       comparisons: detail.query.comparisons ?? [],
       capabilityQueries: detail.query.capabilityQueries ?? [],
       sort: {
@@ -444,7 +483,10 @@ function detailedModel(detail: SemanticDetail, access: DiscoveryAccess[]): Disco
         maxCriteria: detail.query.sort.maxCriteria,
         default: detail.query.sort.genericDefault,
         envelopeFields: detail.query.sort.envelopeFields,
+        nullPlacement: detail.query.sort.nullPlacement,
+        genericValues: detail.query.sort.genericValues,
       },
+      pagination: detail.query.pagination,
     },
     actions: detail.actions,
     capabilities: detail.capabilities,
@@ -541,7 +583,14 @@ async function requestProgressiveRuntimeDiscovery(
       });
       try {
         const response = await authenticatedGet<SemanticDetailResponse>(context, baseUrl, path);
-        selectedDetail = response.data;
+        const detail = response.data;
+        if (!detail || detail.key !== selectedIdentity.key || detail.version !== selectedIdentity.version || detail.schemaHash !== selectedIdentity.schemaHash) {
+          throw new NodeOperationError(
+            context.getNode(),
+            `LifeSpace Runtime Discovery semantic detail identity drifted for ${selectedIdentity.key}`,
+          );
+        }
+        selectedDetail = detail;
       } catch (error) {
         throw new NodeApiError(context.getNode(), error as JsonObject);
       }
@@ -683,6 +732,8 @@ export async function loadExecutionRuntimeDiscovery(
   }
   return requestFullRuntimeDiscovery(context, baseUrl);
 }
+
+
 
 export function discoverySpace(discovery: DiscoveryResponse, spaceId: string): DiscoverySpace | undefined {
   return discovery.data.spaces.find((space) => space.spaceId === spaceId);
