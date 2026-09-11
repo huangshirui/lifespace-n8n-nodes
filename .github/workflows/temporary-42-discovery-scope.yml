@@ -1,0 +1,57 @@
+name: Temporary #42 discovery scope correction
+
+on:
+  push:
+    branches:
+      - fix/42-0.1.8-query-tool-regression
+
+jobs:
+  correct:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24.20.0'
+          package-manager-cache: false
+      - name: Preserve Discovery hardening and remove only Tool-specific path
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout origin/main -- nodes/lifespaceDiscovery.ts
+          python <<'PY'
+          from pathlib import Path
+
+          p = Path('nodes/lifespaceDiscovery.ts')
+          s = p.read_text()
+          s = s.replace('  ISupplyDataFunctions,\n', '')
+          s = s.replace('ILoadOptionsFunctions | IExecuteFunctions | ISupplyDataFunctions', 'ILoadOptionsFunctions | IExecuteFunctions')
+
+          start = s.find('\nexport async function loadAgentToolRuntimeDiscovery(')
+          if start < 0:
+              raise SystemExit('loadAgentToolRuntimeDiscovery start not found')
+          end = s.find('\nexport function discoverySpace(', start)
+          if end < 0:
+              raise SystemExit('loadAgentToolRuntimeDiscovery end not found')
+          s = s[:start] + '\n' + s[end:]
+          p.write_text(s)
+          PY
+
+          rm .github/workflows/temporary-42-discovery-scope.yml
+          npm install --global npm@11.15.0
+          npm ci
+          npm run lint:fix
+          npm run lint
+          npm test
+          git diff --check
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: preserve progressive Discovery hardening"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
