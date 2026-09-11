@@ -1,0 +1,469 @@
+name: Temporary #42 regression refactor
+
+on:
+  push:
+    branches:
+      - fix/42-0.1.8-query-tool-regression
+
+jobs:
+  refactor:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24.20.0'
+          package-manager-cache: false
+      - name: Apply #42 architecture correction
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Restore the pre-#40 thin-adapter files. Time Semantics in LifeSpace.node.ts
+          # is retained and reshaped below instead of rolled back.
+          git checkout 08ba83fa9deeed6037e6bb3d8a96c523ac4ba634 -- README.md nodes/lifespaceDiscovery.ts
+          git rm -r nodes/LifeSpaceTool nodes/agent/lifeSpaceToolFactory.ts test/agent-tool-source-contract.test.mjs test/agent-tool.test.mjs
+
+          python <<'PY'
+          from pathlib import Path
+          import json
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly one match, found {count}')
+              return text.replace(old, new, 1)
+
+          path = Path('nodes/LifeSpace/LifeSpace.node.ts')
+          text = path.read_text()
+
+          old = """  const qs: IDataObject = {};
+          const search = String(context.getNodeParameter('search', itemIndex, '')).trim();
+          const options = context.getNodeParameter('options', itemIndex, {}) as IDataObject;
+          const configuredSorts = context.getNodeParameter('sorts.sort', itemIndex, []) as QuerySort[];
+          const semanticSort = String(context.getNodeParameter('semanticSort', itemIndex, '') ?? '').trim();
+          const legacySortField = String(options.sortField ?? '').trim();
+          const legacySortDirection = String(options.sortDirection ?? 'desc').trim();
+          const configuredCursor = String(options.cursor ?? '').trim();
+          const cursor = cursorOverride ?? configuredCursor;
+          const filters = context.getNodeParameter('filters.filter', itemIndex, []) as QueryFilter[];
+          """
+          new = """  const qs: IDataObject = {};
+          const configuredQueryMode = String(context.getNodeParameter('queryMode', itemIndex, '') ?? '').trim();
+          const legacyCapabilityQueryKey = String(context.getNodeParameter('semanticQueryKey', itemIndex, '') ?? '').trim();
+          const queryMode = configuredQueryMode || (legacyCapabilityQueryKey ? 'capability' : 'standard');
+          const useStandardQuery = queryMode !== 'capability';
+          const useCapabilityQuery = queryMode === 'capability';
+          const search = useStandardQuery ? String(context.getNodeParameter('search', itemIndex, '')).trim() : '';
+          const options = context.getNodeParameter('options', itemIndex, {}) as IDataObject;
+          const configuredSorts = useStandardQuery
+            ? context.getNodeParameter('sorts.sort', itemIndex, []) as QuerySort[]
+            : [];
+          const semanticSort = useCapabilityQuery
+            ? String(context.getNodeParameter('semanticSort', itemIndex, '') ?? '').trim()
+            : '';
+          const legacySortField = useStandardQuery ? String(options.sortField ?? '').trim() : '';
+          const legacySortDirection = String(options.sortDirection ?? 'desc').trim();
+          const configuredCursor = String(options.cursor ?? '').trim();
+          const cursor = cursorOverride ?? configuredCursor;
+          const filters = useStandardQuery
+            ? context.getNodeParameter('filters.filter', itemIndex, []) as QueryFilter[]
+            : [];
+          """
+          text = replace_once(text, old, new, 'query mode execution prelude')
+
+          text = replace_once(
+              text,
+              "  const typedFilters = context.getNodeParameter('filters', itemIndex, {}) as IDataObject;",
+              "  const typedFilters = useStandardQuery\n    ? context.getNodeParameter('filters', itemIndex, {}) as IDataObject\n    : {};",
+              'standard-query filter gate',
+          )
+
+          old = """  const localDateWindows = context.getNodeParameter('localDateWindows.window', itemIndex, []) as QueryLocalDateWindow[];
+          for (const row of localDateWindows) {
+          """
+          new = """  const localDateWindows = useStandardQuery
+            ? [
+                ...((typedFilters.localDateWindow ?? []) as QueryLocalDateWindow[]),
+                ...(context.getNodeParameter('localDateWindows.window', itemIndex, []) as QueryLocalDateWindow[]),
+              ]
+            : [];
+          for (const row of localDateWindows) {
+          """
+          text = replace_once(text, old, new, 'local-date-window filter projection')
+
+          text = replace_once(
+              text,
+              "  const semanticQueryInput = mappedValue(context, itemIndex, 'semanticQueryInput');",
+              "  const semanticQueryInput = useCapabilityQuery\n    ? mappedValue(context, itemIndex, 'semanticQueryInput')\n    : {};",
+              'capability-query execution gate',
+          )
+          text = text.replace('Semantic Query parameter ${parameter} must be a scalar value', 'Capability Query parameter ${parameter} must be a scalar value')
+
+          search_block = """      {
+                displayName: 'Search', name: 'search', type: 'string', default: '',
+                displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+                description: 'Full-text search across fields declared searchable by LifeSpace. Leave empty to disable search.',
+              },
+          """
+          query_mode_and_search = """      {
+                displayName: 'Query Mode', name: 'queryMode', type: 'options', noDataExpression: true,
+                typeOptions: { loadOptionsMethod: 'getQueryModes', loadOptionsDependsOn: ['spaceId', 'recordType'] },
+                options: [], default: 'standard',
+                displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+                description: 'Standard Query is always available. Capability Query is offered only when the selected Record Type publishes a grouped capability query through Runtime Discovery.',
+              },
+              {
+                displayName: 'Search', name: 'search', type: 'string', default: '',
+                displayOptions: { show: { resource: ['modelRecord'], operation: ['list'], queryMode: ['standard'] } },
+                description: 'Full-text search across fields declared searchable by LifeSpace. Leave empty to disable search.',
+              },
+          """
+          text = replace_once(text, search_block, query_mode_and_search, 'query mode UI')
+
+          text = replace_once(
+              text,
+              "        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },\n        options: [\n          { displayName: 'Text Filter'",
+              "        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'], queryMode: ['standard'] } },\n        options: [\n          { displayName: 'Text Filter'",
+              'standard filter UI gate',
+          )
+
+          person_marker = """          { displayName: 'Person Filter', name: 'person', values: [
+          """
+          local_filter = """          { displayName: 'Local Date Window', name: 'localDateWindow', values: [
+                { displayName: 'Field Name or ID', name: 'field', type: 'options', typeOptions: { loadOptionsMethod: 'getLocalDateWindowFields', loadOptionsDependsOn: ['spaceId', 'recordType'] }, options: [], default: '', required: true, description: 'Choose a datetime field whose published Time Semantics includes a local-date-window transport. This filter is optional and appears only after you add it.' },
+                { displayName: 'Start Date', name: 'dateStart', type: 'dateTime', default: '', required: true, description: 'Inclusive local calendar start date. The adapter submits YYYY-MM-DD and does not calculate UTC boundaries.' },
+                { displayName: 'End Date (Exclusive)', name: 'dateEndExclusive', type: 'dateTime', default: '', required: true, description: 'Exclusive local calendar end date.' },
+                { displayName: 'Viewing Timezone', name: 'timezone', type: 'string', default: '', required: true, placeholder: 'Europe/Amsterdam', description: 'IANA timezone passed unchanged to LifeSpace Core.' },
+              ] },
+              { displayName: 'Person Filter', name: 'person', values: [
+          """
+          text = replace_once(text, person_marker, local_filter, 'nested local-date-window filter')
+
+          start_marker = """      {
+                displayName: 'Local Date Windows', name: 'localDateWindows', type: 'fixedCollection', default: {},
+          """
+          next_marker = """      {
+                displayName: 'Semantic Query Name or ID', name: 'semanticQueryKey', type: 'options',
+          """
+          start = text.find(start_marker)
+          end = text.find(next_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit('top-level local date window block not found')
+          text = text[:start] + text[end:]
+
+          text = replace_once(
+              text,
+              """        displayName: 'Semantic Query Name or ID', name: 'semanticQueryKey', type: 'options',
+                typeOptions: { loadOptionsMethod: 'getCapabilityQueries', loadOptionsDependsOn: ['spaceId', 'recordType'] },
+                options: [], default: '',
+                displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+                description: 'Optional grouped capability query published by LifeSpace, for example Calendar Window. The adapter does not hard-code Event fields. Choose from the list, or specify an ID using an <a href=\"https://docs.n8n.io/code/expressions/\">expression</a>.',
+          """,
+              """        displayName: 'Capability Query Name or ID', name: 'semanticQueryKey', type: 'options', noDataExpression: true,
+                typeOptions: { loadOptionsMethod: 'getCapabilityQueries', loadOptionsDependsOn: ['spaceId', 'recordType'] },
+                options: [], default: '', required: true,
+                displayOptions: { show: { resource: ['modelRecord'], operation: ['list'], queryMode: ['capability'] } },
+                description: 'Choose a grouped capability query published by the selected LifeSpace Record Type. The adapter does not hard-code model names.',
+          """,
+              'capability query selector UI',
+          )
+
+          text = replace_once(text, "displayName: 'Semantic Query Input', name: 'semanticQueryInput'", "displayName: 'Capability Query Parameters', name: 'semanticQueryInput'", 'capability query input label')
+          text = replace_once(text, "noFieldsError: 'Choose a Semantic Query to load its LifeSpace-published parameters.'", "noFieldsError: 'Choose a Capability Query to load its LifeSpace-published parameters.'", 'capability mapper empty state')
+          text = replace_once(
+              text,
+              "        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },\n        description: 'Parameters are projected directly from query.capabilityQueries. Calendar local dates/timezone are sent to Core unchanged; Core owns overlap and DST semantics.',",
+              "        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'], queryMode: ['capability'] } },\n        description: 'Parameters are projected directly from query.capabilityQueries. Calendar local dates/timezone are sent to Core unchanged; Core owns overlap and DST semantics.',",
+              'capability mapper UI gate',
+          )
+          text = replace_once(text, "displayName: 'Semantic Sort Name or ID', name: 'semanticSort'", "displayName: 'Capability Sort Name or ID', name: 'semanticSort'", 'capability sort label')
+          text = replace_once(
+              text,
+              "        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },\n        description: 'Optional capability-specific sort published with the selected Semantic Query. Do not combine with field Sorts. Choose from the list, or specify an ID using an <a href=\"https://docs.n8n.io/code/expressions/\">expression</a>.',",
+              "        displayOptions: { show: { resource: ['modelRecord'], operation: ['list'], queryMode: ['capability'] } },\n        description: 'Optional capability-specific sort published with the selected Capability Query.',",
+              'capability sort UI gate',
+          )
+
+          # The remaining occurrence belongs to generic Sorts and should only be visible in Standard Query mode.
+          sorts_marker = """      {
+                displayName: 'Sorts', name: 'sorts', type: 'fixedCollection', default: {},
+                placeholder: 'Add Sort', typeOptions: { multipleValues: true },
+                displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+          """
+          sorts_new = sorts_marker.replace("operation: ['list'] }", "operation: ['list'], queryMode: ['standard'] }")
+          text = replace_once(text, sorts_marker, sorts_new, 'standard sort UI gate')
+
+          methods_marker = """      async getCapabilityQueries(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+          """
+          query_modes = """      async getQueryModes(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+                const modes: INodePropertyOptions[] = [{
+                  name: 'Standard Query',
+                  value: 'standard',
+                  description: 'Search, filters, comparisons, local-date windows, and generic sorting',
+                }];
+                try {
+                  const selected = await optionModel(this);
+                  if ((selected?.model.query.capabilityQueries ?? []).length > 0) {
+                    modes.push({
+                      name: 'Capability Query',
+                      value: 'capability',
+                      description: 'Use one grouped query contract published by a LifeSpace Capability',
+                    });
+                  }
+                } catch {
+                  // Standard Query remains usable even when optional capability metadata cannot be loaded.
+                }
+                return modes;
+              },
+              async getCapabilityQueries(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+          """
+          text = replace_once(text, methods_marker, query_modes, 'query-mode loadOptions method')
+          path.write_text(text)
+
+          # Remove the separately registered native sub-node while keeping the normal
+          # LifeSpace node usableAsTool, which is n8n's standard node-as-tool path.
+          package_path = Path('package.json')
+          package = json.loads(package_path.read_text())
+          package['n8n']['nodes'] = [entry for entry in package['n8n']['nodes'] if 'LifeSpaceTool' not in entry]
+          package_path.write_text(json.dumps(package, indent=2) + '\n')
+
+          source_test = Path('test/source-contract.test.mjs')
+          source = source_test.read_text()
+          source = replace_once(
+              source,
+              "  assert.equal((node.match(/noDataExpression: true/gu) ?? []).length, 6);\n",
+              "  assert.match(node, /name: 'queryMode'[\\s\\S]{0,160}noDataExpression: true/u);\n",
+              'source-contract structural control assertion',
+          )
+          source_test.write_text(source)
+
+          time_test = Path('test/time-query-semantics.test.mjs')
+          time = time_test.read_text()
+          time = replace_once(
+              time,
+              "    resource: 'modelRecord', operation: 'list', spaceId: 'spc_test', recordType: 'event', search: '',\n",
+              "    resource: 'modelRecord', operation: 'list', spaceId: 'spc_test', recordType: 'event', queryMode: 'standard', search: '',\n",
+              'time-test query mode default',
+          )
+          time = replace_once(
+              time,
+              "    'localDateWindows.window': [{\n      field: createdAt.value,\n      dateStart: '2026-09-10T00:00:00.000+02:00',\n      dateEndExclusive: '2026-09-11T00:00:00.000+02:00',\n      timezone: 'Europe/Amsterdam',\n    }],\n",
+              "    filters: { localDateWindow: [{\n      field: createdAt.value,\n      dateStart: '2026-09-10T00:00:00.000+02:00',\n      dateEndExclusive: '2026-09-11T00:00:00.000+02:00',\n      timezone: 'Europe/Amsterdam',\n    }] },\n",
+              'time-test nested local date window',
+          )
+          time = replace_once(
+              time,
+              "  const context = executeContext(baseListParameters({\n    'semanticQueryInput.value': {\n",
+              "  const context = executeContext(baseListParameters({\n    queryMode: 'capability',\n    semanticQueryKey: 'calendar.window',\n    'semanticQueryInput.value': {\n",
+              'time-test capability mode',
+          )
+          time_test.write_text(time)
+
+          regression = r"""import assert from 'node:assert/strict';
+          import { createRequire } from 'node:module';
+          import { readFile } from 'node:fs/promises';
+          import test from 'node:test';
+
+          const require = createRequire(import.meta.url);
+          const { LifeSpace } = require('../dist/nodes/LifeSpace/LifeSpace.node.js');
+
+          function property(node, name) {
+            const value = node.description.properties.find((entry) => entry.name === name);
+            assert.ok(value, `missing parameter ${name}`);
+            return value;
+          }
+
+          function detail(modelKey, capabilityQueries = []) {
+            return {
+              data: {
+                key: modelKey,
+                version: 1,
+                schemaHash: `sha256:${modelKey}`,
+                display: { singular: modelKey, plural: `${modelKey}s` },
+                description: null,
+                declaredAccess: ['read', 'write'],
+                fields: [],
+                defaults: {},
+                query: {
+                  searchable: [],
+                  filterable: [],
+                  sortable: [],
+                  search: null,
+                  filters: [],
+                  comparisons: [],
+                  capabilityQueries,
+                  sort: {
+                    parameter: 'sort', syntax: 'field:direction', repeatable: true, ordered: true,
+                    maxCriteria: 8, genericDefault: ['createdAt:desc'],
+                    envelopeFields: ['createdAt', 'updatedAt'], nullPlacement: 'last',
+                    genericValues: ['createdAt:asc', 'createdAt:desc', 'updatedAt:asc', 'updatedAt:desc'],
+                  },
+                  pagination: {
+                    limit: { parameter: 'limit', minimum: 1, maximum: 200, default: 100 },
+                    cursor: { parameter: 'cursor', type: 'string' },
+                  },
+                },
+                actions: [],
+                capabilities: capabilityQueries.length ? ['calendar'] : [],
+                capabilityBindings: {},
+              },
+            };
+          }
+
+          function optionContext(modelKey, capabilityQueries = []) {
+            const inventory = {
+              data: {
+                semanticDetailPathTemplate: '/api/v1/spaces/{spaceId}/_discovery/models/{modelKey}',
+                models: [{
+                  key: modelKey,
+                  version: 1,
+                  schemaHash: `sha256:${modelKey}`,
+                  display: { singular: modelKey, plural: `${modelKey}s` },
+                  capabilities: capabilityQueries.length ? ['calendar'] : [],
+                  actions: [],
+                }],
+                spaces: [{
+                  spaceId: 'spc_test',
+                  spaceName: 'Test Space',
+                  models: [{ modelKey, access: ['read', 'write'] }],
+                }],
+              },
+            };
+            const parameters = { spaceId: 'spc_test', recordType: modelKey, operation: 'list' };
+            return {
+              getCredentials: async () => ({ baseUrl: 'https://example.invalid/api/v1' }),
+              getNode: () => ({ name: 'LifeSpace' }),
+              getNodeParameter(name, fallback) {
+                return Object.prototype.hasOwnProperty.call(parameters, name) ? parameters[name] : fallback;
+              },
+              getCurrentNodeParameter(name) {
+                return Object.prototype.hasOwnProperty.call(parameters, name) ? parameters[name] : undefined;
+              },
+              helpers: {
+                async httpRequestWithAuthentication(_credentialName, options) {
+                  if (options.url.endsWith('/me/_discovery/inventory')) return inventory;
+                  if (options.url.endsWith(`/spaces/spc_test/_discovery/models/${modelKey}`)) return detail(modelKey, capabilityQueries);
+                  throw new Error(`Unexpected request ${options.method} ${options.url}`);
+                },
+              },
+            };
+          }
+
+          test('normal LifeSpace node is the single Agent Tool surface and keeps AI-fillable runtime selectors', async () => {
+            const node = new LifeSpace();
+            assert.equal(node.description.usableAsTool, true);
+            assert.notEqual(property(node, 'resource').noDataExpression, undefined);
+            assert.notEqual(property(node, 'operation').noDataExpression, undefined);
+            assert.equal(property(node, 'spaceId').noDataExpression, undefined);
+            assert.equal(property(node, 'recordType').noDataExpression, undefined);
+            assert.equal(property(node, 'recordId').noDataExpression, undefined);
+
+            const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+            assert.deepEqual(packageJson.n8n.nodes, [
+              'dist/nodes/LifeSpace/LifeSpace.node.js',
+              'dist/nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.js',
+            ]);
+          });
+
+          test('List Query has no permanently exposed empty Time or Capability controls', () => {
+            const node = new LifeSpace();
+            const names = node.description.properties.map((entry) => entry.name);
+            assert.equal(names.includes('localDateWindows'), false);
+
+            const queryMode = property(node, 'queryMode');
+            assert.equal(queryMode.noDataExpression, true);
+            assert.equal(queryMode.default, 'standard');
+
+            const filters = property(node, 'filters');
+            assert.ok(filters.options.some((entry) => entry.name === 'localDateWindow'));
+
+            const capabilityQuery = property(node, 'semanticQueryKey');
+            assert.equal(capabilityQuery.displayName, 'Capability Query Name or ID');
+            assert.deepEqual(capabilityQuery.displayOptions.show.queryMode, ['capability']);
+            assert.equal(capabilityQuery.required, true);
+
+            const capabilityInput = property(node, 'semanticQueryInput');
+            assert.deepEqual(capabilityInput.displayOptions.show.queryMode, ['capability']);
+            const capabilitySort = property(node, 'semanticSort');
+            assert.deepEqual(capabilitySort.displayOptions.show.queryMode, ['capability']);
+
+            assert.deepEqual(property(node, 'search').displayOptions.show.queryMode, ['standard']);
+            assert.deepEqual(filters.displayOptions.show.queryMode, ['standard']);
+            assert.deepEqual(property(node, 'sorts').displayOptions.show.queryMode, ['standard']);
+          });
+
+          test('Capability Query mode is advertised only when Discovery actually publishes one', async () => {
+            const node = new LifeSpace();
+            const ordinaryModes = await node.methods.loadOptions.getQueryModes.call(optionContext('task'));
+            assert.deepEqual(ordinaryModes.map((entry) => entry.value), ['standard']);
+
+            const calendarWindow = {
+              key: 'calendar.window',
+              capability: 'calendar',
+              semantics: 'record-interval-overlap',
+              recurrenceExpansion: false,
+              parameters: [
+                { parameter: 'windowStartDate', type: 'date', required: true, role: 'window-start-date' },
+                { parameter: 'windowEndDateExclusive', type: 'date', required: true, role: 'window-end-date-exclusive' },
+                { parameter: 'viewingTimezone', type: 'timezone', required: true, role: 'viewing-timezone' },
+              ],
+              ordering: { parameter: 'sort', values: ['calendarStart:asc'], default: 'calendarStart:asc' },
+            };
+            const calendarModes = await node.methods.loadOptions.getQueryModes.call(optionContext('event', [calendarWindow]));
+            assert.deepEqual(calendarModes.map((entry) => entry.value), ['standard', 'capability']);
+          });
+          """
+          Path('test/query-ui-regression.test.mjs').write_text(regression)
+
+          readme = Path('README.md').read_text()
+          old_docs = """The normal UI supports:
+
+          - optional **Search**;
+          - one or more typed **Filters**;
+          - Discovery-driven explicit **Number Comparison** and **Date / Time Comparison** rows using the exact LifeSpace-published operator transport;
+          - generic **Local Date Windows** for datetime fields advertised by Time Semantics, including envelope `createdAt` / `updatedAt`, with local dates + IANA timezone sent unchanged to Core;
+          - optional grouped **Semantic Query** input generated from `query.capabilityQueries` (for example `calendar.window`) plus its published semantic ordering;
+          - **Return All** to follow `nextCursor` automatically;
+          - **Limit** when Return All is disabled.
+
+          The adapter never derives explicit comparison parameter names from field naming and never converts local calendar windows to UTC. Those transport names and timezone/DST semantics come from LifeSpace Runtime Semantic Detail. Existing `exact/from/to` filters remain available as compatibility UI and preserve the legacy inclusive `To` behavior.
+
+          Use **Sorts → Add Sort** to add zero or more sort criteria in priority order. Sortable model fields use authoritative `title` metadata from Runtime Discovery, while envelope fields such as `createdAt` / `updatedAt` are offered only when Discovery advertises them. Multiple criteria are sent as ordered repeated `sort=field:direction` query parameters.
+          """
+          new_docs = """**Query Mode** keeps ordinary Generic Query UX separate from capability-owned query semantics:
+
+          - **Standard Query** is always available and exposes optional **Search**, typed **Filters**, explicit **Number Comparison** / **Date / Time Comparison**, optional **Local Date Window** filters, and generic **Sorts**;
+          - **Capability Query** is offered only when the selected Record Type actually publishes `query.capabilityQueries`; its selector, parameters, and ordering are then loaded from Runtime Discovery;
+          - **Return All** follows `nextCursor` automatically, while **Limit** bounds a single-page query.
+
+          Local-date windows are optional filter rows rather than an always-visible top-level control. The adapter sends the published date-window parameter names and IANA timezone unchanged; Core owns timezone/DST conversion. Existing `exact/from/to` filters preserve the legacy inclusive `To` behavior.
+
+          Generic Search/Filters/Sorts are intentionally hidden in Capability Query mode until LifeSpace publishes machine-readable facet-composability metadata. This prevents adapters from guessing which generic parameters may be mixed with a grouped capability query.
+
+          Use **Sorts → Add Sort** in Standard Query to add zero or more sort criteria in priority order. Sortable model fields use authoritative `title` metadata from Runtime Discovery, while envelope fields such as `createdAt` / `updatedAt` are offered only when Discovery advertises them. Multiple criteria are sent as ordered repeated `sort=field:direction` query parameters.
+          """
+          if old_docs not in readme:
+              raise SystemExit('README List/Query block not found')
+          Path('README.md').write_text(readme.replace(old_docs, new_docs, 1))
+          PY
+
+          npm version 0.1.8 --no-git-tag-version --allow-same-version
+          rm .github/workflows/temporary-42-refactor.yml
+
+          npm install --global npm@11.15.0
+          npm ci
+          npm run lint
+          npm test
+          git diff --check
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: restore usable LifeSpace query and Agent Tool UX"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
