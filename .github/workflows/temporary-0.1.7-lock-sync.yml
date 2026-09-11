@@ -3,7 +3,7 @@ name: Temporary 0.1.7 lock sync
 on:
   push:
     branches:
-      - main
+      - fix/release-0.1.7-version
 
 jobs:
   sync:
@@ -17,14 +17,13 @@ jobs:
         with:
           node-version: '24.20.0'
           package-manager-cache: false
-      - name: Sync lockfile and self-remove
+      - name: Sync lockfile
         shell: bash
         run: |
           set -euo pipefail
           npm version 0.1.7 --no-git-tag-version --allow-same-version
-          git rm .github/workflows/temporary-0.1.7-lock-sync.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json
           git commit -m "chore: sync 0.1.7 package metadata"
-          git push origin HEAD:main
+          git push origin "HEAD:${GITHUB_REF_NAME}"
