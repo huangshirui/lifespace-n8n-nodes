@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import test from 'node:test';
 
 const require = createRequire(import.meta.url);
-const { LifeSpaceTool } = require('../dist/nodes/LifeSpaceTool/LifeSpaceTool.node.js');
+const { LifeSpaceTool } = require('../dist/nodes/agent/LifeSpaceAgentToolBase.js');
 const {
   buildAgentToolDefinition,
   buildAgentToolRequest,
