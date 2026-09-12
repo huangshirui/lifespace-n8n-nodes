@@ -5,7 +5,7 @@ import type {
   SupplyData,
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
-import { LifeSpaceTool } from '../LifeSpaceTool/LifeSpaceTool.node';
+import { LifeSpaceTool } from '../agent/LifeSpaceAgentToolBase';
 import {
   buildAgentToolDefinition,
   type AgentToolConfig,
