@@ -28,6 +28,7 @@ import {
   queryPredicates,
   type QueryPredicate,
 } from '../shared/lifeSpaceQuerySemantics';
+import { projectLifeSpaceHttpError } from './lifeSpaceErrorProjection';
 
 function mapperType(field: DiscoveryField | undefined, valueType?: QueryPredicate['valueType']): FieldType {
   const type = valueType ?? field?.type ?? 'string';
@@ -41,6 +42,12 @@ function mapperType(field: DiscoveryField | undefined, valueType?: QueryPredicat
 
 function hasServerDefault(model: DiscoveryModel, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(model.defaults ?? {}, key);
+}
+
+function serverDefaultHint(value: unknown): string {
+  if (value === null) return 'null';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return 'set by LifeSpace';
 }
 
 async function selectedModel(context: ILoadOptionsFunctions): Promise<{ model: DiscoveryModel; spaceId: string } | null> {
@@ -61,10 +68,12 @@ function mapperField(
   id: string,
   required: boolean,
   options?: INodePropertyOptions[],
+  defaultHint?: string,
 ): ResourceMapperField {
+  const label = field.title?.trim() || field.key;
   return {
     id,
-    displayName: field.title?.trim() || field.key,
+    displayName: defaultHint === undefined ? label : `${label} (default: ${defaultHint})`,
     required,
     defaultMatch: false,
     canBeUsedToMatch: false,
@@ -88,15 +97,23 @@ export async function getHumanRecordFields(this: ILoadOptionsFunctions): Promise
     if (field.relation?.lookup.supported && field.relation.cardinality === 'one') {
       options = relationOptions(await loadRelationTargets(this, selected.spaceId, selected.model.key, field));
     }
+    const defaultExists = operation === 'create' && hasServerDefault(selected.model, field.key);
     result.push(mapperField(
       field,
       mutationFieldSelector(field),
-      operation === 'create' && field.required === true && !hasServerDefault(selected.model, field.key),
+      operation === 'create' && field.required === true && !defaultExists,
       options,
+      defaultExists ? serverDefaultHint(selected.model.defaults[field.key]) : undefined,
     ));
   }
 
-  return { fields: result };
+  if (operation !== 'create') return { fields: result };
+  return {
+    fields: [
+      ...result.filter((field) => field.required),
+      ...result.filter((field) => !field.required),
+    ],
+  };
 }
 
 function predicateLabel(predicate: QueryPredicate): string {
@@ -137,10 +154,17 @@ function dateOnly(value: IDataObject[string]): IDataObject[string] {
   return match ? match[1] : value;
 }
 
-export function projectMutationValues(value: unknown): IDataObject {
+export function projectMutationValues(
+  value: unknown,
+  schema: ResourceMapperField[] = [],
+): IDataObject {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const activeFields = schema.length
+    ? new Set(schema.filter((field) => field.removed !== true).map((field) => field.id))
+    : null;
   const result: IDataObject = {};
   for (const [selector, entry] of Object.entries(value as IDataObject)) {
+    if (activeFields && !activeFields.has(selector)) continue;
     const parsed = parseMutationFieldSelector(selector);
     if (!parsed) {
       result[selector] = entry;
@@ -167,13 +191,32 @@ export function projectQueryFilters(value: unknown): Array<{ field: string; oper
   return result;
 }
 
+function errorAwareHelpers(context: IExecuteFunctions) {
+  return new Proxy(context.helpers, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (property !== 'httpRequestWithAuthentication' || typeof value !== 'function') return value;
+      return async (...args: unknown[]) => {
+        try {
+          return await Reflect.apply(value, context, args);
+        } catch (error) {
+          throw projectLifeSpaceHttpError(context, error);
+        }
+      };
+    },
+  });
+}
+
 export function humanExecutionContext(context: IExecuteFunctions): IExecuteFunctions {
   return new Proxy(context, {
     get(target, property, receiver) {
+      if (property === 'helpers') return errorAwareHelpers(target);
       if (property !== 'getNodeParameter') return Reflect.get(target, property, receiver);
       return (name: string, itemIndex: number, fallback?: unknown, options?: unknown) => {
         if (name === 'fields.value') {
-          return projectMutationValues(target.getNodeParameter(name, itemIndex, fallback as never, options as never));
+          const value = target.getNodeParameter(name, itemIndex, fallback as never, options as never);
+          const schema = target.getNodeParameter('fields.schema', itemIndex, []) as ResourceMapperField[];
+          return projectMutationValues(value, schema);
         }
         if (name === 'filters.filter') {
           const mapped = target.getNodeParameter('queryFilters.value', itemIndex, {}, options as never);
