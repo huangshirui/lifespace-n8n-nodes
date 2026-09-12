@@ -17,7 +17,7 @@ test('package registers separate human workflow and native Agent Tool surfaces',
 });
 
 test('Agent Tool remains a native AiTool and keeps structural scope outside model input', async () => {
-  const base = await text('nodes/LifeSpaceTool/LifeSpaceTool.node.ts');
+  const base = await text('nodes/agent/LifeSpaceAgentToolBase.ts');
   const projection = await text('nodes/LifeSpaceAgentTool/LifeSpaceAgentTool.node.ts');
   assert.match(base, /outputs: \[NodeConnectionTypes\.AiTool\]/u);
   assert.match(base, /noDataExpression: true/u);
@@ -30,7 +30,7 @@ test('Agent Tool remains a native AiTool and keeps structural scope outside mode
 
 test('Agent Tool remains model-agnostic and projects Discovery semantics', async () => {
   const source = [
-    await text('nodes/LifeSpaceTool/LifeSpaceTool.node.ts'),
+    await text('nodes/agent/LifeSpaceAgentToolBase.ts'),
     await text('nodes/LifeSpaceAgentTool/LifeSpaceAgentTool.node.ts'),
     await text('nodes/agent/lifeSpaceToolFactory.ts'),
     await text('nodes/agent/lifeSpaceGenericQueryTool.ts'),
