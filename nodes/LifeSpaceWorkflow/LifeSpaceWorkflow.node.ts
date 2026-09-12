@@ -83,10 +83,14 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
       result.push({
         ...property,
         typeOptions: {
-          ...property.typeOptions,
+          loadOptionsDependsOn: ['spaceId', 'recordType', 'operation'],
           resourceMapper: {
-            ...property.typeOptions?.resourceMapper,
             resourceMapperMethod: 'getHumanRecordFields',
+            mode: 'add',
+            fieldWords: { singular: 'field', plural: 'fields' },
+            addAllFields: true,
+            supportAutoMap: false,
+            noFieldsError: 'The selected LifeSpace Record Type has no writable fields for this operation.',
           },
         },
         description: 'Writable fields are loaded from LifeSpace Discovery. Field types, required state, enum values, dates and single relations are rendered automatically.',
