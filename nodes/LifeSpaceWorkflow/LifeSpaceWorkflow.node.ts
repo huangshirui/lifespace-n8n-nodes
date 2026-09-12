@@ -55,7 +55,7 @@ function localDateWindowsProperty(): INodeProperties {
           options: [],
           default: '',
           required: true,
-          description: 'Choose a datetime field that publishes a local-date-window transport.',
+          description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
         },
         { displayName: 'Start Date', name: 'dateStart', type: 'dateTime', default: '', required: true },
         { displayName: 'End Date (Exclusive)', name: 'dateEndExclusive', type: 'dateTime', default: '', required: true },
