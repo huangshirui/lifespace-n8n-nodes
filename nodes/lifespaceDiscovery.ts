@@ -1,6 +1,7 @@
 import type {
   IExecuteFunctions,
   ILoadOptionsFunctions,
+  ISupplyDataFunctions,
   JsonObject,
 } from 'n8n-workflow';
 import { NodeApiError, NodeOperationError } from 'n8n-workflow';
@@ -356,7 +357,7 @@ function apiUrl(baseUrl: string, path: string): string {
 }
 
 async function authenticatedGet<T>(
-  context: ILoadOptionsFunctions | IExecuteFunctions,
+  context: ILoadOptionsFunctions | IExecuteFunctions | ISupplyDataFunctions,
   baseUrl: string,
   path: string,
 ): Promise<T> {
@@ -550,7 +551,7 @@ function cachedExecutionSemanticDetail(
 }
 
 async function requestProgressiveRuntimeDiscovery(
-  context: ILoadOptionsFunctions | IExecuteFunctions,
+  context: ILoadOptionsFunctions | IExecuteFunctions | ISupplyDataFunctions,
   baseUrl: string,
   selection?: DiscoverySelection,
 ): Promise<DiscoveryResponse | null> {
@@ -734,6 +735,29 @@ export async function loadExecutionRuntimeDiscovery(
 }
 
 
+export async function loadAgentToolRuntimeDiscovery(
+  context: ISupplyDataFunctions,
+  baseUrl: string,
+  spaceId: string,
+  modelKey: string,
+): Promise<DiscoveryResponse> {
+  const progressive = await requestProgressiveRuntimeDiscovery(context, baseUrl, { spaceId, modelKey });
+  if (!progressive) {
+    throw new NodeOperationError(
+      context.getNode(),
+      'LifeSpace Tool requires Progressive Runtime Discovery from Core Kernel 0.35.0 or newer',
+    );
+  }
+  const space = discoverySpace(progressive, spaceId);
+  const model = discoveryModel(progressive, spaceId, modelKey);
+  if (!space || !model || !model.query.pagination || !Array.isArray(model.query.filters)) {
+    throw new NodeOperationError(
+      context.getNode(),
+      `LifeSpace Runtime Discovery did not return complete semantic detail for ${modelKey}`,
+    );
+  }
+  return progressive;
+}
 
 export function discoverySpace(discovery: DiscoveryResponse, spaceId: string): DiscoverySpace | undefined {
   return discovery.data.spaces.find((space) => space.spaceId === spaceId);
