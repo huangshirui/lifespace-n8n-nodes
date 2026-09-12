@@ -88,6 +88,26 @@ test('human Create projection normalizes date fields while preserving omission',
   assert.equal(Object.hasOwn(projected, 'assignees'), false);
 });
 
+test('human Create projection sends only active fields and preserves explicit null', () => {
+  const name = model().fields.find((field) => field.key === 'name');
+  const status = model().fields.find((field) => field.key === 'status');
+  const nameId = mutationFieldSelector(name);
+  const statusId = mutationFieldSelector(status);
+  const values = { [nameId]: 'Buy food', [statusId]: null };
+
+  const omitted = projectMutationValues(values, [
+    { id: nameId, displayName: 'Name', required: true, defaultMatch: false, canBeUsedToMatch: false, display: true, type: 'string', removed: false },
+    { id: statusId, displayName: 'Status', required: false, defaultMatch: false, canBeUsedToMatch: false, display: true, type: 'options', removed: true },
+  ]);
+  assert.deepEqual(omitted, { name: 'Buy food' });
+
+  const explicitNull = projectMutationValues(values, [
+    { id: nameId, displayName: 'Name', required: true, defaultMatch: false, canBeUsedToMatch: false, display: true, type: 'string', removed: false },
+    { id: statusId, displayName: 'Status', required: false, defaultMatch: false, canBeUsedToMatch: false, display: true, type: 'options', removed: false },
+  ]);
+  assert.deepEqual(explicitNull, { name: 'Buy food', status: null });
+});
+
 test('human Query projection uses semantic predicate IDs and exact published transport', () => {
   const predicates = queryPredicates(model());
   const status = predicates.find((entry) => entry.field === 'status');
