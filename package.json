@@ -48,7 +48,7 @@
     "nodes": [
       "dist/nodes/LifeSpaceWorkflow/LifeSpaceWorkflow.node.js",
       "dist/nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.js",
-      "dist/nodes/LifeSpaceTool/LifeSpaceTool.node.js"
+      "dist/nodes/LifeSpaceAgentTool/LifeSpaceAgentTool.node.js"
     ]
   },
   "devDependencies": {
