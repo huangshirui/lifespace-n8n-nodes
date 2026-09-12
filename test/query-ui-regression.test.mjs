@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const require = createRequire(import.meta.url);
-const { LifeSpace } = require('../dist/nodes/LifeSpace/LifeSpace.node.js');
+const { LifeSpaceWorkflow } = require('../dist/nodes/LifeSpaceWorkflow/LifeSpaceWorkflow.node.js');
 
 function property(node, name) {
   const value = node.description.properties.find((entry) => entry.name === name);
@@ -69,48 +69,47 @@ function optionContext(modelKey, capabilityQueries = []) {
   };
 }
 
-test('normal LifeSpace node is the single Agent Tool surface and runtime selectors remain AI-fillable', async () => {
-  const node = new LifeSpace();
-  assert.equal(node.description.usableAsTool, true);
-  assert.equal(property(node, 'resource').noDataExpression, true);
-  assert.equal(property(node, 'operation').noDataExpression, true);
-  assert.equal(property(node, 'spaceId').noDataExpression, undefined);
-  assert.equal(property(node, 'recordType').noDataExpression, undefined);
-  assert.equal(property(node, 'recordId').noDataExpression, undefined);
+test('workflow node is a human-only projection with Discovery-driven Create fields', async () => {
+  const node = new LifeSpaceWorkflow();
+  assert.equal(node.description.usableAsTool, undefined);
+  assert.equal(property(node, 'fields').type, 'resourceMapper');
+  assert.equal(property(node, 'fields').typeOptions.resourceMapper.resourceMapperMethod, 'getHumanRecordFields');
+  assert.equal(node.description.properties.some((entry) => entry.name === 'dateFields'), false);
+  assert.equal(node.description.properties.some((entry) => entry.name === 'singleRelations'), false);
+  assert.ok(node.description.properties.some((entry) => entry.name === 'multiRelations'));
 
   const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.deepEqual(packageJson.n8n.nodes, [
-    'dist/nodes/LifeSpace/LifeSpace.node.js',
+    'dist/nodes/LifeSpaceWorkflow/LifeSpaceWorkflow.node.js',
     'dist/nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.js',
+    'dist/nodes/LifeSpaceAgentTool/LifeSpaceAgentTool.node.js',
   ]);
 });
 
-test('List Query no longer exposes dead top-level Time or Capability controls', () => {
-  const node = new LifeSpace();
-  const names = node.description.properties.map((entry) => entry.name);
-  assert.equal(names.includes('localDateWindows'), false);
+test('List Query exposes semantic filter mapper instead of field-type buckets', () => {
+  const node = new LifeSpaceWorkflow();
+  assert.equal(node.description.properties.some((entry) => entry.name === 'filters'), false);
+
+  const queryFilters = property(node, 'queryFilters');
+  assert.equal(queryFilters.type, 'resourceMapper');
+  assert.equal(queryFilters.typeOptions.resourceMapper.resourceMapperMethod, 'getHumanQueryFilterFields');
+  assert.deepEqual(queryFilters.displayOptions.show.queryMode, ['standard']);
+
+  const localWindows = property(node, 'localDateWindows');
+  assert.equal(localWindows.displayName, 'Advanced Local Date Windows');
+  assert.deepEqual(localWindows.displayOptions.show.queryMode, ['standard']);
 
   const queryMode = property(node, 'queryMode');
-  assert.equal(queryMode.noDataExpression, true);
+  assert.equal(queryMode.displayName, 'Query Type');
   assert.equal(queryMode.default, 'standard');
 
-  const filters = property(node, 'filters');
-  assert.ok(filters.options.some((entry) => entry.name === 'localDateWindow'));
-  assert.deepEqual(filters.displayOptions.show.queryMode, ['standard']);
-  assert.deepEqual(property(node, 'search').displayOptions.show.queryMode, ['standard']);
-  assert.deepEqual(property(node, 'sorts').displayOptions.show.queryMode, ['standard']);
-
   const capability = property(node, 'semanticQueryKey');
-  assert.equal(capability.displayName, 'Capability Query Name or ID');
-  assert.equal(capability.required, true);
-  assert.equal(capability.noDataExpression, true);
+  assert.equal(capability.displayName, 'Capability Query');
   assert.deepEqual(capability.displayOptions.show.queryMode, ['capability']);
-  assert.deepEqual(property(node, 'semanticQueryInput').displayOptions.show.queryMode, ['capability']);
-  assert.deepEqual(property(node, 'semanticSort').displayOptions.show.queryMode, ['capability']);
 });
 
 test('Capability Query mode is advertised only by published Discovery metadata', async () => {
-  const node = new LifeSpace();
+  const node = new LifeSpaceWorkflow();
   const ordinary = await node.methods.loadOptions.getQueryModes.call(optionContext('task'));
   assert.deepEqual(ordinary.map((entry) => entry.value), ['standard']);
 
