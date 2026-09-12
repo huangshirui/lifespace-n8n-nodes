@@ -2,6 +2,7 @@ import type {
   IExecuteFunctions,
   INodeExecutionData,
   INodeProperties,
+  INodeType,
   INodeTypeDescription,
 } from 'n8n-workflow';
 import { LifeSpace } from '../LifeSpace/LifeSpace.node';
@@ -86,7 +87,6 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
           resourceMapper: {
             ...property.typeOptions?.resourceMapper,
             resourceMapperMethod: 'getHumanRecordFields',
-            noFieldsError: 'The selected LifeSpace Record Type has no writable fields for this operation.',
           },
         },
         description: 'Writable fields are loaded from LifeSpace Discovery. Field types, required state, enum values, dates and single relations are rendered automatically.',
@@ -133,10 +133,11 @@ export class LifeSpaceWorkflow extends LifeSpace {
       properties: humanProperties(description.properties),
     };
 
-    this.methods = {
-      ...this.methods,
+    const node = this as unknown as INodeType;
+    node.methods = {
+      ...(node.methods ?? {}),
       resourceMapping: {
-        ...this.methods.resourceMapping,
+        ...(node.methods?.resourceMapping ?? {}),
         getHumanRecordFields,
         getHumanQueryFilterFields,
       },
