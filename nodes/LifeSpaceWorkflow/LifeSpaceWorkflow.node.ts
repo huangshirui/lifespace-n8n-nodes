@@ -6,6 +6,7 @@ import type {
   INodeTypeDescription,
 } from 'n8n-workflow';
 import { LifeSpace } from '../LifeSpace/LifeSpace.node';
+import { restoreLifeSpaceContinueOnFailErrors } from './lifeSpaceErrorProjection';
 import {
   getHumanQueryFilterFields,
   getHumanRecordFields,
@@ -88,12 +89,21 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
             resourceMapperMethod: 'getHumanRecordFields',
             mode: 'add',
             fieldWords: { singular: 'field', plural: 'fields' },
-            addAllFields: true,
+            addAllFields: false,
             supportAutoMap: false,
             noFieldsError: 'The selected LifeSpace Record Type has no writable fields for this operation.',
           },
         },
-        description: 'Writable fields are loaded from LifeSpace Discovery. Field types, required state, enum values, dates and single relations are rendered automatically.',
+        description: 'Only fields selected for this operation are sent. Required Create fields are shown first; optional fields can be added from LifeSpace Discovery.',
+      });
+      continue;
+    }
+
+    if (property.name === 'multiRelations') {
+      result.push({
+        ...property,
+        displayName: 'Related People & Records',
+        placeholder: 'Add Related Field',
       });
       continue;
     }
@@ -149,6 +159,7 @@ export class LifeSpaceWorkflow extends LifeSpace {
   }
 
   async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
-    return LifeSpace.prototype.execute.call(humanExecutionContext(this));
+    const executions = await LifeSpace.prototype.execute.call(humanExecutionContext(this));
+    return restoreLifeSpaceContinueOnFailErrors(executions);
   }
 }
