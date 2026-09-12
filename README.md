@@ -66,23 +66,18 @@ Runtime Discovery determines which Spaces, Record Types, fields, queries, Action
 
 ## Generated Record UX
 
-Create/Update keep scalar fields in n8n Resource Mapper while using native n8n controls for LifeSpace calendar-date fields and supported relations. Single relations use a selector; multi-relations use multi-select. List / Query offers typed filter variants for text, enum, boolean, number, date/time and authorized relations, while retaining the raw legacy filter as an expression/compatibility escape hatch.
+The package deliberately exposes two different projections over the same LifeSpace Runtime Discovery semantics:
+
+- **LifeSpace** is the human-authored workflow node. Create/Update fields are generated through n8n Resource Mapper from the selected Record Type, so field type, required state, enum values, calendar dates and supported single relations determine the control automatically. List / Query exposes semantic predicates such as `Status — Is One Of` or `Due Date — After or Equal` instead of asking the workflow author to choose a filter type first. Multi-value relations keep their dedicated multi-select UX.
+- **LifeSpace Agent Tool** is the native AI Tool surface. Its schema is generated for the model: generic queries expose semantic `field` / `operator` / `value` inputs, and the adapter compiles those inputs to the exact transport names published by LifeSpace. Capability Queries consume the grouped schema published by Runtime Discovery.
+
+The human workflow node is not exposed through `usableAsTool`; this avoids maintaining two competing Agent Tool surfaces with different schema behavior.
 
 The node displays the authorized human-readable `spaceName` when present while continuing to submit the stable `spc_*` ID.
 
 Record Type is the LifeSpace `modelKey` (for example `task`). Design-time options, expressions, Trigger output and downstream Record nodes all use that plain value. CRUD calls go directly to `/spaces/{spaceId}/models/{modelKey}/records/...`, so execution adds no Discovery request and the adapter maintains no modelKey-to-route mapping. Existing `lsrt1...` workflow values are decoded only as a deprecated read-compatibility path and are never emitted or written by new configuration.
 
 Calendar-backed models use canonical `capabilityBindings.calendar` field roles instead of Event-specific field names while the node is being configured. Date-only values are normalized to `YYYY-MM-DD`. Create/Update execution does not fetch fresh semantic Discovery solely to produce an adapter-local Calendar conflict error; the canonical mutation goes directly to LifeSpace Core, which remains authoritative for Calendar validation and current authorization.
-
-## AI Agent Tool
-
-`LifeSpace Tool` is the metadata-driven AI Agent sub-node. Configure one fixed Space, Record Type and semantic operation per Tool instance, then connect multiple instances to the same n8n AI Agent. The Tool name, default description and structured AI input schema are generated from LifeSpace Progressive Runtime Discovery; hand-written descriptions are optional.
-
-- Query exposes published search/filter/comparison/local-date-window/sort/pagination semantics. Capability Query mode exposes only the capability-owned parameters and ordering that LifeSpace explicitly publishes; generic-facet composition stays narrowed until LifeSpace #228 defines it.
-- Create/Update schemas come from writable Model fields. Required fields with LifeSpace defaults are optional AI inputs, and fields the AI omits are absent from the outgoing request rather than synthesized as empty/null placeholders.
-- Delete and Action hide optimistic-concurrency `version` from the AI. The Adapter reads the current record version when required and Core remains the final authorization/concurrency/semantic authority.
-- No Task/Event/Wish-specific Tool nodes or field maps are shipped. New models become available through Discovery without source changes.
-- The ordinary `LifeSpace` workflow node remains `usableAsTool` for manually configured `$fromAI(...)` workflows, but `LifeSpace Tool` is the canonical path when the AI should receive the complete dynamic LifeSpace schema.
 
 ## LifeSpace contract compatibility
 
@@ -140,16 +135,16 @@ Examples:
 {{$vars.lifeSpaceRecordType}}
 ```
 
-Discovery-backed selectors such as **Space**, **Filter Field**, **Sort Field** and **Action** support the normal n8n pattern: choose a value from the list, or switch the parameter to an expression and provide the corresponding stable ID/key. **Record Type** stores the plain LifeSpace `modelKey`, so a LifeSpace Trigger can feed a Record node directly without a mapping step or an extra Discovery request.
+Discovery-backed selectors such as **Space**, **Sort Field** and **Action** support the normal n8n pattern: choose a value from the list, or switch the parameter to an expression and provide the corresponding stable ID/key. **Record Type** stores the plain LifeSpace `modelKey`, so a LifeSpace Trigger can feed a Record node directly without a mapping step or an extra Discovery request.
 
-The same applies to ordinary values such as Record ID, Search, Filter Value, Return All, Limit, Sort Direction, Cursor, explicit Version, API Method, API Path and JSON Body.
+The same applies to ordinary values such as Record ID, Search, Return All, Limit, Sort Direction, Cursor, explicit Version, API Method, API Path and JSON Body.
 
 Two boundaries are intentional:
 
 - **Resource** and **Operation** are structural node controls and do not accept expressions because they determine which parameter schema and execution path the node has.
-- **Fields** and **Action Input** use n8n's `resourceMapper`. The mapper container is structural, but each generated field value inside it remains expression-capable. This includes relation-backed field values: the UI can offer authorized options while an expression can still supply a stable relation ID or ID list.
+- **Fields**, **Filters**, Capability Query parameters and **Action Input** are generated from Runtime Discovery. Their mapper containers are structural, while generated values remain expression-capable.
 
-For **Filters** and **Sorts**, add the required rows in the node UI and use expressions inside each row's Field/Operator/Value or Field/Direction inputs. The number of rows is treated as workflow structure rather than per-item data. This avoids relying on whole-array expressions for n8n `fixedCollection` parameters.
+In Standard Query, **Filters** is a Discovery-driven Resource Mapper. Adding a filter selects a published semantic predicate such as `Due Date — Before`; n8n then renders the value control from the underlying field type. **Sorts** remains an ordered structural list because sort priority is part of workflow structure rather than per-item data.
 
 If **Record Type** itself varies per input item and those Record Types have different schemas, one discovery-generated mapper cannot safely represent every possible schema at design time. In that case, branch to separate LifeSpace nodes per schema or use **API Request** for a deliberately fully dynamic request.
 
@@ -188,7 +183,7 @@ LifeSpace server defaults are authoritative. A field that is `required` but has 
 
 For example, lifecycle state such as Task status can remain server/Action-owned instead of being manually entered by the workflow author.
 
-When Runtime Discovery advertises relation semantics, supported `person`, `person_list`, `record` and `record_list` fields are rendered from the current authorized `{ id, label }` target projection instead of asking the workflow author to type raw identifiers. The displayed value is the canonical LifeSpace reference label, while the workflow payload still stores and submits the stable target ID.
+When Runtime Discovery advertises relation semantics, supported single-value `person` / `record` fields are rendered as selectors from the current authorized `{ id, label }` target projection. Multi-value relations retain the dedicated multi-select control rather than falling back to n8n Resource Mapper's generic JSON array editor. The displayed value is the canonical LifeSpace reference label, while the workflow payload still stores and submits the stable target ID.
 
 Older compatible Discovery responses without relation lookup metadata retain the raw-ID field behavior. The adapter never guesses record labels from conventional fields such as `name`, `title` or `summary`.
 
@@ -208,19 +203,18 @@ If a workflow intentionally needs to bind a known version, add **Concurrency Opt
 
 ### List / Query
 
-The normal UI supports:
+**Query Type** separates ordinary record query UX from capability-owned query semantics:
 
-- optional **Search**;
-- one or more typed **Filters**;
-- Discovery-driven explicit **Number Comparison** and **Date / Time Comparison** rows using the exact LifeSpace-published operator transport;
-- generic **Local Date Windows** for datetime fields advertised by Time Semantics, including envelope `createdAt` / `updatedAt`, with local dates + IANA timezone sent unchanged to Core;
-- optional grouped **Semantic Query** input generated from `query.capabilityQueries` (for example `calendar.window`) plus its published semantic ordering;
-- **Return All** to follow `nextCursor` automatically;
-- **Limit** when Return All is disabled.
+- **Records** is the normal query surface and exposes optional **Search**, Discovery-driven semantic **Filters**, optional **Advanced Local Date Windows**, generic **Sorts**, **Return All** and **Limit**;
+- each Filter entry represents an allowed field/operator pair published by LifeSpace, for example `Status — Is One Of`, `Due Date — Before` or `Created At — After or Equal`; the adapter compiles the selected semantic predicate to the exact transport parameter published by Discovery;
+- **Capability Query** is offered only when the selected Record Type publishes `query.capabilityQueries`; its selector, parameters and ordering are loaded from Runtime Discovery;
+- **Return All** follows `nextCursor` automatically, while **Limit** bounds a single-page query.
 
-The adapter never derives explicit comparison parameter names from field naming and never converts local calendar windows to UTC. Those transport names and timezone/DST semantics come from LifeSpace Runtime Semantic Detail. Existing `exact/from/to` filters remain available as compatibility UI and preserve the legacy inclusive `To` behavior.
+Advanced Local Date Windows are shown separately because a local calendar window is a structured field/start/end/timezone input rather than a scalar predicate. The adapter sends the published date-window parameter names and IANA timezone unchanged; Core owns timezone/DST conversion. Existing persisted legacy `exact/from/to` filters preserve the inclusive `To` behavior.
 
-Use **Sorts → Add Sort** to add zero or more sort criteria in priority order. Sortable model fields use authoritative `title` metadata from Runtime Discovery, while envelope fields such as `createdAt` / `updatedAt` are offered only when Discovery advertises them. Multiple criteria are sent as ordered repeated `sort=field:direction` query parameters.
+Generic Search/Filters/Sorts are intentionally hidden in Capability Query mode until LifeSpace publishes machine-readable facet-composability metadata. This prevents the adapter from guessing which generic parameters may be mixed with a grouped capability query.
+
+Use **Sorts → Add Sort** in Records mode to add zero or more sort criteria in priority order. Sortable model fields use authoritative `title` metadata from Runtime Discovery, while envelope fields such as `createdAt` / `updatedAt` are offered only when Discovery advertises them. Multiple criteria are sent as ordered repeated `sort=field:direction` query parameters.
 
 Advanced **Options** contain manual **Cursor** as an escape hatch.
 
@@ -247,6 +241,30 @@ Paths are relative to the configured API Base URL, for example:
 ```
 
 Use normal Record operations when possible because they benefit from Runtime Discovery metadata and n8n-specific UX.
+
+## Use the LifeSpace Agent Tool
+
+Use **LifeSpace Agent Tool** when connecting LifeSpace to an n8n AI Agent. This is a separate native AiTool surface rather than the human workflow node running through `usableAsTool`.
+
+Configure the Tool's structural scope — Space, Record Type and operation — in the node. The Tool then derives its model-facing name, description and input schema from Runtime Discovery, so multiple LifeSpace Tools can distinguish their configured purpose without requiring handwritten descriptions.
+
+For Generic Query, the model receives semantic inputs such as:
+
+```json
+{
+  "search": "food",
+  "filters": [
+    { "field": "status", "operator": "in", "value": ["todo"] },
+    { "field": "dueDate", "operator": "gte", "value": "2026-09-13" }
+  ],
+  "sort": [{ "field": "dueDate", "direction": "asc" }],
+  "limit": 20
+}
+```
+
+The adapter validates those field/operator pairs against Discovery and compiles them to the exact LifeSpace query transport. The model does not need to know transport names such as `dueDate.gte`. Local date windows are likewise semantic inputs and Core remains responsible for timezone/DST conversion.
+
+Create/Update schemas are generated from writable model fields. Optional fields that the model does not provide are omitted rather than synthesized as empty values. Actions and Capability Queries remain metadata-driven, and adding a future Record Type does not require a model-specific `create_*` or `query_*` node implementation.
 
 ## Use the LifeSpace Trigger
 
@@ -283,17 +301,20 @@ Webhook Endpoint / Event Subscription creation is intentionally not performed by
 
 - **LifeSpace API** credential for API authentication and Runtime Discovery;
 - **LifeSpace Webhook Signing** credential for endpoint-scoped inbound HMAC verification;
-- **LifeSpace** node with discovery-driven Record operations plus advanced API Request;
+- **LifeSpace** human workflow node with Discovery-driven Record operations plus advanced API Request;
+- **LifeSpace Agent Tool** native AiTool with Discovery-driven semantic schemas;
 - **LifeSpace Trigger** with signed multi-Record-Type Domain Event filtering;
-- dynamic Space, Record Type, field, relation target, query, Action and Action Input UI based on progressive Runtime Discovery.
+- shared thin adapter projection from LifeSpace Runtime Discovery into human n8n controls and model-facing Tool schemas.
 
-LifeSpace remains authoritative for validation, authorization, defaults, Mutation Authority, Action semantics, relation semantics and event contracts. Runtime Discovery and Relation Target Lookup are current capability/reference projections, not execution-authorization proofs.
+LifeSpace remains authoritative for validation, authorization, defaults, Mutation Authority, Action semantics, query/time semantics, relation semantics and event contracts. Runtime Discovery and Relation Target Lookup are current capability/reference projections, not execution-authorization proofs.
 
 ## Architecture boundary
 
 LifeSpace is the source of truth for Identity, Authority, Shared Reality semantics, contracts and Eventing. This repository is an n8n Adapter and must not become a second LifeSpace business-contract implementation.
 
 LifeSpace does not depend on n8n. n8n is one optional orchestration/integration runtime consuming LifeSpace APIs and events.
+
+The human Workflow node and native Agent Tool are separate presentation projections over the same LifeSpace semantics. Shared code in this package only translates Discovery into n8n-specific UI/schema/transport; it does not redefine domain rules.
 
 The adapter does not use privileged model-admin endpoints for ordinary workflow discovery and does not copy Model Definitions into this repository.
 

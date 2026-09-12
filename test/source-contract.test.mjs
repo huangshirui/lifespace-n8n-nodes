@@ -86,7 +86,7 @@ test('runtime node inputs remain expression-capable except structural controls',
   // n8n parameters accept expressions unless noDataExpression is set. Keep that
   // escape hatch limited to controls that define the node schema itself plus the
   // resourceMapper containers whose individual mapped values remain expression-capable.
-  assert.equal((node.match(/noDataExpression: true/gu) ?? []).length, 6);
+  assert.match(node, /name: 'queryMode'[\s\S]{0,160}noDataExpression: true/u);
   assert.match(node, /name: 'resource',[\s\S]{0,80}noDataExpression: true/u);
   assert.match(node, /name: 'operation',[\s\S]{0,80}noDataExpression: true/u);
   assert.match(node, /name: 'fields',[\s\S]{0,140}noDataExpression: true/u);

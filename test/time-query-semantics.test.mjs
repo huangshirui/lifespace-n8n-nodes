@@ -167,12 +167,12 @@ test('local date window selector carries published transport and leaves timezone
   assert.ok(createdAt);
 
   const context = executeContext(baseListParameters({
-    'localDateWindows.window': [{
+    filters: { localDateWindow: [{
       field: createdAt.value,
       dateStart: '2026-09-10T00:00:00.000+02:00',
       dateEndExclusive: '2026-09-11T00:00:00.000+02:00',
       timezone: 'Europe/Amsterdam',
-    }],
+    }] },
   }));
   await node.execute.call(context);
   assert.deepEqual(context.calls[0].options.qs, {
