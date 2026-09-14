@@ -61,7 +61,7 @@ function queryTimeWindowsProperty(): INodeProperties {
           options: [],
           default: '',
           required: true,
-          description: 'Choose a typed range predicate published by query.canonical.',
+          description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
         },
         { displayName: 'Start Date', name: 'startDate', type: 'dateTime', default: '', required: true },
         { displayName: 'End Date (Exclusive)', name: 'endDateExclusive', type: 'dateTime', default: '', required: true },
@@ -72,11 +72,11 @@ function queryTimeWindowsProperty(): INodeProperties {
           default: '',
           required: true,
           placeholder: 'Asia/Shanghai',
-          description: 'IANA timezone. LifeSpace Core owns timezone and DST conversion.',
+          description: 'IANA timezone. LifeSpace Core owns timezone and DST conversion',
         },
       ],
     }],
-    description: 'Typed local-date-window predicates from the same Canonical Filter contract.',
+    description: 'Typed local-date-window predicates from the same Canonical Filter contract',
   };
 }
 
