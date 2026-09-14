@@ -4,6 +4,7 @@ import { test } from 'node:test';
 
 const require = createRequire(import.meta.url);
 const { LifeSpace } = require('../dist/nodes/LifeSpace/LifeSpace.node.js');
+const { LifeSpaceWorkflow } = require('../dist/nodes/LifeSpaceWorkflow/LifeSpaceWorkflow.node.js');
 const { encodeRecordTypeSelector } = require('../dist/nodes/lifespaceDiscovery.js');
 
 const BASE_URL = 'https://example.invalid/api/v1';
@@ -75,7 +76,10 @@ function executionContext(parameters, itemCount = 1) {
         if (options.method === 'GET' && /\/spaces\/spc_test\/models\/task\/records\/rec_/u.test(options.url)) {
           return { data: { id: options.url.split('/').at(-1), version: 7 } };
         }
-        if (options.method === 'GET' && options.url === `${BASE_URL}/spaces/spc_test/models/task/records`) {
+        if (
+          (options.method === 'GET' && options.url === `${BASE_URL}/spaces/spc_test/models/task/records`)
+          || (options.method === 'POST' && options.url === `${BASE_URL}/spaces/spc_test/models/task/records/query`)
+        ) {
           return { data: { items: [], nextCursor: null } };
         }
         if (options.method === 'POST' && options.url.endsWith('/actions/complete')) {
@@ -104,6 +108,13 @@ async function execute(parameters, itemCount = 1) {
   return context.calls;
 }
 
+async function executeWorkflow(parameters, itemCount = 1) {
+  const node = new LifeSpaceWorkflow();
+  const context = executionContext({ ...common, ...parameters }, itemCount);
+  await node.execute.call(context);
+  return context.calls;
+}
+
 function requestShape(calls) {
   return calls.map((call) => [call.method, call.url]);
 }
@@ -120,6 +131,27 @@ test('List is one business request per page and zero Discovery requests', async 
   assert.deepEqual(requestShape(calls), [
     ['GET', `${BASE_URL}/spaces/spc_test/models/task/records`],
   ]);
+});
+
+test('human Workflow List uses one canonical POST request and zero execution-time Discovery', async () => {
+  const calls = await executeWorkflow({
+    operation: 'list',
+    returnAll: false,
+    limit: 10,
+    search: 'milk',
+    options: {},
+    'queryFilters.value': {},
+    'queryTimeWindows.window': [],
+    'sorts.sort': [{ field: 'createdAt', direction: 'desc' }],
+  });
+  assert.deepEqual(requestShape(calls), [
+    ['POST', `${BASE_URL}/spaces/spc_test/models/task/records/query`],
+  ]);
+  assert.deepEqual(calls[0].body, {
+    search: { text: 'milk' },
+    sort: [{ field: 'createdAt', direction: 'desc' }],
+    page: { limit: 10 },
+  });
 });
 
 test('Create is one business mutation and zero Discovery requests', async () => {
