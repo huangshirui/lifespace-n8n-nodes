@@ -8,6 +8,7 @@ import type {
 import { LifeSpace } from '../LifeSpace/LifeSpace.node';
 import { restoreLifeSpaceContinueOnFailErrors } from './lifeSpaceErrorProjection';
 import {
+  getCanonicalTimeWindowFields,
   getHumanQueryFilterFields,
   getHumanRecordFields,
   humanExecutionContext,
@@ -31,36 +32,39 @@ function queryFiltersProperty(): INodeProperties {
         noFieldsError: 'The selected Record Type does not publish any query filters.',
       },
     },
-    displayOptions: { show: { resource: ['modelRecord'], operation: ['list'], queryMode: ['standard'] } },
+    displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
     description: 'Add semantic filters published by LifeSpace. Each filter already includes its valid operator and renders a value control from the field type.',
   };
 }
 
-function localDateWindowsProperty(): INodeProperties {
+function queryTimeWindowsProperty(): INodeProperties {
   return {
-    displayName: 'Advanced Local Date Windows',
-    name: 'localDateWindows',
+    displayName: 'Time Window Filters',
+    name: 'queryTimeWindows',
     type: 'fixedCollection',
     default: {},
-    placeholder: 'Add Local Date Window',
+    placeholder: 'Add Time Window Filter',
     typeOptions: { multipleValues: true },
-    displayOptions: { show: { resource: ['modelRecord'], operation: ['list'], queryMode: ['standard'] } },
+    displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
     options: [{
-      displayName: 'Window',
+      displayName: 'Time Window',
       name: 'window',
       values: [
         {
-          displayName: 'Field Name or ID',
-          name: 'field',
+          displayName: 'Field and Operator Name or ID',
+          name: 'target',
           type: 'options',
-          typeOptions: { loadOptionsMethod: 'getLocalDateWindowFields', loadOptionsDependsOn: ['spaceId', 'recordType'] },
+          typeOptions: {
+            loadOptionsMethod: 'getCanonicalTimeWindowFields',
+            loadOptionsDependsOn: ['spaceId', 'recordType'],
+          },
           options: [],
           default: '',
           required: true,
-          description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+          description: 'Choose a typed range predicate published by query.canonical.',
         },
-        { displayName: 'Start Date', name: 'dateStart', type: 'dateTime', default: '', required: true },
-        { displayName: 'End Date (Exclusive)', name: 'dateEndExclusive', type: 'dateTime', default: '', required: true },
+        { displayName: 'Start Date', name: 'startDate', type: 'dateTime', default: '', required: true },
+        { displayName: 'End Date (Exclusive)', name: 'endDateExclusive', type: 'dateTime', default: '', required: true },
         {
           displayName: 'Viewing Timezone',
           name: 'timezone',
@@ -72,13 +76,22 @@ function localDateWindowsProperty(): INodeProperties {
         },
       ],
     }],
+    description: 'Typed local-date-window predicates from the same Canonical Filter contract.',
   };
 }
 
 function humanProperties(properties: INodeProperties[]): INodeProperties[] {
   const result: INodeProperties[] = [];
   for (const property of properties) {
-    if (property.name === 'dateFields' || property.name === 'singleRelations' || property.name === 'filters') continue;
+    if ([
+      'dateFields',
+      'singleRelations',
+      'filters',
+      'queryMode',
+      'semanticQueryKey',
+      'semanticQueryInput',
+      'semanticSort',
+    ].includes(property.name)) continue;
 
     if (property.name === 'fields') {
       result.push({
@@ -108,22 +121,17 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
       continue;
     }
 
-    if (property.name === 'queryMode') {
-      result.push({
-        ...property,
-        displayName: 'Query Type',
-        description: 'Use Records for ordinary search/filter/sort. Capability Query is available only when the selected Record Type publishes one.',
-      });
-      continue;
-    }
-
-    if (property.name === 'semanticQueryKey') {
-      result.push({ ...property, displayName: 'Capability Query' });
-      continue;
-    }
-
     if (property.name === 'search') {
-      result.push(property, queryFiltersProperty(), localDateWindowsProperty());
+      result.push(
+        { ...property, displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } } },
+        queryFiltersProperty(),
+        queryTimeWindowsProperty(),
+      );
+      continue;
+    }
+
+    if (property.name === 'sorts') {
+      result.push({ ...property, displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } } });
       continue;
     }
 
@@ -150,6 +158,10 @@ export class LifeSpaceWorkflow extends LifeSpace {
     const node = this as unknown as INodeType;
     node.methods = {
       ...(node.methods ?? {}),
+      loadOptions: {
+        ...(node.methods?.loadOptions ?? {}),
+        getCanonicalTimeWindowFields,
+      },
       resourceMapping: {
         ...(node.methods?.resourceMapping ?? {}),
         getHumanRecordFields,
