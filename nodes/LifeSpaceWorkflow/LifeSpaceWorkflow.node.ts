@@ -72,7 +72,7 @@ function queryTimeWindowsProperty(): INodeProperties {
           default: '',
           required: true,
           placeholder: 'Asia/Shanghai',
-          description: 'IANA timezone. LifeSpace Core owns timezone and DST conversion',
+          description: 'IANA timezone. LifeSpace Core owns timezone and DST conversion.',
         },
       ],
     }],
