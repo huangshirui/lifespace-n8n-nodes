@@ -288,7 +288,10 @@ export function humanExecutionContext(context: IExecuteFunctions): IExecuteFunct
       return (name: string, itemIndex: number, fallback?: unknown, options?: unknown) => {
         if (name === 'queryMode') {
           const operation = String(target.getNodeParameter('operation', itemIndex, '') ?? '');
-          if (operation === 'list') return 'canonical';
+          if (operation === 'list') {
+            const stored = String(target.getNodeParameter(name, itemIndex, '') ?? '');
+            return stored === 'capability' ? 'capability' : 'canonical';
+          }
         }
         if (name === 'canonicalFilters') {
           const mapped = target.getNodeParameter('queryFilters.value', itemIndex, {}, options as never);
