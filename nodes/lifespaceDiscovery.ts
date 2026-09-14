@@ -796,10 +796,10 @@ export async function loadAgentToolRuntimeDiscovery(
   }
   const space = discoverySpace(progressive, spaceId);
   const model = discoveryModel(progressive, spaceId, modelKey);
-  if (!space || !model || !model.query.canonical) {
+  if (!space || !model) {
     throw new NodeOperationError(
       context.getNode(),
-      `LifeSpace Runtime Discovery did not return query.canonical for ${modelKey}; Core Kernel 0.36.0 or newer is required`,
+      `LifeSpace Runtime Discovery did not return complete semantic detail for ${modelKey}`,
     );
   }
   return progressive;
