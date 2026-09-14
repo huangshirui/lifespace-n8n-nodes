@@ -10,9 +10,13 @@ import {
   buildAgentToolDefinition,
   type AgentToolConfig,
   type AgentToolOperation,
-  type AgentToolQueryMode,
 } from '../agent/lifeSpaceToolFactory';
-import { compileGenericQuery, genericQuerySchema, type GenericQuerySchema } from '../agent/lifeSpaceGenericQueryTool';
+import {
+  canonicalQueryPath,
+  compileGenericQuery,
+  genericQuerySchema,
+  type GenericQuerySchema,
+} from '../agent/lifeSpaceGenericQueryTool';
 import {
   decodeRecordTypeSelector,
   discoveryModel,
@@ -55,13 +59,15 @@ export class LifeSpaceAgentTool extends LifeSpaceTool {
         dark: 'file:lifespace.dark.svg',
       },
       description: 'Expose one scoped LifeSpace operation to an AI Agent',
+      properties: this.description.properties.filter((property) =>
+        property.name !== 'queryMode' && property.name !== 'capabilityQueryKey'),
     };
   }
 
   async supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {
     const operation = this.getNodeParameter('operation', itemIndex) as AgentToolOperation;
-    const queryMode = this.getNodeParameter('queryMode', itemIndex, 'generic') as AgentToolQueryMode;
-    if (operation !== 'query' || queryMode !== 'generic') {
+    const storedQueryMode = String(this.getNodeParameter('queryMode', itemIndex, '') ?? '');
+    if (operation !== 'query' || storedQueryMode === 'capability') {
       return LifeSpaceTool.prototype.supplyData.call(this, itemIndex);
     }
 
@@ -97,14 +103,13 @@ export class LifeSpaceAgentTool extends LifeSpaceTool {
       invoke: async (input: unknown): Promise<string> => {
         const { index } = this.addInputData(NodeConnectionTypes.AiTool, [[{ json: { query: inputForLog(input) } }]]);
         try {
-          const qs = compileGenericQuery(model, input);
+          const body = compileGenericQuery(model, input);
           const request: IHttpRequestOptions = {
-            method: 'GET',
-            url: `${baseUrl}/spaces/${encodeURIComponent(spaceId)}/models/${encodeURIComponent(model.key)}/records`,
-            qs,
+            method: 'POST',
+            url: `${baseUrl}${canonicalQueryPath(model, spaceId)}`,
+            body: body as IDataObject,
             json: true,
           };
-          if (Object.values(qs).some(Array.isArray)) request.arrayFormat = 'repeat';
           const response = await this.helpers.httpRequestWithAuthentication.call(this, 'lifeSpaceApi', request);
           const output = stringify(response);
           void this.addOutputData(NodeConnectionTypes.AiTool, index, [[{ json: { response: output } }]]);

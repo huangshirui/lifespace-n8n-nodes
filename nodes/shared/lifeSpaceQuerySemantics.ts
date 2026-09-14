@@ -1,4 +1,8 @@
-import type { DiscoveryField, DiscoveryModel } from '../lifespaceDiscovery';
+import type {
+  DiscoveryCanonicalFilterTarget,
+  DiscoveryField,
+  DiscoveryModel,
+} from '../lifespaceDiscovery';
 
 export type QueryPredicate = {
   field: string;
@@ -6,18 +10,28 @@ export type QueryPredicate = {
   operator: string;
   operatorLabel: string;
   parameter: string;
-  valueType: DiscoveryField['type'] | 'datetime' | 'number';
+  valueType: DiscoveryCanonicalFilterTarget['valueType'];
   enumValues?: string[];
   mode: 'scalar' | 'enum-set';
 };
 
+const SELECTOR_PREFIX = 'lsqc1.';
 const OPERATOR_LABELS: Record<string, string> = {
   eq: 'Equals',
+  ne: 'Does Not Equal',
   in: 'Is One Of',
   lt: 'Before / Less Than',
   lte: 'Before or Equal / Less Than or Equal',
   gt: 'After / Greater Than',
   gte: 'After or Equal / Greater Than or Equal',
+  contains: 'Contains',
+  isNull: 'Is Empty',
+  isNotNull: 'Is Not Empty',
+  within: 'Within',
+  overlaps: 'Overlaps',
+  before: 'Before',
+  after: 'After',
+  kindIs: 'Range Kind Is',
 };
 
 function label(field: DiscoveryField | undefined, key: string): string {
@@ -30,11 +44,31 @@ function fieldFor(model: DiscoveryModel, key: string): DiscoveryField | undefine
   return model.fields.find((field) => field.key === key);
 }
 
-function pushUnique(target: QueryPredicate[], predicate: QueryPredicate): void {
-  if (!target.some((entry) => entry.parameter === predicate.parameter)) target.push(predicate);
+function canonicalPredicates(model: DiscoveryModel): QueryPredicate[] {
+  const descriptor = model.query.canonical;
+  if (!descriptor) return [];
+  return descriptor.filter.targets.flatMap((target) => {
+    const field = fieldFor(model, target.field);
+    return target.operators.map((operator) => ({
+      field: target.field,
+      fieldLabel: label(field, target.field),
+      operator,
+      operatorLabel: OPERATOR_LABELS[operator] ?? operator,
+      parameter: target.field,
+      valueType: target.valueType,
+      enumValues: field?.values,
+      mode: 'scalar' as const,
+    }));
+  });
 }
 
-export function queryPredicates(model: DiscoveryModel): QueryPredicate[] {
+function pushUnique(target: QueryPredicate[], predicate: QueryPredicate): void {
+  if (!target.some((entry) => entry.field === predicate.field && entry.operator === predicate.operator)) {
+    target.push(predicate);
+  }
+}
+
+function legacyPredicates(model: DiscoveryModel): QueryPredicate[] {
   const result: QueryPredicate[] = [];
   const compared = new Set((model.query.comparisons ?? []).map((entry) => entry.field));
 
@@ -43,51 +77,16 @@ export function queryPredicates(model: DiscoveryModel): QueryPredicate[] {
     const field = fieldFor(model, filter.field);
     if (!field) continue;
     const fieldLabel = label(field, filter.field);
-    if (filter.mode === 'enum-set') {
-      pushUnique(result, {
-        field: filter.field,
-        fieldLabel,
-        operator: 'in',
-        operatorLabel: OPERATOR_LABELS.in,
-        parameter: filter.parameter,
-        valueType: field.type,
-        enumValues: field.values,
-        mode: 'enum-set',
-      });
-      continue;
-    }
     pushUnique(result, {
       field: filter.field,
       fieldLabel,
-      operator: 'eq',
-      operatorLabel: OPERATOR_LABELS.eq,
+      operator: filter.mode === 'enum-set' ? 'in' : 'eq',
+      operatorLabel: filter.mode === 'enum-set' ? OPERATOR_LABELS.in : OPERATOR_LABELS.eq,
       parameter: filter.parameter,
       valueType: field.type,
       enumValues: field.values,
-      mode: 'scalar',
+      mode: filter.mode === 'enum-set' ? 'enum-set' : 'scalar',
     });
-    if (filter.range) {
-      pushUnique(result, {
-        field: filter.field,
-        fieldLabel,
-        operator: 'gte',
-        operatorLabel: OPERATOR_LABELS.gte,
-        parameter: filter.range.fromParameter,
-        valueType: field.type,
-        enumValues: field.values,
-        mode: 'scalar',
-      });
-      pushUnique(result, {
-        field: filter.field,
-        fieldLabel,
-        operator: 'lte',
-        operatorLabel: OPERATOR_LABELS.lte,
-        parameter: filter.range.toParameter,
-        valueType: field.type,
-        enumValues: field.values,
-        mode: 'scalar',
-      });
-    }
   }
 
   for (const comparison of model.query.comparisons ?? []) {
@@ -105,16 +104,44 @@ export function queryPredicates(model: DiscoveryModel): QueryPredicate[] {
       });
     }
   }
-
   return result;
 }
 
+export function queryPredicates(model: DiscoveryModel): QueryPredicate[] {
+  return model.query.canonical ? canonicalPredicates(model) : legacyPredicates(model);
+}
+
 export function queryPredicateSelector(predicate: QueryPredicate): string {
-  return ['lsq', predicate.operator, predicate.parameter, predicate.field, predicate.valueType, predicate.mode].join(':');
+  return SELECTOR_PREFIX + Buffer.from(JSON.stringify([
+    predicate.field,
+    predicate.operator,
+    predicate.valueType,
+    predicate.mode,
+  ])).toString('base64url');
 }
 
 export function parseQueryPredicateSelector(value: unknown): QueryPredicate | null {
-  const parts = String(value ?? '').split(':');
+  const raw = String(value ?? '');
+  if (raw.startsWith(SELECTOR_PREFIX)) {
+    try {
+      const decoded = JSON.parse(Buffer.from(raw.slice(SELECTOR_PREFIX.length), 'base64url').toString('utf8')) as unknown;
+      if (!Array.isArray(decoded) || decoded.length !== 4 || decoded.some((entry) => typeof entry !== 'string')) return null;
+      return {
+        field: decoded[0],
+        fieldLabel: decoded[0],
+        operator: decoded[1],
+        operatorLabel: OPERATOR_LABELS[decoded[1]] ?? decoded[1],
+        parameter: decoded[0],
+        valueType: decoded[2] as QueryPredicate['valueType'],
+        mode: decoded[3] as QueryPredicate['mode'],
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  // Stored workflows may still contain the pre-canonical Resource Mapper selector.
+  const parts = raw.split(':');
   if (parts.length !== 6 || parts[0] !== 'lsq') return null;
   return {
     operator: parts[1],

@@ -86,42 +86,23 @@ test('workflow node is a human-only projection with Discovery-driven Create fiel
   ]);
 });
 
-test('List Query exposes semantic filter mapper instead of field-type buckets', () => {
+test('List Query exposes one canonical Search, Filter, Sort, and Pagination surface', () => {
   const node = new LifeSpaceWorkflow();
   assert.equal(node.description.properties.some((entry) => entry.name === 'filters'), false);
 
   const queryFilters = property(node, 'queryFilters');
   assert.equal(queryFilters.type, 'resourceMapper');
   assert.equal(queryFilters.typeOptions.resourceMapper.resourceMapperMethod, 'getHumanQueryFilterFields');
-  assert.deepEqual(queryFilters.displayOptions.show.queryMode, ['standard']);
+  assert.equal(Object.hasOwn(queryFilters.displayOptions.show, 'queryMode'), false);
 
-  const localWindows = property(node, 'localDateWindows');
-  assert.equal(localWindows.displayName, 'Advanced Local Date Windows');
-  assert.deepEqual(localWindows.displayOptions.show.queryMode, ['standard']);
+  const timeWindows = property(node, 'queryTimeWindows');
+  assert.equal(timeWindows.displayName, 'Time Window Filters');
+  assert.equal(Object.hasOwn(timeWindows.displayOptions.show, 'queryMode'), false);
 
-  const queryMode = property(node, 'queryMode');
-  assert.equal(queryMode.displayName, 'Query Type');
-  assert.equal(queryMode.default, 'standard');
+  const sorts = property(node, 'sorts');
+  assert.equal(Object.hasOwn(sorts.displayOptions.show, 'queryMode'), false);
 
-  const capability = property(node, 'semanticQueryKey');
-  assert.equal(capability.displayName, 'Capability Query');
-  assert.deepEqual(capability.displayOptions.show.queryMode, ['capability']);
-});
-
-test('Capability Query mode is advertised only by published Discovery metadata', async () => {
-  const node = new LifeSpaceWorkflow();
-  const ordinary = await node.methods.loadOptions.getQueryModes.call(optionContext('task'));
-  assert.deepEqual(ordinary.map((entry) => entry.value), ['standard']);
-
-  const calendarWindow = {
-    key: 'calendar.window', capability: 'calendar', semantics: 'record-interval-overlap', recurrenceExpansion: false,
-    parameters: [
-      { parameter: 'windowStartDate', type: 'date', required: true, role: 'window-start-date' },
-      { parameter: 'windowEndDateExclusive', type: 'date', required: true, role: 'window-end-date-exclusive' },
-      { parameter: 'viewingTimezone', type: 'timezone', required: true, role: 'viewing-timezone' },
-    ],
-    ordering: { parameter: 'sort', values: ['calendarStart:asc'], default: 'calendarStart:asc' },
-  };
-  const calendar = await node.methods.loadOptions.getQueryModes.call(optionContext('event', [calendarWindow]));
-  assert.deepEqual(calendar.map((entry) => entry.value), ['standard', 'capability']);
+  for (const removed of ['queryMode', 'semanticQueryKey', 'semanticQueryInput', 'semanticSort', 'localDateWindows']) {
+    assert.equal(node.description.properties.some((entry) => entry.name === removed), false, `unexpected legacy field ${removed}`);
+  }
 });

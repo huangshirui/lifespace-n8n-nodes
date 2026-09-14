@@ -79,6 +79,27 @@ function detail() {
           limit: { parameter: 'limit', minimum: 1, maximum: 200, default: 100 },
           cursor: { parameter: 'cursor', type: 'string' },
         },
+        canonical: {
+          invocation: { method: 'POST', pathTemplate: '/api/v1/spaces/{spaceId}/models/{modelKey}/records/query' },
+          pipeline: ['search', 'filter', 'sort', 'cursor-pagination'],
+          search: { fields: ['name'], minLength: 1, maxLength: 100 },
+          filter: {
+            maxDepth: 8, maxNodes: 100,
+            targets: [
+              { field: 'status', kind: 'field', valueType: 'enum', operators: ['eq', 'ne'], nullable: false },
+              { field: 'score', kind: 'field', valueType: 'number', operators: ['eq', 'gte', 'isNull'], nullable: true },
+              { field: 'createdAt', kind: 'envelope', valueType: 'datetime', operators: ['gte', 'within'], nullable: false },
+            ],
+          },
+          sort: {
+            fields: ['dueDate', 'createdAt'], directions: ['asc', 'desc'], maxCriteria: 8,
+            default: [{ field: 'createdAt', direction: 'desc' }], nullPlacement: 'last', stableTieBreaker: 'record-id-asc',
+          },
+          pagination: {
+            limit: { minimum: 1, maximum: 200, default: 100 },
+            cursor: { opaque: true, binds: ['search', 'filter', 'sort'], snapshotConsistency: false },
+          },
+        },
       },
       actions: [], capabilities: [], capabilityBindings: {},
     },
@@ -118,7 +139,11 @@ const baseParameters = {
   descriptionOverride: '',
 };
 
-test('registered Agent Tool exposes semantic Generic Query and compiles it to published transport', async () => {
+test('registered Agent Tool exposes and executes Canonical Query', async () => {
+  const node = new LifeSpaceAgentTool();
+  assert.equal(node.description.properties.some((property) => property.name === 'queryMode'), false);
+  assert.equal(node.description.properties.some((property) => property.name === 'capabilityQueryKey'), false);
+
   let requested;
   const execution = context(baseParameters, (options) => {
     requested = options;
@@ -127,37 +152,53 @@ test('registered Agent Tool exposes semantic Generic Query and compiles it to pu
 
   const tool = (await new LifeSpaceAgentTool().supplyData.call(execution, 0)).response;
   assert.ok(tool.schema.properties.filters);
-  assert.ok(tool.schema.properties.localDateWindows);
+  assert.equal(Object.hasOwn(tool.schema.properties, 'localDateWindows'), false);
   assert.ok(tool.schema.properties.sort);
   assert.equal(Object.hasOwn(tool.schema.properties, 'score.gte'), false);
 
   await tool.invoke({
     search: 'milk',
     filters: [
-      { field: 'status', operator: 'in', value: ['open'] },
+      { field: 'status', operator: 'eq', value: 'open' },
       { field: 'score', operator: 'gte', value: 3 },
+      {
+        field: 'createdAt',
+        operator: 'within',
+        value: {
+          kind: 'local_date_window',
+          startDate: '2026-09-10',
+          endDateExclusive: '2026-09-11',
+          timezone: 'Asia/Shanghai',
+        },
+      },
     ],
-    localDateWindows: [{
-      field: 'createdAt',
-      dateStart: '2026-09-10',
-      dateEndExclusive: '2026-09-11',
-      timezone: 'Asia/Shanghai',
-    }],
     sort: [{ field: 'dueDate', direction: 'asc' }],
     limit: 20,
   });
 
-  assert.deepEqual(requested.qs, {
-    q: 'milk',
-    status: 'open',
-    'score.gte': 3,
-    'createdAt.dateStart': '2026-09-10',
-    'createdAt.dateEndExclusive': '2026-09-11',
-    'createdAt.timezone': 'Asia/Shanghai',
-    sort: ['dueDate:asc'],
-    limit: 20,
+  assert.equal(requested.method, 'POST');
+  assert.equal(requested.url, `${BASE_URL}/spaces/spc_test/models/${MODEL_KEY}/records/query`);
+  assert.deepEqual(requested.body, {
+    search: { text: 'milk' },
+    filter: {
+      and: [
+        { field: 'status', op: 'eq', value: 'open' },
+        { field: 'score', op: 'gte', value: 3 },
+        {
+          field: 'createdAt',
+          op: 'within',
+          value: {
+            kind: 'local_date_window',
+            startDate: '2026-09-10',
+            endDateExclusive: '2026-09-11',
+            timezone: 'Asia/Shanghai',
+          },
+        },
+      ],
+    },
+    sort: [{ field: 'dueDate', direction: 'asc' }],
+    page: { limit: 20 },
   });
-  assert.equal(requested.arrayFormat, 'repeat');
 });
 
 test('registered Agent Tool delegates Create while preserving omission semantics', async () => {

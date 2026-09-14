@@ -70,6 +70,27 @@ function model() {
         limit: { parameter: 'limit', minimum: 1, maximum: 200, default: 100 },
         cursor: { parameter: 'cursor', type: 'string' },
       },
+      canonical: {
+        invocation: { method: 'POST', pathTemplate: '/api/v1/spaces/{spaceId}/models/{modelKey}/records/query' },
+        pipeline: ['search', 'filter', 'sort', 'cursor-pagination'],
+        search: { fields: ['name'], minLength: 1, maxLength: 100 },
+        filter: {
+          maxDepth: 8, maxNodes: 100,
+          targets: [
+            { field: 'status', kind: 'field', valueType: 'enum', operators: ['eq', 'ne', 'isNull', 'isNotNull'], nullable: true },
+            { field: 'dueDate', kind: 'field', valueType: 'date', operators: ['eq', 'ne', 'lt', 'lte', 'gt', 'gte', 'within', 'isNull', 'isNotNull'], nullable: true },
+            { field: 'createdAt', kind: 'envelope', valueType: 'datetime', operators: ['eq', 'lt', 'lte', 'gt', 'gte', 'within'], nullable: false },
+          ],
+        },
+        sort: {
+          fields: ['dueDate', 'createdAt'], directions: ['asc', 'desc'], maxCriteria: 8,
+          default: [{ field: 'createdAt', direction: 'desc' }], nullPlacement: 'last', stableTieBreaker: 'record-id-asc',
+        },
+        pagination: {
+          limit: { minimum: 1, maximum: 200, default: 100 },
+          cursor: { opaque: true, binds: ['search', 'filter', 'sort'], snapshotConsistency: false },
+        },
+      },
     },
     actions: [],
     capabilities: [],
@@ -108,7 +129,7 @@ test('human Create projection sends only active fields and preserves explicit nu
   assert.deepEqual(explicitNull, { name: 'Buy food', status: null });
 });
 
-test('human Query projection uses semantic predicate IDs and exact published transport', () => {
+test('human Query projection lowers semantic predicate IDs to canonical predicates', () => {
   const predicates = queryPredicates(model());
   const status = predicates.find((entry) => entry.field === 'status');
   const due = predicates.find((entry) => entry.field === 'dueDate' && entry.operator === 'gte');
@@ -120,41 +141,56 @@ test('human Query projection uses semantic predicate IDs and exact published tra
     [queryPredicateSelector(due)]: '2026-09-13T00:00:00.000+08:00',
   });
   assert.deepEqual(projected, [
-    { field: 'status', operator: 'exact', value: 'todo' },
-    { field: 'dueDate.gte', operator: 'exact', value: '2026-09-13' },
+    { field: 'status', op: 'eq', value: 'todo' },
+    { field: 'dueDate', op: 'gte', value: '2026-09-13' },
   ]);
 });
 
 test('Agent generic query schema is semantic and compiles to LifeSpace transport', () => {
   const schema = genericQuerySchema(model());
   assert.ok(schema.properties.filters);
-  assert.ok(schema.properties.localDateWindows);
+  assert.equal(Object.hasOwn(schema.properties, 'localDateWindows'), false);
   assert.equal(Object.hasOwn(schema.properties, 'dueDate.gte'), false);
 
-  const qs = compileGenericQuery(model(), {
+  const body = compileGenericQuery(model(), {
     search: 'food',
     filters: [
-      { field: 'status', operator: 'in', value: ['todo'] },
+      { field: 'status', operator: 'eq', value: 'todo' },
       { field: 'dueDate', operator: 'gte', value: '2026-09-13' },
+      {
+        field: 'createdAt',
+        operator: 'within',
+        value: {
+          kind: 'local_date_window',
+          startDate: '2026-09-12',
+          endDateExclusive: '2026-09-13',
+          timezone: 'Asia/Shanghai',
+        },
+      },
     ],
-    localDateWindows: [{
-      field: 'createdAt',
-      dateStart: '2026-09-12',
-      dateEndExclusive: '2026-09-13',
-      timezone: 'Asia/Shanghai',
-    }],
     sort: [{ field: 'dueDate', direction: 'asc' }],
     limit: 20,
   });
 
-  assert.deepEqual(qs, {
-    q: 'food',
-    status: 'todo',
-    'dueDate.gte': '2026-09-13',
-    'createdAt.dateStart': '2026-09-12',
-    'createdAt.dateEndExclusive': '2026-09-13',
-    'createdAt.timezone': 'Asia/Shanghai',
-    sort: ['dueDate:asc'],
-    limit: 20,
+  assert.deepEqual(body, {
+    search: { text: 'food' },
+    filter: {
+      and: [
+        { field: 'status', op: 'eq', value: 'todo' },
+        { field: 'dueDate', op: 'gte', value: '2026-09-13' },
+        {
+          field: 'createdAt',
+          op: 'within',
+          value: {
+            kind: 'local_date_window',
+            startDate: '2026-09-12',
+            endDateExclusive: '2026-09-13',
+            timezone: 'Asia/Shanghai',
+          },
+        },
+      ],
+    },
+    sort: [{ field: 'dueDate', direction: 'asc' }],
+    page: { limit: 20 },
   });
 });

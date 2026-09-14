@@ -128,9 +128,12 @@ export async function getHumanQueryFilterFields(this: ILoadOptionsFunctions): Pr
   for (const predicate of queryPredicates(selected.model)) {
     const field = selected.model.fields.find((entry) => entry.key === predicate.field);
     let options: INodePropertyOptions[] | undefined;
+    const rangeValue = ['date-range', 'instant-range', 'temporal-range'].includes(predicate.valueType);
+    if (['within', 'overlaps', 'before', 'after'].includes(predicate.operator)
+      || (rangeValue && predicate.operator === 'contains')) continue;
     if (predicate.enumValues?.length) {
       options = predicate.enumValues.map((value) => ({ name: value, value }));
-    } else if (field?.relation?.lookup.supported && field.relation.cardinality === 'one') {
+    } else if (field?.relation?.lookup.supported) {
       options = relationOptions(await loadRelationTargets(this, selected.spaceId, selected.model.key, field));
     }
     result.push({
@@ -140,7 +143,9 @@ export async function getHumanQueryFilterFields(this: ILoadOptionsFunctions): Pr
       defaultMatch: false,
       canBeUsedToMatch: false,
       display: true,
-      type: options ? 'options' : mapperType(field, predicate.valueType),
+      type: ['isNull', 'isNotNull'].includes(predicate.operator)
+        ? 'boolean'
+        : options ? 'options' : mapperType(field, predicate.valueType),
       options: options ?? [],
     });
   }
@@ -176,17 +181,87 @@ export function projectMutationValues(
   return result;
 }
 
-export function projectQueryFilters(value: unknown): Array<{ field: string; operator: 'exact'; value: unknown }> {
+export type CanonicalFilter =
+  | { field: string; op: string; value?: unknown }
+  | { and: CanonicalFilter[] }
+  | { or: CanonicalFilter[] };
+
+export function projectQueryFilters(value: unknown): CanonicalFilter[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
-  const result: Array<{ field: string; operator: 'exact'; value: unknown }> = [];
+  const result: CanonicalFilter[] = [];
   for (const [selector, entry] of Object.entries(value as IDataObject)) {
-    if (entry === undefined || entry === null || entry === '') continue;
     const predicate = parseQueryPredicateSelector(selector);
     if (!predicate) continue;
+    if (predicate.operator === 'isNull' || predicate.operator === 'isNotNull') {
+      if (entry === true) result.push({ field: predicate.field, op: predicate.operator });
+      continue;
+    }
+    if (entry === undefined || entry === null || entry === '') continue;
     let projected: unknown = entry;
     if (predicate.valueType === 'date') projected = dateOnly(entry);
-    if (predicate.mode === 'enum-set' && Array.isArray(entry)) projected = entry.join(',');
-    result.push({ field: predicate.parameter, operator: 'exact', value: projected });
+    if (predicate.operator === 'in') {
+      const values = Array.isArray(entry) ? entry : [entry];
+      const children = values
+        .filter((candidate) => candidate !== undefined && candidate !== null && candidate !== '')
+        .map((candidate) => ({ field: predicate.field, op: 'eq', value: candidate }));
+      if (children.length === 1) result.push(children[0]);
+      if (children.length > 1) result.push({ or: children });
+      continue;
+    }
+    result.push({ field: predicate.field, op: predicate.operator, value: projected });
+  }
+  return result;
+}
+
+const TIME_WINDOW_SELECTOR_PREFIX = 'lsqtw1.';
+
+export function canonicalTimeWindowSelector(field: string, operator: string): string {
+  return TIME_WINDOW_SELECTOR_PREFIX
+    + Buffer.from(JSON.stringify([field, operator])).toString('base64url');
+}
+
+function parseCanonicalTimeWindowSelector(value: unknown): { field: string; operator: string } | null {
+  const raw = String(value ?? '');
+  if (!raw.startsWith(TIME_WINDOW_SELECTOR_PREFIX)) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(raw.slice(TIME_WINDOW_SELECTOR_PREFIX.length), 'base64url').toString('utf8')) as unknown;
+    if (!Array.isArray(decoded) || decoded.length !== 2 || decoded.some((entry) => typeof entry !== 'string' || !entry)) return null;
+    return { field: decoded[0], operator: decoded[1] };
+  } catch {
+    return null;
+  }
+}
+
+export async function getCanonicalTimeWindowFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+  const selected = await selectedModel(this);
+  if (!selected?.model.query.canonical) return [];
+  const operators = new Set(['within', 'overlaps', 'contains', 'before', 'after']);
+  return selected.model.query.canonical.filter.targets.flatMap((target) =>
+    target.operators
+      .filter((operator) => operators.has(operator))
+      .map((operator) => ({
+        name: `${target.field} — ${operator}`,
+        value: canonicalTimeWindowSelector(target.field, operator),
+      })));
+}
+
+export function projectCanonicalTimeWindows(value: unknown): CanonicalFilter[] {
+  const rows = Array.isArray(value) ? value : [];
+  const result: CanonicalFilter[] = [];
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const row = raw as IDataObject;
+    const target = parseCanonicalTimeWindowSelector(row.target);
+    if (!target) continue;
+    const startDate = dateOnly(row.startDate);
+    const endDateExclusive = dateOnly(row.endDateExclusive);
+    const timezone = String(row.timezone ?? '').trim();
+    if (!startDate || !endDateExclusive || !timezone) continue;
+    result.push({
+      field: target.field,
+      op: target.operator,
+      value: { kind: 'local_date_window', startDate, endDateExclusive, timezone },
+    });
   }
   return result;
 }
@@ -213,6 +288,21 @@ export function humanExecutionContext(context: IExecuteFunctions): IExecuteFunct
       if (property === 'helpers') return errorAwareHelpers(target);
       if (property !== 'getNodeParameter') return Reflect.get(target, property, receiver);
       return (name: string, itemIndex: number, fallback?: unknown, options?: unknown) => {
+        if (name === 'queryMode') {
+          const operation = String(target.getNodeParameter('operation', itemIndex, '') ?? '');
+          if (operation === 'list') {
+            const stored = String(target.getNodeParameter(name, itemIndex, '') ?? '');
+            return stored === 'capability' ? 'capability' : 'canonical';
+          }
+        }
+        if (name === 'canonicalFilters') {
+          const mapped = target.getNodeParameter('queryFilters.value', itemIndex, {}, options as never);
+          return projectQueryFilters(mapped);
+        }
+        if (name === 'canonicalTimeWindows') {
+          const rows = target.getNodeParameter('queryTimeWindows.window', itemIndex, [], options as never);
+          return projectCanonicalTimeWindows(rows);
+        }
         if (name === 'fields.value') {
           const value = target.getNodeParameter(name, itemIndex, fallback as never, options as never);
           const schema = target.getNodeParameter('fields.schema', itemIndex, []) as ResourceMapperField[];

@@ -54,6 +54,14 @@ type QuerySort = {
   direction?: 'asc' | 'desc';
 };
 
+type CanonicalFilter = {
+  field?: string;
+  op?: string;
+  value?: unknown;
+  and?: CanonicalFilter[];
+  or?: CanonicalFilter[];
+};
+
 type QueryPage = {
   items: IDataObject[];
   nextCursor: string | null;
@@ -416,6 +424,48 @@ function queryParameters(
   }
 
   return qs;
+}
+
+function canonicalQueryBody(
+  context: IExecuteFunctions,
+  itemIndex: number,
+  limit: number,
+  cursorOverride?: string,
+): IDataObject {
+  const body: IDataObject = {};
+  const search = String(context.getNodeParameter('search', itemIndex, '') ?? '').trim();
+  if (search) body.search = { text: search };
+
+  const filters = [
+    ...(context.getNodeParameter('canonicalFilters', itemIndex, []) as CanonicalFilter[]),
+    ...(context.getNodeParameter('canonicalTimeWindows', itemIndex, []) as CanonicalFilter[]),
+  ];
+  if (filters.length === 1) body.filter = filters[0] as IDataObject;
+  if (filters.length > 1) body.filter = { and: filters } as IDataObject;
+
+  const configuredSorts = context.getNodeParameter('sorts.sort', itemIndex, []) as QuerySort[];
+  const usedSortFields = new Set<string>();
+  const sorts: IDataObject[] = [];
+  for (const sort of configuredSorts) {
+    const field = String(sort.field ?? '').trim();
+    if (!field) continue;
+    const direction = String(sort.direction ?? 'asc').trim();
+    if (direction !== 'asc' && direction !== 'desc') {
+      throw new NodeOperationError(context.getNode(), `Sort direction for ${field} must be asc or desc`, { itemIndex });
+    }
+    if (usedSortFields.has(field)) {
+      throw new NodeOperationError(context.getNode(), `Sort field ${field} may be supplied only once`, { itemIndex });
+    }
+    usedSortFields.add(field);
+    sorts.push({ field, direction });
+  }
+  if (sorts.length) body.sort = sorts;
+
+  const options = context.getNodeParameter('options', itemIndex, {}) as IDataObject;
+  const configuredCursor = String(options.cursor ?? '').trim();
+  const cursor = cursorOverride ?? configuredCursor;
+  body.page = { limit, ...(cursor ? { cursor } : {}) };
+  return body;
 }
 
 function queryPage(context: IExecuteFunctions, itemIndex: number, response: unknown): QueryPage {
@@ -1117,13 +1167,14 @@ export class LifeSpace implements INodeType {
       async getSortableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const selected = await optionModel(this);
         if (!selected) return [];
-        return [
-          ...selected.model.query.sort.envelopeFields.map((fieldKey) => ({ name: humanizeKey(fieldKey), value: fieldKey })),
-          ...selected.model.query.sortable.map((fieldKey) => {
-            const field = selected.model.fields.find((entry) => entry.key === fieldKey);
-            return { name: field?.title?.trim() || humanizeKey(fieldKey), value: fieldKey };
-          }),
-        ];
+        const canonicalFields = selected.model.query.canonical?.sort.fields;
+        const fields = canonicalFields?.length
+          ? canonicalFields
+          : [...selected.model.query.sort.envelopeFields, ...selected.model.query.sortable];
+        return [...new Set(fields)].map((fieldKey) => {
+          const field = selected.model.fields.find((entry) => entry.key === fieldKey);
+          return { name: field?.title?.trim() || humanizeKey(fieldKey), value: fieldKey };
+        });
       },
     },
     resourceMapping: {
@@ -1189,21 +1240,42 @@ export class LifeSpace implements INodeType {
 
           if (operation === 'list') {
             const returnAll = this.getNodeParameter('returnAll', itemIndex, false) as boolean;
+            const canonical = String(this.getNodeParameter('queryMode', itemIndex, '') ?? '') === 'canonical';
+            const queryPageRequest = (limit: number, cursor?: string): IHttpRequestOptions => {
+              if (canonical) {
+                return {
+                  method: 'POST',
+                  url: `${baseUrl}${collectionPath}/query`,
+                  body: canonicalQueryBody(this, itemIndex, limit, cursor),
+                  json: true,
+                };
+              }
+              const qs = queryParameters(this, itemIndex, limit, cursor);
+              return {
+                method: 'GET',
+                url: `${baseUrl}${collectionPath}`,
+                qs,
+                ...(Array.isArray(qs.sort) ? { arrayFormat: 'repeat' as const } : {}),
+                json: true,
+              };
+            };
             if (!returnAll) {
               const limit = this.getNodeParameter('limit', itemIndex, 50) as number;
-              const qs = queryParameters(this, itemIndex, limit);
-              const requestOptions: IHttpRequestOptions = { method: 'GET', url: `${baseUrl}${collectionPath}`, qs, json: true };
-              if (Array.isArray(qs.sort)) requestOptions.arrayFormat = 'repeat';
-              response = await this.helpers.httpRequestWithAuthentication.call(this, 'lifeSpaceApi', requestOptions);
+              response = await this.helpers.httpRequestWithAuthentication.call(
+                this,
+                'lifeSpaceApi',
+                queryPageRequest(limit),
+              );
             } else {
               const allItems: IDataObject[] = [];
               const seenCursors = new Set<string>();
               let cursor: string | undefined;
               do {
-                const qs = queryParameters(this, itemIndex, 200, cursor);
-                const requestOptions: IHttpRequestOptions = { method: 'GET', url: `${baseUrl}${collectionPath}`, qs, json: true };
-                if (Array.isArray(qs.sort)) requestOptions.arrayFormat = 'repeat';
-                const pageResponse = await this.helpers.httpRequestWithAuthentication.call(this, 'lifeSpaceApi', requestOptions);
+                const pageResponse = await this.helpers.httpRequestWithAuthentication.call(
+                  this,
+                  'lifeSpaceApi',
+                  queryPageRequest(200, cursor),
+                );
                 const page = queryPage(this, itemIndex, pageResponse);
                 allItems.push(...page.items);
                 if (!page.nextCursor) { cursor = undefined; break; }

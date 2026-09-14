@@ -5,6 +5,11 @@ import type {
   DiscoveryField,
   DiscoveryModel,
 } from '../lifespaceDiscovery';
+import {
+  canonicalQueryPath,
+  compileGenericQuery,
+  genericQuerySchema as canonicalGenericQuerySchema,
+} from './lifeSpaceGenericQueryTool';
 
 export type AgentToolOperation = 'query' | 'create' | 'update' | 'delete' | 'action';
 export type AgentToolQueryMode = 'generic' | 'capability';
@@ -188,6 +193,7 @@ function comparisonSchema(comparison: DiscoveryComparison): JsonSchema {
 }
 
 function genericQuerySchema(model: DiscoveryModel): AgentToolSchema {
+  if (model.query.canonical) return canonicalGenericQuerySchema(model) as AgentToolSchema;
   const properties: Record<string, JsonSchema> = {};
   const dependentRequired: Record<string, string[]> = {};
   const comparableFields = new Set((model.query.comparisons ?? []).map((comparison) => comparison.field));
@@ -540,6 +546,13 @@ function recordPath(model: DiscoveryModel, config: AgentToolConfig, input: Recor
 }
 
 function queryRequest(model: DiscoveryModel, config: AgentToolConfig, input: Record<string, unknown>): AgentToolRequest {
+  if (model.query.canonical && config.queryMode !== 'capability') {
+    return {
+      method: 'POST',
+      path: canonicalQueryPath(model, config.spaceId),
+      body: compileGenericQuery(model, input),
+    };
+  }
   const qs: NonNullable<AgentToolRequest['qs']> = {};
   const schema = toolSchema(model, config);
   const validated = validateAgentToolInput(schema, input);

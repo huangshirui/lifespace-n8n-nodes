@@ -39,8 +39,8 @@ test('Agent Tool remains model-agnostic and projects Discovery semantics', async
   assert.doesNotMatch(source, /model\.key\s*===\s*['"](?:task|event|wish|day_record)['"]/u);
   assert.doesNotMatch(source, /switch\s*\(\s*model\.key\s*\)/u);
   assert.doesNotMatch(source, /create_task|query_event|complete_task/u);
-  assert.match(source, /queryPredicates\(model\)/u);
-  assert.match(source, /query\.capabilityQueries/u);
+  assert.match(source, /query\.canonical/u);
+  assert.match(source, /canonicalQueryPath\(model, spaceId\)/u);
   assert.match(source, /model\.fields/u);
 });
 
