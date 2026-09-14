@@ -169,6 +169,49 @@ export type DiscoveryQueryPagination = {
   cursor: { parameter: string; type: 'string' };
 };
 
+export type DiscoveryCanonicalFilterTarget = {
+  field: string;
+  kind: 'envelope' | 'field' | 'time-range' | 'calendar-range';
+  valueType: DiscoveryField['type'] | 'date-range' | 'instant-range' | 'temporal-range';
+  operators: string[];
+  nullable: boolean;
+  acceptsCurrentActorPersonAlias?: 'me';
+};
+
+export type DiscoveryCanonicalQuery = {
+  invocation: {
+    method: 'POST';
+    pathTemplate: string;
+  };
+  pipeline: Array<'search' | 'filter' | 'sort' | 'cursor-pagination'>;
+  search: null | {
+    fields: string[];
+    minLength: number;
+    maxLength: number;
+  };
+  filter: {
+    maxDepth: number;
+    maxNodes: number;
+    targets: DiscoveryCanonicalFilterTarget[];
+  };
+  sort: {
+    fields: string[];
+    directions: Array<'asc' | 'desc'>;
+    maxCriteria: number;
+    default: Array<{ field: string; direction: 'asc' | 'desc' }>;
+    nullPlacement: 'last';
+    stableTieBreaker: string;
+  };
+  pagination: {
+    limit: { minimum: number; maximum: number; default: number };
+    cursor: {
+      opaque: true;
+      binds: string[];
+      snapshotConsistency: false;
+    };
+  };
+};
+
 export type DiscoveryModel = {
   key: string;
   version: number;
@@ -198,6 +241,7 @@ export type DiscoveryModel = {
       genericValues: string[];
     };
     pagination: DiscoveryQueryPagination;
+    canonical?: DiscoveryCanonicalQuery;
   };
   actions: DiscoveryAction[];
   capabilities?: string[];
@@ -300,6 +344,7 @@ type SemanticDetail = {
       genericValues: string[];
     };
     pagination: DiscoveryQueryPagination;
+    canonical?: DiscoveryCanonicalQuery;
   };
   actions: DiscoveryAction[];
   capabilities: string[];
@@ -488,6 +533,7 @@ function detailedModel(detail: SemanticDetail, access: DiscoveryAccess[]): Disco
         genericValues: detail.query.sort.genericValues,
       },
       pagination: detail.query.pagination,
+      canonical: detail.query.canonical,
     },
     actions: detail.actions,
     capabilities: detail.capabilities,
@@ -750,10 +796,10 @@ export async function loadAgentToolRuntimeDiscovery(
   }
   const space = discoverySpace(progressive, spaceId);
   const model = discoveryModel(progressive, spaceId, modelKey);
-  if (!space || !model || !model.query.pagination || !Array.isArray(model.query.filters)) {
+  if (!space || !model || !model.query.canonical) {
     throw new NodeOperationError(
       context.getNode(),
-      `LifeSpace Runtime Discovery did not return complete semantic detail for ${modelKey}`,
+      `LifeSpace Runtime Discovery did not return query.canonical for ${modelKey}; Core Kernel 0.36.0 or newer is required`,
     );
   }
   return progressive;
