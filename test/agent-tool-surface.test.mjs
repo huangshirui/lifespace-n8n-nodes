@@ -140,6 +140,10 @@ const baseParameters = {
 };
 
 test('registered Agent Tool exposes and executes Canonical Query', async () => {
+  const node = new LifeSpaceAgentTool();
+  assert.equal(node.description.properties.some((property) => property.name === 'queryMode'), false);
+  assert.equal(node.description.properties.some((property) => property.name === 'capabilityQueryKey'), false);
+
   let requested;
   const execution = context(baseParameters, (options) => {
     requested = options;
