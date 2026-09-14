@@ -1167,13 +1167,14 @@ export class LifeSpace implements INodeType {
       async getSortableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const selected = await optionModel(this);
         if (!selected) return [];
-        return [
-          ...selected.model.query.sort.envelopeFields.map((fieldKey) => ({ name: humanizeKey(fieldKey), value: fieldKey })),
-          ...selected.model.query.sortable.map((fieldKey) => {
-            const field = selected.model.fields.find((entry) => entry.key === fieldKey);
-            return { name: field?.title?.trim() || humanizeKey(fieldKey), value: fieldKey };
-          }),
-        ];
+        const canonicalFields = selected.model.query.canonical?.sort.fields;
+        const fields = canonicalFields?.length
+          ? canonicalFields
+          : [...selected.model.query.sort.envelopeFields, ...selected.model.query.sortable];
+        return [...new Set(fields)].map((fieldKey) => {
+          const field = selected.model.fields.find((entry) => entry.key === fieldKey);
+          return { name: field?.title?.trim() || humanizeKey(fieldKey), value: fieldKey };
+        });
       },
     },
     resourceMapping: {
