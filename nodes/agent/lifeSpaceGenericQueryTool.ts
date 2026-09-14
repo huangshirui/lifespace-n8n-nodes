@@ -103,7 +103,9 @@ function filterBranch(model: DiscoveryModel, target: DiscoveryCanonicalFilterTar
   };
   const required = ['field', 'operator'];
   if (operator !== 'isNull' && operator !== 'isNotNull') {
-    properties.value = ['within', 'overlaps', 'before', 'after'].includes(operator)
+    const rangeOperator = ['within', 'overlaps', 'before', 'after'].includes(operator)
+      || (operator === 'contains' && ['date-range', 'instant-range', 'temporal-range'].includes(target.valueType));
+    properties.value = rangeOperator
       ? rangeValueSchema(target)
       : operator === 'kindIs'
         ? { type: 'string', enum: ['date', 'instant'] }
