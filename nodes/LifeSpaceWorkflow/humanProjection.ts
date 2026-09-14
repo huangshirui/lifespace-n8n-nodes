@@ -128,7 +128,9 @@ export async function getHumanQueryFilterFields(this: ILoadOptionsFunctions): Pr
   for (const predicate of queryPredicates(selected.model)) {
     const field = selected.model.fields.find((entry) => entry.key === predicate.field);
     let options: INodePropertyOptions[] | undefined;
-    if (['within', 'overlaps', 'before', 'after'].includes(predicate.operator)) continue;
+    const rangeValue = ['date-range', 'instant-range', 'temporal-range'].includes(predicate.valueType);
+    if (['within', 'overlaps', 'before', 'after'].includes(predicate.operator)
+      || (rangeValue && predicate.operator === 'contains')) continue;
     if (predicate.enumValues?.length) {
       options = predicate.enumValues.map((value) => ({ name: value, value }));
     } else if (field?.relation?.lookup.supported) {
@@ -233,7 +235,7 @@ function parseCanonicalTimeWindowSelector(value: unknown): { field: string; oper
 export async function getCanonicalTimeWindowFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
   const selected = await selectedModel(this);
   if (!selected?.model.query.canonical) return [];
-  const operators = new Set(['within', 'overlaps', 'before', 'after']);
+  const operators = new Set(['within', 'overlaps', 'contains', 'before', 'after']);
   return selected.model.query.canonical.filter.targets.flatMap((target) =>
     target.operators
       .filter((operator) => operators.has(operator))
