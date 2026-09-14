@@ -69,7 +69,7 @@ Runtime Discovery determines which Spaces, Record Types, fields, queries, Action
 The package deliberately exposes two different projections over the same LifeSpace Runtime Discovery semantics:
 
 - **LifeSpace** is the human-authored workflow node. Create/Update fields are generated through n8n Resource Mapper from the selected Record Type, so field type, required state, enum values, calendar dates and supported single relations determine the control automatically. List / Query exposes semantic predicates such as `Status — Is One Of` or `Due Date — After or Equal` instead of asking the workflow author to choose a filter type first. Multi-value relations keep their dedicated multi-select UX.
-- **LifeSpace Agent Tool** is the native AI Tool surface. Its schema is generated for the model: generic queries expose semantic `field` / `operator` / `value` inputs, and the adapter compiles those inputs to the exact transport names published by LifeSpace. Capability Queries consume the grouped schema published by Runtime Discovery.
+- **LifeSpace Agent Tool** is the native AI Tool surface. Its schema is generated from `query.canonical`: queries expose semantic `field` / `operator` / `value` inputs, and the adapter compiles them into the same structured Canonical Query used by human workflows.
 
 The human workflow node is not exposed through `usableAsTool`; this avoids maintaining two competing Agent Tool surfaces with different schema behavior.
 
@@ -81,7 +81,7 @@ Calendar-backed models use canonical `capabilityBindings.calendar` field roles i
 
 ## LifeSpace contract compatibility
 
-This package follows the current LifeSpace Core Kernel `0.35.0` contract family. It consumes Runtime/Discovery semantics only; Eventing configuration and webhook delivery semantics are owned independently by Integration/Eventing `0.1.0`.
+This package follows the current LifeSpace Core Kernel `0.36.0` contract family. It consumes Runtime/Discovery semantics only; Eventing configuration and webhook delivery semantics are owned independently by Integration/Eventing `0.1.0`.
 
 The UX depends on these Kernel capabilities:
 
@@ -102,7 +102,8 @@ The UX depends on these Kernel capabilities:
 - `0.32.0`: `modelKey` becomes the sole Runtime address and canonical CRUD/Action paths move under `/models/{modelKey}/records`.
 - `0.33.0`: canonical structural `timeRanges` become available in progressive semantic detail without implying an overlap query API.
 - `0.34.0`: explicit `eq/lt/lte/gt/gte` comparison transports, first-class `createdAt` / `updatedAt` envelope comparisons and Core-owned datetime local-date-window conversion become discoverable.
-- `0.35.0`: grouped `query.capabilityQueries` adds the preferred `calendar.window` viewing-window query with explicit IANA viewing timezone and deterministic mixed all-day/timed ordering.
+- `0.35.0`: grouped `query.capabilityQueries` introduced capability-owned compatibility queries.
+- `0.36.0`: `query.canonical` unifies Search, typed Boolean Filter, multi-Sort and cursor Pagination behind `POST .../records/query`; n8n derives both Workflow and Agent query surfaces from this descriptor.
 
 The adapter prefers the `0.27+` progressive flow while configuring a node:
 
@@ -121,6 +122,17 @@ Execution is deliberately narrower. Get/List/Create/Update/Delete call the canon
 The legacy aggregate `GET /me/_discovery` remains an intentional design-time compatibility fallback. Neither cached Discovery nor relation lookup is treated as authorization proof; every mutation still goes through canonical LifeSpace Runtime enforcement.
 
 Ordinary Record CRUD/Action routes remain model-contract surfaces derived from published Model Definitions; the n8n adapter does not maintain a second copy of those schemas.
+
+## Canonical Query
+
+New Workflow and Agent configurations expose one query model:
+
+- **Search** is a top-level retrieval facet when the selected Record Type publishes searchable fields.
+- **Filters** come from `query.canonical.filter.targets`; scalar, relation, null and local-date-window predicates lower to the Canonical Filter AST.
+- **Sorts** come from `query.canonical.sort.fields` and preserve user priority.
+- **Return All**, **Limit**, and the optional opaque **Cursor** use canonical cursor pagination.
+
+Execution sends `POST /spaces/{spaceId}/models/{modelKey}/records/query` with a structured body. The current UI does not expose Standard Query, Capability Query, or transport parameter names. Stored workflows that explicitly selected a legacy Capability Query remain executable through a hidden compatibility path, but new configurations cannot create that split.
 
 ## Expressions and variables
 
