@@ -140,6 +140,22 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
   return result;
 }
 
+function canonicalOnlyExecutionContext(context: IExecuteFunctions): IExecuteFunctions {
+  const human = humanExecutionContext(context);
+  return new Proxy(human, {
+    get(target, property, receiver) {
+      if (property !== 'getNodeParameter') return Reflect.get(target, property, receiver);
+      return (name: string, itemIndex: number, fallback?: unknown, options?: unknown) => {
+        if (name === 'queryMode') {
+          const operation = String(context.getNodeParameter('operation', itemIndex, '') ?? '');
+          if (operation === 'list') return 'canonical';
+        }
+        return target.getNodeParameter(name, itemIndex, fallback as never, options as never);
+      };
+    },
+  });
+}
+
 export class LifeSpaceWorkflow extends LifeSpace {
   constructor() {
     super();
@@ -171,7 +187,7 @@ export class LifeSpaceWorkflow extends LifeSpace {
   }
 
   async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
-    const executions = await LifeSpace.prototype.execute.call(humanExecutionContext(this));
+    const executions = await LifeSpace.prototype.execute.call(canonicalOnlyExecutionContext(this));
     return restoreLifeSpaceContinueOnFailErrors(executions);
   }
 }
