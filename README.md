@@ -154,9 +154,9 @@ The same applies to ordinary values such as Record ID, Search, Return All, Limit
 Two boundaries are intentional:
 
 - **Resource** and **Operation** are structural node controls and do not accept expressions because they determine which parameter schema and execution path the node has.
-- **Fields**, **Filters**, Capability Query parameters and **Action Input** are generated from Runtime Discovery. Their mapper containers are structural, while generated values remain expression-capable.
+- **Fields**, **Filters**, **Time Window Filters** and **Action Input** are generated from Runtime Discovery. Their mapper containers are structural, while generated values remain expression-capable.
 
-In Standard Query, **Filters** is a Discovery-driven Resource Mapper. Adding a filter selects a published semantic predicate such as `Due Date — Before`; n8n then renders the value control from the underlying field type. **Sorts** remains an ordered structural list because sort priority is part of workflow structure rather than per-item data.
+For List / Query, **Filters** is a Discovery-driven Resource Mapper. Adding a filter selects a predicate from `query.canonical`, such as `Due Date — After or Equal`; n8n renders the value control from the field type. **Time Window Filters** render typed `local_date_window` operands, while **Sorts** remains an ordered structural list because sort priority is part of workflow structure rather than per-item data.
 
 If **Record Type** itself varies per input item and those Record Types have different schemas, one discovery-generated mapper cannot safely represent every possible schema at design time. In that case, branch to separate LifeSpace nodes per schema or use **API Request** for a deliberately fully dynamic request.
 
@@ -215,22 +215,17 @@ If a workflow intentionally needs to bind a known version, add **Concurrency Opt
 
 ### List / Query
 
-**Query Type** separates ordinary record query UX from capability-owned query semantics:
+List / Query exposes the single LifeSpace Canonical Query model:
 
-- **Records** is the normal query surface and exposes optional **Search**, Discovery-driven semantic **Filters**, optional **Advanced Local Date Windows**, generic **Sorts**, **Return All** and **Limit**;
-- each Filter entry represents an allowed field/operator pair published by LifeSpace, for example `Status — Is One Of`, `Due Date — Before` or `Created At — After or Equal`; the adapter compiles the selected semantic predicate to the exact transport parameter published by Discovery;
-- **Capability Query** is offered only when the selected Record Type publishes `query.capabilityQueries`; its selector, parameters and ordering are loaded from Runtime Discovery;
-- **Return All** follows `nextCursor` automatically, while **Limit** bounds a single-page query.
+- optional **Search** over fields published as searchable;
+- **Filters** generated from the selected Record Type's canonical targets and operators;
+- **Time Window Filters** for typed local-date windows, including Calendar's semantic `when` target;
+- ordered **Sorts** generated from canonical sortable fields;
+- **Return All**, **Limit**, and an optional opaque **Cursor**.
 
-Advanced Local Date Windows are shown separately because a local calendar window is a structured field/start/end/timezone input rather than a scalar predicate. The adapter sends the published date-window parameter names and IANA timezone unchanged; Core owns timezone/DST conversion. Existing persisted legacy `exact/from/to` filters preserve the inclusive `To` behavior.
+The node sends one structured `POST .../records/query` request per page. Multiple filters compose with `AND`; enum multi-select convenience compiles to `OR` of canonical equality predicates. Relation membership uses canonical `contains`. Core remains responsible for validation, timezone/DST conversion, authorization, null-last ordering and cursor identity.
 
-Generic Search/Filters/Sorts are intentionally hidden in Capability Query mode until LifeSpace publishes machine-readable facet-composability metadata. This prevents the adapter from guessing which generic parameters may be mixed with a grouped capability query.
-
-Use **Sorts → Add Sort** in Records mode to add zero or more sort criteria in priority order. Sortable model fields use authoritative `title` metadata from Runtime Discovery, while envelope fields such as `createdAt` / `updatedAt` are offered only when Discovery advertises them. Multiple criteria are sent as ordered repeated `sort=field:direction` query parameters.
-
-Advanced **Options** contain manual **Cursor** as an escape hatch.
-
-If Sorts is omitted, the adapter omits the query parameter and LifeSpace supplies its deterministic default order. Existing workflow exports that still contain the former single `options.sortField` / `options.sortDirection` parameters remain executable for compatibility.
+New configurations do not expose Standard Query or Capability Query. Stored workflows that explicitly selected the previous Capability Query remain executable through a hidden compatibility path.
 
 ### Execute Action
 
@@ -260,13 +255,13 @@ Use **LifeSpace Agent Tool** when connecting LifeSpace to an n8n AI Agent. This 
 
 Configure the Tool's structural scope — Space, Record Type and operation — in the node. The Tool then derives its model-facing name, description and input schema from Runtime Discovery, so multiple LifeSpace Tools can distinguish their configured purpose without requiring handwritten descriptions.
 
-For Generic Query, the model receives semantic inputs such as:
+For Canonical Query, the model receives semantic inputs such as:
 
 ```json
 {
   "search": "food",
   "filters": [
-    { "field": "status", "operator": "in", "value": ["todo"] },
+    { "field": "status", "operator": "eq", "value": "pending" },
     { "field": "dueDate", "operator": "gte", "value": "2026-09-13" }
   ],
   "sort": [{ "field": "dueDate", "direction": "asc" }],
@@ -274,9 +269,9 @@ For Generic Query, the model receives semantic inputs such as:
 }
 ```
 
-The adapter validates those field/operator pairs against Discovery and compiles them to the exact LifeSpace query transport. The model does not need to know transport names such as `dueDate.gte`. Local date windows are likewise semantic inputs and Core remains responsible for timezone/DST conversion.
+The adapter validates fields and operators against `query.canonical` and compiles them into the same structured Canonical Filter/Sort/Page request used by the human Workflow node. Local date windows remain explicit typed values; Core owns timezone and DST conversion.
 
-Create/Update schemas are generated from writable model fields. Optional fields that the model does not provide are omitted rather than synthesized as empty values. Actions and Capability Queries remain metadata-driven, and adding a future Record Type does not require a model-specific `create_*` or `query_*` node implementation.
+Create/Update schemas are generated from writable model fields. Optional fields that the model does not provide are omitted rather than synthesized as empty values. Actions remain metadata-driven, and adding a future Record Type does not require a model-specific `create_*` or `query_*` node implementation.
 
 ## Use the LifeSpace Trigger
 
