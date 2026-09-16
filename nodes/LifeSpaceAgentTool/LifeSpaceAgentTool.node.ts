@@ -66,8 +66,7 @@ export class LifeSpaceAgentTool extends LifeSpaceTool {
 
   async supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {
     const operation = this.getNodeParameter('operation', itemIndex) as AgentToolOperation;
-    const storedQueryMode = String(this.getNodeParameter('queryMode', itemIndex, '') ?? '');
-    if (operation !== 'query' || storedQueryMode === 'capability') {
+    if (operation !== 'query') {
       return LifeSpaceTool.prototype.supplyData.call(this, itemIndex);
     }
 
