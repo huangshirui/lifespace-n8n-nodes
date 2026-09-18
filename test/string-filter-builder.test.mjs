@@ -18,8 +18,13 @@ function selector(field, operator, valueType) {
   });
 }
 
+const context = {
+  getNode: () => ({ name: 'LifeSpace' }),
+};
+
 test('string filter builder lowers A AND (B OR C) into the canonical Boolean AST', () => {
   const filters = projectHumanFilterBuilder(
+    context,
     'all',
     [{
       predicate: selector('status', 'eq', 'enum'),
@@ -71,6 +76,7 @@ test('string filter builder lowers A AND (B OR C) into the canonical Boolean AST
 
 test('string values are parsed back to canonical number, integer and boolean values', () => {
   const filters = projectHumanFilterBuilder(
+    context,
     'all',
     [
       { predicate: selector('score', 'gte', 'number'), value: '12.5' },
@@ -91,6 +97,7 @@ test('string values are parsed back to canonical number, integer and boolean val
 
 test('TemporalRange JSON strings keep canonical shape and normalize date variants', () => {
   const filters = projectHumanFilterBuilder(
+    context,
     'all',
     [{
       predicate: selector('when', 'overlaps', 'temporal_range'),
