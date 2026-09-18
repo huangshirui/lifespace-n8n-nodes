@@ -9,6 +9,7 @@ import { LifeSpace } from '../LifeSpace/LifeSpace.node';
 import { restoreLifeSpaceContinueOnFailErrors } from './lifeSpaceErrorProjection';
 import {
   getCanonicalTimeWindowFields,
+  getHumanActionInputFields,
   getHumanQueryFilterFields,
   getHumanRecordFields,
   humanExecutionContext,
@@ -80,6 +81,18 @@ function queryTimeWindowsProperty(): INodeProperties {
   };
 }
 
+function queryViewingTimezoneProperty(): INodeProperties {
+  return {
+    displayName: 'Viewing Timezone',
+    name: 'queryViewingTimezone',
+    type: 'string',
+    default: '',
+    placeholder: 'Asia/Shanghai',
+    displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+    description: 'IANA timezone used only when a TemporalRange field is sorted. LifeSpace requires this context to compare date and instant variants deterministically.',
+  };
+}
+
 function humanProperties(properties: INodeProperties[]): INodeProperties[] {
   const result: INodeProperties[] = [];
   for (const property of properties) {
@@ -131,7 +144,10 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
     }
 
     if (property.name === 'sorts') {
-      result.push({ ...property, displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } } });
+      result.push(
+        { ...property, displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } } },
+        queryViewingTimezoneProperty(),
+      );
       continue;
     }
 
@@ -181,7 +197,9 @@ export class LifeSpaceWorkflow extends LifeSpace {
       resourceMapping: {
         ...(node.methods?.resourceMapping ?? {}),
         getHumanRecordFields,
+        getHumanActionInputFields,
         getHumanQueryFilterFields,
+        getActionInputFields: getHumanActionInputFields,
       },
     };
   }
