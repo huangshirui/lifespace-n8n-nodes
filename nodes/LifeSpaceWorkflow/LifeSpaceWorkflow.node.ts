@@ -47,8 +47,7 @@ function filterConditionValues(): INodeProperties[] {
       options: [],
       default: '',
       required: true,
-      // eslint-disable-next-line n8n-nodes-base/node-param-description-missing-from-dynamic-options
-      description: 'Operators published by LifeSpace for the selected field',
+      description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
     },
     {
       displayName: 'Value',
