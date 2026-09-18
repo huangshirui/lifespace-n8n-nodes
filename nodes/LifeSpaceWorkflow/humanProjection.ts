@@ -7,6 +7,7 @@ import type {
   ResourceMapperField,
   ResourceMapperFields,
 } from 'n8n-workflow';
+import { NodeOperationError } from 'n8n-workflow';
 import {
   decodeRecordTypeSelector,
   discoveryModel,
@@ -290,10 +291,17 @@ function structuredQueryValue(predicate: QueryPredicate): boolean {
   ].includes(String(predicate.valueType));
 }
 
-function parseHumanFilterValue(predicate: QueryPredicate, value: unknown): unknown {
+function parseHumanFilterValue(
+  context: Pick<IExecuteFunctions, 'getNode'>,
+  predicate: QueryPredicate,
+  value: unknown,
+): unknown {
   const raw = String(value ?? '').trim();
   if (!raw) {
-    throw new Error(`Filter ${predicate.field} — ${predicate.operatorLabel} requires a value`);
+    throw new NodeOperationError(
+      context.getNode(),
+      `Filter ${predicate.field} — ${predicate.operatorLabel} requires a value`,
+    );
   }
 
   if (structuredQueryValue(predicate)) {
@@ -301,12 +309,14 @@ function parseHumanFilterValue(predicate: QueryPredicate, value: unknown): unkno
     try {
       parsed = JSON.parse(raw);
     } catch {
-      throw new Error(
+      throw new NodeOperationError(
+        context.getNode(),
         `Filter ${predicate.field} — ${predicate.operatorLabel} requires a JSON object value`,
       );
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error(
+      throw new NodeOperationError(
+        context.getNode(),
         `Filter ${predicate.field} — ${predicate.operatorLabel} requires a JSON object value`,
       );
     }
@@ -316,7 +326,7 @@ function parseHumanFilterValue(predicate: QueryPredicate, value: unknown): unkno
   if (predicate.valueType === 'integer') {
     const parsed = Number(raw);
     if (!Number.isInteger(parsed)) {
-      throw new Error(`Filter ${predicate.field} requires an integer value`);
+      throw new NodeOperationError(context.getNode(), `Filter ${predicate.field} requires an integer value`);
     }
     return parsed;
   }
@@ -324,7 +334,7 @@ function parseHumanFilterValue(predicate: QueryPredicate, value: unknown): unkno
   if (predicate.valueType === 'number') {
     const parsed = Number(raw);
     if (!Number.isFinite(parsed)) {
-      throw new Error(`Filter ${predicate.field} requires a numeric value`);
+      throw new NodeOperationError(context.getNode(), `Filter ${predicate.field} requires a numeric value`);
     }
     return parsed;
   }
@@ -332,14 +342,17 @@ function parseHumanFilterValue(predicate: QueryPredicate, value: unknown): unkno
   if (predicate.valueType === 'boolean') {
     if (raw.toLowerCase() === 'true') return true;
     if (raw.toLowerCase() === 'false') return false;
-    throw new Error(`Filter ${predicate.field} requires true or false`);
+    throw new NodeOperationError(context.getNode(), `Filter ${predicate.field} requires true or false`);
   }
 
   if (predicate.valueType === 'date') return dateOnly(raw);
   return raw;
 }
 
-function projectHumanFilterCondition(row: HumanFilterCondition): CanonicalFilter | null {
+function projectHumanFilterCondition(
+  context: Pick<IExecuteFunctions, 'getNode'>,
+  row: HumanFilterCondition,
+): CanonicalFilter | null {
   const predicate = parseQueryPredicateSelector(row.predicate);
   if (!predicate) return null;
 
@@ -353,7 +366,10 @@ function projectHumanFilterCondition(row: HumanFilterCondition): CanonicalFilter
       .map((value) => value.trim())
       .filter(Boolean);
     if (!values.length) {
-      throw new Error(`Filter ${predicate.field} — ${predicate.operatorLabel} requires a value`);
+      throw new NodeOperationError(
+        context.getNode(),
+        `Filter ${predicate.field} — ${predicate.operatorLabel} requires a value`,
+      );
     }
     const children = values.map((value) => ({
       field: predicate.field,
@@ -366,7 +382,7 @@ function projectHumanFilterCondition(row: HumanFilterCondition): CanonicalFilter
   return {
     field: predicate.field,
     op: predicate.operator,
-    value: parseHumanFilterValue(predicate, row.value),
+    value: parseHumanFilterValue(context, predicate, row.value),
   };
 }
 
@@ -377,12 +393,13 @@ function combineHumanFilters(match: unknown, filters: CanonicalFilter[]): Canoni
 }
 
 export function projectHumanFilterBuilder(
+  context: Pick<IExecuteFunctions, 'getNode'>,
   match: unknown,
   conditions: unknown,
   groups: unknown,
 ): CanonicalFilter[] {
   const children = humanFilterConditions(conditions)
-    .map(projectHumanFilterCondition)
+    .map((row) => projectHumanFilterCondition(context, row))
     .filter((entry): entry is CanonicalFilter => entry !== null);
 
   const groupRows = Array.isArray(groups)
@@ -393,7 +410,7 @@ export function projectHumanFilterBuilder(
 
   for (const group of groupRows) {
     const nested = humanFilterConditions(group.conditions)
-      .map(projectHumanFilterCondition)
+      .map((row) => projectHumanFilterCondition(context, row))
       .filter((entry): entry is CanonicalFilter => entry !== null);
     const combined = combineHumanFilters(group.match, nested);
     if (combined) children.push(combined);
@@ -529,7 +546,7 @@ export function humanExecutionContext(context: IExecuteFunctions): IExecuteFunct
             || (Array.isArray(groups) && groups.length > 0);
           if (hasBuilder) {
             const match = target.getNodeParameter('queryFilterMatch', itemIndex, 'all', options as never);
-            return projectHumanFilterBuilder(match, conditions, groups);
+            return projectHumanFilterBuilder(target, match, conditions, groups);
           }
           const mapped = target.getNodeParameter('queryFilters.value', itemIndex, {}, options as never);
           return projectQueryFilters(mapped);
