@@ -5,6 +5,10 @@ import test from 'node:test';
 
 const require = createRequire(import.meta.url);
 const { LifeSpaceWorkflow } = require('../dist/nodes/LifeSpaceWorkflow/LifeSpaceWorkflow.node.js');
+const {
+  getCanonicalFilterFields,
+  getCanonicalFilterOperators,
+} = require('../dist/nodes/LifeSpaceWorkflow/humanProjection.js');
 
 function property(node, name) {
   const value = node.description.properties.find((entry) => entry.name === name);
@@ -21,7 +25,10 @@ function semanticDetail(modelKey, capabilityQueries = []) {
       display: { singular: modelKey, plural: `${modelKey}s` },
       description: null,
       declaredAccess: ['read', 'write'],
-      fields: [], defaults: {},
+      fields: [
+        { key: 'status', title: 'Status', type: 'enum', values: ['pending', 'completed'] },
+        { key: 'dueDate', title: 'Due Date', type: 'date' },
+      ], defaults: {},
       query: {
         searchable: [], filterable: [], sortable: [], search: null, filters: [],
         comparisons: [], capabilityQueries,
@@ -35,13 +42,34 @@ function semanticDetail(modelKey, capabilityQueries = []) {
           limit: { parameter: 'limit', minimum: 1, maximum: 200, default: 100 },
           cursor: { parameter: 'cursor', type: 'string' },
         },
+        canonical: {
+          invocation: { method: 'POST', pathTemplate: '/api/v1/spaces/{spaceId}/models/{modelKey}/records/query' },
+          pipeline: ['search', 'filter', 'sort', 'cursor-pagination'],
+          search: { fields: [], minLength: 1, maxLength: 100 },
+          filter: {
+            maxDepth: 8,
+            maxNodes: 100,
+            targets: [
+              { field: 'status', kind: 'field', valueType: 'enum', operators: ['eq', 'ne'], nullable: false },
+              { field: 'dueDate', kind: 'field', valueType: 'date', operators: ['eq', 'lt', 'gte', 'isNull'], nullable: true },
+            ],
+          },
+          sort: {
+            fields: ['dueDate'], directions: ['asc', 'desc'], maxCriteria: 8,
+            default: [{ field: 'dueDate', direction: 'asc' }], nullPlacement: 'last', stableTieBreaker: 'record-id-asc',
+          },
+          pagination: {
+            limit: { minimum: 1, maximum: 200, default: 100 },
+            cursor: { opaque: true, binds: ['search', 'filter', 'sort'], snapshotConsistency: false },
+          },
+        },
       },
       actions: [], capabilities: capabilityQueries.length ? ['calendar'] : [], capabilityBindings: {},
     },
   };
 }
 
-function optionContext(modelKey, capabilityQueries = []) {
+function optionContext(modelKey, capabilityQueries = [], current = {}) {
   const inventory = {
     data: {
       semanticDetailPathTemplate: '/api/v1/spaces/{spaceId}/_discovery/models/{modelKey}',
@@ -53,7 +81,7 @@ function optionContext(modelKey, capabilityQueries = []) {
       spaces: [{ spaceId: 'spc_test', spaceName: 'Test Space', models: [{ modelKey, access: ['read', 'write'] }] }],
     },
   };
-  const parameters = { spaceId: 'spc_test', recordType: modelKey, operation: 'list' };
+  const parameters = { spaceId: 'spc_test', recordType: modelKey, operation: 'list', ...current };
   return {
     getCredentials: async () => ({ baseUrl: 'https://example.invalid/api/v1' }),
     getNode: () => ({ name: 'LifeSpace' }),
@@ -129,4 +157,25 @@ test('List Query exposes one canonical Search, grouped Filter, Sort, and Paginat
   for (const removed of ['queryMode', 'semanticQueryKey', 'semanticQueryInput', 'semanticSort', 'localDateWindows']) {
     assert.equal(node.description.properties.some((entry) => entry.name === removed), false, `unexpected legacy field ${removed}`);
   }
+});
+
+
+test('Operator options are scoped to the Field selected in the same condition row', async () => {
+  const fieldContext = optionContext('task');
+  const fields = await getCanonicalFilterFields.call(fieldContext);
+  assert.deepEqual(fields, [
+    { name: 'Status', value: 'status' },
+    { name: 'Due Date', value: 'dueDate' },
+  ]);
+
+  const statusContext = optionContext('task', [], { '&field': 'status' });
+  const statusOperators = await getCanonicalFilterOperators.call(statusContext);
+  assert.deepEqual(statusOperators.map((entry) => entry.name), ['Equals', 'Does Not Equal']);
+
+  const dueDateContext = optionContext('task', [], { '&field': 'dueDate' });
+  const dueDateOperators = await getCanonicalFilterOperators.call(dueDateContext);
+  assert.deepEqual(
+    dueDateOperators.map((entry) => entry.name),
+    ['Equals', 'Before / Less Than', 'After or Equal / Greater Than or Equal', 'Is Empty'],
+  );
 });
