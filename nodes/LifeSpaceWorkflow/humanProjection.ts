@@ -31,10 +31,18 @@ import {
 import { projectLifeSpaceHttpError } from './lifeSpaceErrorProjection';
 
 function mapperType(field: DiscoveryField | undefined, valueType?: QueryPredicate['valueType']): FieldType {
-  const type = valueType ?? field?.type ?? 'string';
+  const type = String(valueType ?? field?.type ?? 'string');
   if (type === 'integer' || type === 'number') return 'number';
   if (type === 'boolean') return 'boolean';
-  if (type === 'date' || type === 'datetime') return 'dateTime';
+  if (type === 'date' || type === 'instant' || type === 'datetime') return 'dateTime';
+  if ([
+    'range<date>',
+    'range<instant>',
+    'temporal_range',
+    'date-range',
+    'instant-range',
+    'temporal-range',
+  ].includes(type)) return 'object';
   if (type === 'person_list' || type === 'record_list') return 'array';
   if (type === 'enum') return 'options';
   return 'string';
@@ -116,6 +124,16 @@ export async function getHumanRecordFields(this: ILoadOptionsFunctions): Promise
   };
 }
 
+export async function getHumanActionInputFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
+  const selected = await selectedModel(this);
+  if (!selected) return { fields: [] };
+  const actionKey = loadOptionParameter(this, 'actionKey');
+  const action = selected.model.actions.find((entry) => entry.key === actionKey);
+  return action
+    ? { fields: action.input.fields.map((field) => mapperField(field, field.key, field.required === true)) }
+    : { fields: [] };
+}
+
 function predicateLabel(predicate: QueryPredicate): string {
   return `${predicate.fieldLabel} — ${predicate.operatorLabel}`;
 }
@@ -128,10 +146,14 @@ export async function getHumanQueryFilterFields(this: ILoadOptionsFunctions): Pr
   for (const predicate of queryPredicates(selected.model)) {
     const field = selected.model.fields.find((entry) => entry.key === predicate.field);
     let options: INodePropertyOptions[] | undefined;
-    const rangeValue = ['date-range', 'instant-range', 'temporal-range'].includes(predicate.valueType);
-    if (['within', 'overlaps', 'before', 'after'].includes(predicate.operator)
-      || (rangeValue && predicate.operator === 'contains')) continue;
-    if (predicate.enumValues?.length) {
+    if (predicate.operator === 'within') continue;
+    if (predicate.operator === 'kindIs'
+      && ['temporal_range', 'temporal-range'].includes(predicate.valueType)) {
+      options = [
+        { name: 'Date', value: 'date' },
+        { name: 'Instant', value: 'instant' },
+      ];
+    } else if (predicate.enumValues?.length) {
       options = predicate.enumValues.map((value) => ({ name: value, value }));
     } else if (field?.relation?.lookup.supported) {
       options = relationOptions(await loadRelationTargets(this, selected.spaceId, selected.model.key, field));
@@ -159,6 +181,48 @@ function dateOnly(value: IDataObject[string]): IDataObject[string] {
   return match ? match[1] : value;
 }
 
+function objectValue(value: unknown): IDataObject | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as IDataObject : null;
+}
+
+function normalizeMutationValue(type: string, value: IDataObject[string]): IDataObject[string] {
+  if (type === 'date') return dateOnly(value);
+  const object = objectValue(value);
+  if (!object) return value;
+
+  if (type === 'range<date>') {
+    return {
+      ...object,
+      start: dateOnly(object.start),
+      endExclusive: dateOnly(object.endExclusive),
+    };
+  }
+  if (type === 'temporal_range' && object.kind === 'date') {
+    return {
+      ...object,
+      start: dateOnly(object.start),
+      endExclusive: dateOnly(object.endExclusive),
+    };
+  }
+  return value;
+}
+
+function normalizeQueryRangeValue(
+  valueType: QueryPredicate['valueType'],
+  value: IDataObject[string],
+): IDataObject[string] {
+  const object = objectValue(value);
+  if (!object) return value;
+  if (['range<date>', 'date-range'].includes(valueType) || object.kind === 'date') {
+    return {
+      ...object,
+      start: dateOnly(object.start),
+      endExclusive: dateOnly(object.endExclusive),
+    };
+  }
+  return value;
+}
+
 export function projectMutationValues(
   value: unknown,
   schema: ResourceMapperField[] = [],
@@ -176,7 +240,7 @@ export function projectMutationValues(
       continue;
     }
     if (entry === undefined) continue;
-    result[parsed.field] = parsed.type === 'date' ? dateOnly(entry) : entry;
+    result[parsed.field] = normalizeMutationValue(parsed.type, entry);
   }
   return result;
 }
@@ -199,6 +263,7 @@ export function projectQueryFilters(value: unknown): CanonicalFilter[] {
     if (entry === undefined || entry === null || entry === '') continue;
     let projected: unknown = entry;
     if (predicate.valueType === 'date') projected = dateOnly(entry);
+    else projected = normalizeQueryRangeValue(predicate.valueType, entry);
     if (predicate.operator === 'in') {
       const values = Array.isArray(entry) ? entry : [entry];
       const children = values
@@ -294,6 +359,15 @@ export function humanExecutionContext(context: IExecuteFunctions): IExecuteFunct
             const stored = String(target.getNodeParameter(name, itemIndex, '') ?? '');
             return stored === 'capability' ? 'capability' : 'canonical';
           }
+        }
+        if (name === 'options') {
+          const base = target.getNodeParameter(name, itemIndex, fallback as never, options as never);
+          const operation = String(target.getNodeParameter('operation', itemIndex, '') ?? '');
+          const timezone = operation === 'list'
+            ? String(target.getNodeParameter('queryViewingTimezone', itemIndex, '') ?? '').trim()
+            : '';
+          if (!timezone || !base || typeof base !== 'object' || Array.isArray(base)) return base;
+          return { ...(base as IDataObject), viewingTimezone: timezone };
         }
         if (name === 'canonicalFilters') {
           const mapped = target.getNodeParameter('queryFilters.value', itemIndex, {}, options as never);

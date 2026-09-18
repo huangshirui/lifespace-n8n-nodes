@@ -80,16 +80,21 @@ export type DiscoveryAction = {
   };
 };
 
-export type DiscoveryCalendarCapabilityBinding = {
-  allDayField: string;
-  timedStartField: string;
-  timedEndField: string;
-  startTimezoneField: string;
-  endTimezoneField: string;
-  allDayStartField: string;
-  allDayEndExclusiveField: string;
-  attendeePersonField?: string;
-};
+export type DiscoveryCalendarCapabilityBinding =
+  | {
+      rangeField: string;
+      attendeePersonField?: string;
+    }
+  | {
+      allDayField: string;
+      timedStartField: string;
+      timedEndField: string;
+      startTimezoneField: string;
+      endTimezoneField: string;
+      allDayStartField: string;
+      allDayEndExclusiveField: string;
+      attendeePersonField?: string;
+    };
 
 export type DiscoveryTemporalCapabilityBinding = {
   subjectPersonField: string;
@@ -183,7 +188,13 @@ export type DiscoveryCanonicalQuery = {
     method: 'POST';
     pathTemplate: string;
   };
-  pipeline: Array<'search' | 'filter' | 'sort' | 'cursor-pagination'>;
+  composition?: {
+    selectionFacets: ['search', 'filter'];
+    selectionCombine: 'intersection';
+    ordering: 'sort';
+    pagination: 'cursor-pagination';
+  };
+  pipeline?: Array<'search' | 'filter' | 'sort' | 'cursor-pagination'>;
   search: null | {
     fields: string[];
     minLength: number;
@@ -201,6 +212,10 @@ export type DiscoveryCanonicalQuery = {
     default: Array<{ field: string; direction: 'asc' | 'desc' }>;
     nullPlacement: 'last';
     stableTieBreaker: string;
+    temporalRange?: null | {
+      context: 'context.viewingTimezone';
+      ordering: ['projectedStart', 'projectedEnd', 'record-id-asc'];
+    };
   };
   pagination: {
     limit: { minimum: number; maximum: number; default: number };
