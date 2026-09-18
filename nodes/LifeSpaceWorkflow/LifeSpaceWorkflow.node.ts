@@ -19,7 +19,7 @@ import {
 function filterConditionValues(): INodeProperties[] {
   return [
     {
-      displayName: 'Condition',
+      displayName: 'Condition Name or ID',
       name: 'predicate',
       type: 'options',
       typeOptions: {
