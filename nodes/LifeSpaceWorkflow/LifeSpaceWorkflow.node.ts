@@ -19,7 +19,7 @@ import {
 function filterConditionValues(): INodeProperties[] {
   return [
     {
-      displayName: 'Field & Operator Name or ID',
+      displayName: 'Condition',
       name: 'predicate',
       type: 'options',
       typeOptions: {
@@ -48,7 +48,11 @@ function filterConditionsProperty(): INodeProperties {
     type: 'fixedCollection',
     default: {},
     placeholder: 'Add Condition',
-    typeOptions: { multipleValues: true },
+    typeOptions: {
+      multipleValues: true,
+      multipleValueButtonText: 'Add Condition',
+      fixedCollection: { layout: 'inline' },
+    },
     displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
     options: [{
       displayName: 'Condition',
@@ -103,7 +107,11 @@ function filterGroupsProperty(): INodeProperties {
           type: 'fixedCollection',
           default: {},
           placeholder: 'Add Condition',
-          typeOptions: { multipleValues: true },
+          typeOptions: {
+            multipleValues: true,
+            multipleValueButtonText: 'Add Condition',
+            fixedCollection: { layout: 'inline' },
+          },
           options: [{
             displayName: 'Condition',
             name: 'condition',
@@ -220,6 +228,7 @@ export class LifeSpaceWorkflow extends LifeSpace {
         dark: 'file:lifespace.dark.svg',
       },
       description: 'Use LifeSpace in human-authored n8n workflows',
+      parameterPane: 'wide',
       properties: humanProperties(description.properties),
     };
 
