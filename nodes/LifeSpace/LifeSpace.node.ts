@@ -462,6 +462,8 @@ function canonicalQueryBody(
   if (sorts.length) body.sort = sorts;
 
   const options = context.getNodeParameter('options', itemIndex, {}) as IDataObject;
+  const viewingTimezone = String(options.viewingTimezone ?? '').trim();
+  if (viewingTimezone) body.context = { viewingTimezone };
   const configuredCursor = String(options.cursor ?? '').trim();
   const cursor = cursorOverride ?? configuredCursor;
   body.page = { limit, ...(cursor ? { cursor } : {}) };
