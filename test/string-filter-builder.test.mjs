@@ -124,6 +124,7 @@ test('TemporalRange JSON strings keep canonical shape and normalize date variant
 test('invalid typed string values fail before the Core request', () => {
   assert.throws(
     () => projectHumanFilterBuilder(
+      context,
       'all',
       [{ predicate: selector('count', 'eq', 'integer'), value: '3.5' }],
       [],
@@ -133,6 +134,7 @@ test('invalid typed string values fail before the Core request', () => {
 
   assert.throws(
     () => projectHumanFilterBuilder(
+      context,
       'all',
       [{ predicate: selector('enabled', 'eq', 'boolean'), value: 'yes' }],
       [],
