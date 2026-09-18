@@ -128,7 +128,8 @@ Ordinary Record CRUD/Action routes remain model-contract surfaces derived from p
 New Workflow and Agent configurations expose one query model:
 
 - **Search** is a top-level retrieval facet when the selected Record Type publishes searchable fields.
-- **Filters** come from `query.canonical.filter.targets`; scalar, relation, null and local-date-window predicates lower to the Canonical Filter AST.
+- **Filters** use a grouped human builder over `query.canonical.filter.targets`. Each condition selects a Discovery-published field/operator pair and accepts its workflow value as text; the adapter parses number/integer/boolean values and canonical JSON operands back into the typed Canonical Filter AST.
+- **Match** supports top-level All/Any composition, with one level of nested Condition Groups that each have their own All/Any rule.
 - **Sorts** come from `query.canonical.sort.fields` and preserve user priority.
 - **Return All**, **Limit**, and the optional opaque **Cursor** use canonical cursor pagination.
 
@@ -154,9 +155,9 @@ The same applies to ordinary values such as Record ID, Search, Return All, Limit
 Two boundaries are intentional:
 
 - **Resource** and **Operation** are structural node controls and do not accept expressions because they determine which parameter schema and execution path the node has.
-- **Fields**, **Filters**, **Time Window Filters** and **Action Input** are generated from Runtime Discovery. Their mapper containers are structural, while generated values remain expression-capable.
+- **Fields** and **Action Input** remain generated from Runtime Discovery. **Filters** use Discovery-backed field/operator selectors plus string/expression values so Boolean grouping does not depend on dynamically changing n8n value-control types.
 
-For List / Query, **Filters** is a Discovery-driven Resource Mapper. Adding a filter selects a predicate from `query.canonical`, such as `Due Date — After or Equal`; n8n renders the value control from the field type. **Time Window Filters** render typed `local_date_window` operands, while **Sorts** remains an ordered structural list because sort priority is part of workflow structure rather than per-item data.
+For List / Query, **Filters** is a Discovery-driven grouped condition builder. A condition selects a predicate from `query.canonical`, such as `Due Date — After or Equal`, and enters its value as text or an n8n expression. The adapter deterministically converts that text back to the canonical typed value before the request. Structured Range/TemporalRange/`within` operands use canonical JSON text in this first builder version. **Sorts** remains an ordered structural list because sort priority is part of workflow structure rather than per-item data.
 
 If **Record Type** itself varies per input item and those Record Types have different schemas, one discovery-generated mapper cannot safely represent every possible schema at design time. In that case, branch to separate LifeSpace nodes per schema or use **API Request** for a deliberately fully dynamic request.
 
@@ -218,14 +219,14 @@ If a workflow intentionally needs to bind a known version, add **Concurrency Opt
 List / Query exposes the single LifeSpace Canonical Query model:
 
 - optional **Search** over fields published as searchable;
-- **Filters** generated from the selected Record Type's canonical targets and operators;
-- **Time Window Filters** for typed local-date windows, including Calendar's semantic `when` target;
-- direct Range/TemporalRange predicates through object-valued canonical filters;
+- grouped **Filters** generated from the selected Record Type's canonical targets and operators;
+- top-level **Match All / Match Any** plus one nested Condition Group level for Boolean composition;
+- string/expression values that are parsed back to canonical scalar values, with canonical JSON text for structured Range/TemporalRange/`within` operands;
 - ordered **Sorts** generated from canonical sortable fields;
 - optional **Viewing Timezone** context when sorting a `temporal_range` field;
 - **Return All**, **Limit**, and an optional opaque **Cursor**.
 
-The node sends one structured `POST .../records/query` request per page. Multiple filters compose with `AND`; enum multi-select convenience compiles to `OR` of canonical equality predicates. Relation membership uses canonical `contains`. Core remains responsible for validation, timezone/DST conversion, authorization, null-last ordering and cursor identity.
+The node sends one structured `POST .../records/query` request per page. Top-level and nested All/Any settings lower to canonical `and`/`or` groups. Relation membership still uses canonical `contains`; Core remains responsible for final contract validation, timezone/DST conversion, authorization, null-last ordering and cursor identity. Stored workflows using the previous Resource Mapper and Time Window controls remain execution-compatible through hidden adapter fallbacks.
 
 New configurations do not expose Standard Query or Capability Query. Stored workflows that explicitly selected the previous Capability Query remain executable through a hidden compatibility path.
 
