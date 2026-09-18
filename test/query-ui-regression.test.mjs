@@ -86,18 +86,28 @@ test('workflow node is a human-only projection with Discovery-driven Create fiel
   ]);
 });
 
-test('List Query exposes one canonical Search, Filter, Sort, and Pagination surface', () => {
+test('List Query exposes one canonical Search, grouped Filter, Sort, and Pagination surface', () => {
   const node = new LifeSpaceWorkflow();
   assert.equal(node.description.properties.some((entry) => entry.name === 'filters'), false);
 
-  const queryFilters = property(node, 'queryFilters');
-  assert.equal(queryFilters.type, 'resourceMapper');
-  assert.equal(queryFilters.typeOptions.resourceMapper.resourceMapperMethod, 'getHumanQueryFilterFields');
-  assert.equal(Object.hasOwn(queryFilters.displayOptions.show, 'queryMode'), false);
+  const match = property(node, 'queryFilterMatch');
+  assert.equal(match.type, 'options');
+  assert.deepEqual(match.options.map((entry) => entry.value), ['all', 'any']);
 
-  const timeWindows = property(node, 'queryTimeWindows');
-  assert.equal(timeWindows.displayName, 'Time Window Filters');
-  assert.equal(Object.hasOwn(timeWindows.displayOptions.show, 'queryMode'), false);
+  const conditions = property(node, 'queryFilterConditions');
+  assert.equal(conditions.type, 'fixedCollection');
+  const conditionValues = conditions.options[0].values;
+  assert.equal(conditionValues.find((entry) => entry.name === 'predicate')?.type, 'options');
+  assert.equal(conditionValues.find((entry) => entry.name === 'value')?.type, 'string');
+
+  const groups = property(node, 'queryFilterGroups');
+  assert.equal(groups.type, 'fixedCollection');
+  const groupValues = groups.options[0].values;
+  assert.equal(groupValues.find((entry) => entry.name === 'match')?.type, 'options');
+  assert.equal(groupValues.find((entry) => entry.name === 'conditions')?.type, 'fixedCollection');
+
+  assert.equal(node.description.properties.some((entry) => entry.name === 'queryFilters'), false);
+  assert.equal(node.description.properties.some((entry) => entry.name === 'queryTimeWindows'), false);
 
   const sorts = property(node, 'sorts');
   assert.equal(Object.hasOwn(sorts.displayOptions.show, 'queryMode'), false);

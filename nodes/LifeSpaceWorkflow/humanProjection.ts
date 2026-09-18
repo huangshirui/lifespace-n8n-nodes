@@ -7,6 +7,7 @@ import type {
   ResourceMapperField,
   ResourceMapperFields,
 } from 'n8n-workflow';
+import { NodeOperationError } from 'n8n-workflow';
 import {
   decodeRecordTypeSelector,
   discoveryModel,
@@ -138,6 +139,15 @@ function predicateLabel(predicate: QueryPredicate): string {
   return `${predicate.fieldLabel} — ${predicate.operatorLabel}`;
 }
 
+export async function getCanonicalFilterOptions(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+  const selected = await selectedModel(this);
+  if (!selected) return [];
+  return queryPredicates(selected.model).map((predicate) => ({
+    name: predicateLabel(predicate),
+    value: queryPredicateSelector(predicate),
+  }));
+}
+
 export async function getHumanQueryFilterFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
   const selected = await selectedModel(this);
   if (!selected) return { fields: [] };
@@ -249,6 +259,166 @@ export type CanonicalFilter =
   | { field: string; op: string; value?: unknown }
   | { and: CanonicalFilter[] }
   | { or: CanonicalFilter[] };
+
+
+type HumanFilterCondition = {
+  predicate?: unknown;
+  value?: unknown;
+};
+
+type HumanFilterGroup = {
+  match?: unknown;
+  conditions?: unknown;
+};
+
+function humanFilterConditions(value: unknown): HumanFilterCondition[] {
+  if (Array.isArray(value)) return value as HumanFilterCondition[];
+  if (!value || typeof value !== 'object') return [];
+  const rows = (value as IDataObject).condition;
+  return Array.isArray(rows) ? rows as HumanFilterCondition[] : [];
+}
+
+function structuredQueryValue(predicate: QueryPredicate): boolean {
+  if (predicate.operator === 'within') return true;
+  if (predicate.operator === 'kindIs') return false;
+  return [
+    'range<date>',
+    'range<instant>',
+    'temporal_range',
+    'date-range',
+    'instant-range',
+    'temporal-range',
+  ].includes(String(predicate.valueType));
+}
+
+function parseHumanFilterValue(
+  context: Pick<IExecuteFunctions, 'getNode'>,
+  predicate: QueryPredicate,
+  value: unknown,
+): unknown {
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    throw new NodeOperationError(
+      context.getNode(),
+      `Filter ${predicate.field} — ${predicate.operatorLabel} requires a value`,
+    );
+  }
+
+  if (structuredQueryValue(predicate)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new NodeOperationError(
+        context.getNode(),
+        `Filter ${predicate.field} — ${predicate.operatorLabel} requires a JSON object value`,
+      );
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new NodeOperationError(
+        context.getNode(),
+        `Filter ${predicate.field} — ${predicate.operatorLabel} requires a JSON object value`,
+      );
+    }
+    return normalizeQueryRangeValue(predicate.valueType, parsed as IDataObject[string]);
+  }
+
+  if (predicate.valueType === 'integer') {
+    const parsed = Number(raw);
+    if (!Number.isInteger(parsed)) {
+      throw new NodeOperationError(context.getNode(), `Filter ${predicate.field} requires an integer value`);
+    }
+    return parsed;
+  }
+
+  if (predicate.valueType === 'number') {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) {
+      throw new NodeOperationError(context.getNode(), `Filter ${predicate.field} requires a numeric value`);
+    }
+    return parsed;
+  }
+
+  if (predicate.valueType === 'boolean') {
+    if (raw.toLowerCase() === 'true') return true;
+    if (raw.toLowerCase() === 'false') return false;
+    throw new NodeOperationError(context.getNode(), `Filter ${predicate.field} requires true or false`);
+  }
+
+  if (predicate.valueType === 'date') return dateOnly(raw);
+  return raw;
+}
+
+function projectHumanFilterCondition(
+  context: Pick<IExecuteFunctions, 'getNode'>,
+  row: HumanFilterCondition,
+): CanonicalFilter | null {
+  const predicate = parseQueryPredicateSelector(row.predicate);
+  if (!predicate) return null;
+
+  if (predicate.operator === 'isNull' || predicate.operator === 'isNotNull') {
+    return { field: predicate.field, op: predicate.operator };
+  }
+
+  if (predicate.operator === 'in') {
+    const values = String(row.value ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (!values.length) {
+      throw new NodeOperationError(
+        context.getNode(),
+        `Filter ${predicate.field} — ${predicate.operatorLabel} requires a value`,
+      );
+    }
+    const children = values.map((value) => ({
+      field: predicate.field,
+      op: 'eq',
+      value,
+    }));
+    return children.length === 1 ? children[0] : { or: children };
+  }
+
+  return {
+    field: predicate.field,
+    op: predicate.operator,
+    value: parseHumanFilterValue(context, predicate, row.value),
+  };
+}
+
+function combineHumanFilters(match: unknown, filters: CanonicalFilter[]): CanonicalFilter | null {
+  if (!filters.length) return null;
+  if (filters.length === 1) return filters[0];
+  return String(match ?? 'all') === 'any' ? { or: filters } : { and: filters };
+}
+
+export function projectHumanFilterBuilder(
+  context: Pick<IExecuteFunctions, 'getNode'>,
+  match: unknown,
+  conditions: unknown,
+  groups: unknown,
+): CanonicalFilter[] {
+  const children = humanFilterConditions(conditions)
+    .map((row) => projectHumanFilterCondition(context, row))
+    .filter((entry): entry is CanonicalFilter => entry !== null);
+
+  const groupRows = Array.isArray(groups)
+    ? groups as HumanFilterGroup[]
+    : groups && typeof groups === 'object' && Array.isArray((groups as IDataObject).group)
+      ? (groups as IDataObject).group as HumanFilterGroup[]
+      : [];
+
+  for (const group of groupRows) {
+    const nested = humanFilterConditions(group.conditions)
+      .map((row) => projectHumanFilterCondition(context, row))
+      .filter((entry): entry is CanonicalFilter => entry !== null);
+    const combined = combineHumanFilters(group.match, nested);
+    if (combined) children.push(combined);
+  }
+
+  const combined = combineHumanFilters(match, children);
+  return combined ? [combined] : [];
+}
 
 export function projectQueryFilters(value: unknown): CanonicalFilter[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
@@ -370,6 +540,14 @@ export function humanExecutionContext(context: IExecuteFunctions): IExecuteFunct
           return { ...(base as IDataObject), viewingTimezone: timezone };
         }
         if (name === 'canonicalFilters') {
+          const conditions = target.getNodeParameter('queryFilterConditions.condition', itemIndex, [], options as never);
+          const groups = target.getNodeParameter('queryFilterGroups.group', itemIndex, [], options as never);
+          const hasBuilder = (Array.isArray(conditions) && conditions.length > 0)
+            || (Array.isArray(groups) && groups.length > 0);
+          if (hasBuilder) {
+            const match = target.getNodeParameter('queryFilterMatch', itemIndex, 'all', options as never);
+            return projectHumanFilterBuilder(target, match, conditions, groups);
+          }
           const mapped = target.getNodeParameter('queryFilters.value', itemIndex, {}, options as never);
           return projectQueryFilters(mapped);
         }

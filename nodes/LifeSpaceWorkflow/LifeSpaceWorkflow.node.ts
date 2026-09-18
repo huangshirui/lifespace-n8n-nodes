@@ -8,6 +8,7 @@ import type {
 import { LifeSpace } from '../LifeSpace/LifeSpace.node';
 import { restoreLifeSpaceContinueOnFailErrors } from './lifeSpaceErrorProjection';
 import {
+  getCanonicalFilterOptions,
   getCanonicalTimeWindowFields,
   getHumanActionInputFields,
   getHumanQueryFilterFields,
@@ -15,69 +16,103 @@ import {
   humanExecutionContext,
 } from './humanProjection';
 
-function queryFiltersProperty(): INodeProperties {
-  return {
-    displayName: 'Filters',
-    name: 'queryFilters',
-    type: 'resourceMapper',
-    default: { mappingMode: 'defineBelow', value: null },
-    noDataExpression: true,
-    typeOptions: {
-      loadOptionsDependsOn: ['spaceId', 'recordType'],
-      resourceMapper: {
-        resourceMapperMethod: 'getHumanQueryFilterFields',
-        mode: 'add',
-        fieldWords: { singular: 'filter', plural: 'filters' },
-        addAllFields: false,
-        supportAutoMap: false,
-        noFieldsError: 'The selected Record Type does not publish any query filters.',
+function filterConditionValues(): INodeProperties[] {
+  return [
+    {
+      displayName: 'Field & Operator Name or ID',
+      name: 'predicate',
+      type: 'options',
+      typeOptions: {
+        loadOptionsMethod: 'getCanonicalFilterOptions',
+        loadOptionsDependsOn: ['spaceId', 'recordType'],
       },
+      options: [],
+      default: '',
+      required: true,
+      description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
     },
-    displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
-    description: 'Add semantic filters published by LifeSpace. Each filter already includes its valid operator and renders a value control from the field type.',
-  };
+    {
+      displayName: 'Value',
+      name: 'value',
+      type: 'string',
+      default: '',
+      description: 'Enter a scalar value as text. Number, integer and boolean values are parsed by the adapter. For Range, TemporalRange and Within operands, enter the canonical JSON object. Is Empty and Is Not Empty ignore this value.',
+    },
+  ];
 }
 
-function queryTimeWindowsProperty(): INodeProperties {
+function filterConditionsProperty(): INodeProperties {
   return {
-    displayName: 'Time Window Filters',
-    name: 'queryTimeWindows',
+    displayName: 'Conditions',
+    name: 'queryFilterConditions',
     type: 'fixedCollection',
     default: {},
-    placeholder: 'Add Time Window Filter',
+    placeholder: 'Add Condition',
     typeOptions: { multipleValues: true },
     displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
     options: [{
-      displayName: 'Time Window',
-      name: 'window',
+      displayName: 'Condition',
+      name: 'condition',
+      values: filterConditionValues(),
+    }],
+    description: 'Top-level filter conditions. The Match setting determines whether all or any top-level conditions and groups must match.',
+  };
+}
+
+function filterMatchProperty(): INodeProperties {
+  return {
+    displayName: 'Match',
+    name: 'queryFilterMatch',
+    type: 'options',
+    options: [
+      { name: 'All Conditions and Groups', value: 'all' },
+      { name: 'Any Condition or Group', value: 'any' },
+    ],
+    default: 'all',
+    displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+    description: 'How top-level Conditions and Groups are combined',
+  };
+}
+
+function filterGroupsProperty(): INodeProperties {
+  return {
+    displayName: 'Condition Groups',
+    name: 'queryFilterGroups',
+    type: 'fixedCollection',
+    default: {},
+    placeholder: 'Add Condition Group',
+    typeOptions: { multipleValues: true },
+    displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
+    options: [{
+      displayName: 'Condition Group',
+      name: 'group',
       values: [
         {
-          displayName: 'Field and Operator Name or ID',
-          name: 'target',
+          displayName: 'Match',
+          name: 'match',
           type: 'options',
-          typeOptions: {
-            loadOptionsMethod: 'getCanonicalTimeWindowFields',
-            loadOptionsDependsOn: ['spaceId', 'recordType'],
-          },
-          options: [],
-          default: '',
-          required: true,
-          description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+          options: [
+            { name: 'All Conditions', value: 'all' },
+            { name: 'Any Condition', value: 'any' },
+          ],
+          default: 'all',
         },
-        { displayName: 'Start Date', name: 'startDate', type: 'dateTime', default: '', required: true },
-        { displayName: 'End Date (Exclusive)', name: 'endDateExclusive', type: 'dateTime', default: '', required: true },
         {
-          displayName: 'Viewing Timezone',
-          name: 'timezone',
-          type: 'string',
-          default: '',
-          required: true,
-          placeholder: 'Asia/Shanghai',
-          description: 'IANA timezone. LifeSpace Core owns timezone and DST conversion.',
+          displayName: 'Conditions',
+          name: 'conditions',
+          type: 'fixedCollection',
+          default: {},
+          placeholder: 'Add Condition',
+          typeOptions: { multipleValues: true },
+          options: [{
+            displayName: 'Condition',
+            name: 'condition',
+            values: filterConditionValues(),
+          }],
         },
       ],
     }],
-    description: 'Typed local-date-window predicates from the same Canonical Filter contract',
+    description: 'Add one level of nested Boolean groups. Each group has its own All/Any match rule and participates in the top-level Match rule.',
   };
 }
 
@@ -137,8 +172,9 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
     if (property.name === 'search') {
       result.push(
         { ...property, displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } } },
-        queryFiltersProperty(),
-        queryTimeWindowsProperty(),
+        filterMatchProperty(),
+        filterConditionsProperty(),
+        filterGroupsProperty(),
       );
       continue;
     }
@@ -192,6 +228,7 @@ export class LifeSpaceWorkflow extends LifeSpace {
       ...(node.methods ?? {}),
       loadOptions: {
         ...(node.methods?.loadOptions ?? {}),
+        getCanonicalFilterOptions,
         getCanonicalTimeWindowFields,
       },
       resourceMapping: {
