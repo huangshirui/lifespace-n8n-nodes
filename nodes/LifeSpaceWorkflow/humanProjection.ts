@@ -360,6 +360,15 @@ export function humanExecutionContext(context: IExecuteFunctions): IExecuteFunct
             return stored === 'capability' ? 'capability' : 'canonical';
           }
         }
+        if (name === 'options') {
+          const base = target.getNodeParameter(name, itemIndex, fallback as never, options as never);
+          const operation = String(target.getNodeParameter('operation', itemIndex, '') ?? '');
+          const timezone = operation === 'list'
+            ? String(target.getNodeParameter('queryViewingTimezone', itemIndex, '') ?? '').trim()
+            : '';
+          if (!timezone || !base || typeof base !== 'object' || Array.isArray(base)) return base;
+          return { ...(base as IDataObject), viewingTimezone: timezone };
+        }
         if (name === 'canonicalFilters') {
           const mapped = target.getNodeParameter('queryFilters.value', itemIndex, {}, options as never);
           return projectQueryFilters(mapped);
