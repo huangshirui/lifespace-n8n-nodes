@@ -99,8 +99,15 @@ test('List Query exposes one canonical Search, grouped Filter, Sort, and Paginat
   assert.equal(conditions.typeOptions.fixedCollection.layout, 'inline');
   assert.equal(conditions.typeOptions.multipleValueButtonText, 'Add Condition');
   const conditionValues = conditions.options[0].values;
-  assert.equal(conditionValues.find((entry) => entry.name === 'predicate')?.displayName, 'Condition Name or ID');
-  assert.equal(conditionValues.find((entry) => entry.name === 'predicate')?.type, 'options');
+  const field = conditionValues.find((entry) => entry.name === 'field');
+  const operator = conditionValues.find((entry) => entry.name === 'operator');
+  assert.equal(field?.displayName, 'Field');
+  assert.equal(field?.type, 'options');
+  assert.equal(field?.typeOptions.loadOptionsMethod, 'getCanonicalFilterFields');
+  assert.equal(operator?.displayName, 'Operator');
+  assert.equal(operator?.type, 'options');
+  assert.equal(operator?.typeOptions.loadOptionsMethod, 'getCanonicalFilterOperators');
+  assert.ok(operator?.typeOptions.loadOptionsDependsOn.includes('&field'));
   assert.equal(conditionValues.find((entry) => entry.name === 'value')?.type, 'string');
 
   const groups = property(node, 'queryFilterGroups');
