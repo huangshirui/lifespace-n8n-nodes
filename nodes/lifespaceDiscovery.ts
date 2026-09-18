@@ -43,10 +43,7 @@ export type DiscoveryRelation = {
 
 export type DiscoveryField = {
   key: string;
-  type: 'string' | 'text' | 'integer' | 'number' | 'boolean'
-    | 'date' | 'instant' | 'datetime'
-    | 'range<date>' | 'range<instant>' | 'temporal_range'
-    | 'timezone' | 'enum' | 'person' | 'person_list' | 'record' | 'record_list';
+  type: 'string' | 'text' | 'integer' | 'number' | 'boolean' | 'date' | 'datetime' | 'timezone' | 'enum' | 'person' | 'person_list' | 'record' | 'record_list';
   title?: string;
   description?: string;
   required?: boolean;
@@ -131,14 +128,14 @@ export type DiscoveryLocalDateWindow = {
 export type DiscoveryComparison = {
   field: string;
   source: 'model' | 'envelope';
-  valueType: 'date' | 'instant' | 'datetime' | 'integer' | 'number';
+  valueType: 'date' | 'datetime' | 'integer' | 'number';
   operators: DiscoveryComparisonTransport[];
   localDateWindow?: DiscoveryLocalDateWindow;
 };
 
 export type DiscoveryCapabilityQueryParameter = {
   parameter: string;
-  type: 'string' | 'boolean' | 'integer' | 'number' | 'date' | 'instant' | 'datetime' | 'timezone';
+  type: 'string' | 'boolean' | 'integer' | 'number' | 'date' | 'datetime' | 'timezone';
   required?: boolean;
   role?: string;
   default?: unknown;
