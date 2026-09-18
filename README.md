@@ -77,7 +77,7 @@ The node displays the authorized human-readable `spaceName` when present while c
 
 Record Type is the LifeSpace `modelKey` (for example `task`). Design-time options, expressions, Trigger output and downstream Record nodes all use that plain value. CRUD calls go directly to `/spaces/{spaceId}/models/{modelKey}/records/...`, so execution adds no Discovery request and the adapter maintains no modelKey-to-route mapping. Existing `lsrt1...` workflow values are decoded only as a deprecated read-compatibility path and are never emitted or written by new configuration.
 
-Calendar-backed models use canonical `capabilityBindings.calendar` field roles instead of Event-specific field names while the node is being configured. Date-only values are normalized to `YYYY-MM-DD`. Create/Update execution does not fetch fresh semantic Discovery solely to produce an adapter-local Calendar conflict error; the canonical mutation goes directly to LifeSpace Core, which remains authoritative for Calendar validation and current authorization.
+Current Calendar models expose the canonical `capabilityBindings.calendar.rangeField` role, which points at one authoritative `temporal_range` field (for example Event v6 `when`). Historical split-field Calendar bindings remain readable only for already-published compatibility models. Date-only values are normalized to `YYYY-MM-DD`; `instant` uses the n8n date-time control, while `range<date>`, `range<instant>` and `temporal_range` use object inputs that preserve the LifeSpace canonical value shape. Create/Update execution does not fetch fresh semantic Discovery solely to produce an adapter-local Calendar conflict error; the canonical mutation goes directly to LifeSpace Core, which remains authoritative for Calendar validation and current authorization.
 
 ## LifeSpace contract compatibility
 
@@ -103,7 +103,7 @@ The UX depends on these Kernel capabilities:
 - `0.33.0`: canonical structural `timeRanges` become available in progressive semantic detail without implying an overlap query API.
 - `0.34.0`: explicit `eq/lt/lte/gt/gte` comparison transports, first-class `createdAt` / `updatedAt` envelope comparisons and Core-owned datetime local-date-window conversion become discoverable.
 - `0.35.0`: grouped `query.capabilityQueries` introduced capability-owned compatibility queries.
-- `0.36.0`: `query.canonical` unifies Search, typed Boolean Filter, multi-Sort and cursor Pagination behind `POST .../records/query`; n8n derives both Workflow and Agent query surfaces from this descriptor.
+- `0.36.0`: `query.canonical` unifies Search, typed Boolean Filter, multi-Sort and cursor Pagination behind `POST .../records/query`; Runtime Discovery also exposes canonical `instant`, `range<date>`, `range<instant>`, `temporal_range` field types and the Calendar `rangeField` binding. The human Workflow node consumes those current semantics while retaining historical Discovery spellings only for compatibility.
 
 The adapter prefers the `0.27+` progressive flow while configuring a node:
 
@@ -220,7 +220,9 @@ List / Query exposes the single LifeSpace Canonical Query model:
 - optional **Search** over fields published as searchable;
 - **Filters** generated from the selected Record Type's canonical targets and operators;
 - **Time Window Filters** for typed local-date windows, including Calendar's semantic `when` target;
+- direct Range/TemporalRange predicates through object-valued canonical filters;
 - ordered **Sorts** generated from canonical sortable fields;
+- optional **Viewing Timezone** context when sorting a `temporal_range` field;
 - **Return All**, **Limit**, and an optional opaque **Cursor**.
 
 The node sends one structured `POST .../records/query` request per page. Multiple filters compose with `AND`; enum multi-select convenience compiles to `OR` of canonical equality predicates. Relation membership uses canonical `contains`. Core remains responsible for validation, timezone/DST conversion, authorization, null-last ordering and cursor identity.
@@ -233,7 +235,7 @@ Choose an Action from Runtime Discovery.
 
 **Action Input** contains only semantic/domain inputs. LifeSpace concurrency metadata is not rendered as a business field. For the current `record-version` contract, the node reads the current Record version immediately before Action execution and sends it using the transport declared by Runtime Discovery.
 
-Execution-time Action metadata is loaded directly from the selected model's static semantic-detail endpoint rather than first loading the broad current-principal inventory. The static detail is reused for repeated items of the same Space/Record Type during one node execution. It is semantic input only, not cached authority; Core rechecks current Action authority on every invocation.
+Execution-time Action metadata is loaded directly from the selected model's static semantic-detail endpoint rather than first loading the broad current-principal inventory. Human Action Input uses the same current field-type projection as Create/Update, including `instant`, fixed Range values and `temporal_range`. The static detail is reused for repeated items of the same Space/Record Type during one node execution. It is semantic input only, not cached authority; Core rechecks current Action authority on every invocation.
 
 This means actions such as `complete` / `reopen` no longer ask users to type an internal version value.
 
