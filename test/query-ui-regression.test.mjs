@@ -99,7 +99,7 @@ test('List Query exposes one canonical Search, grouped Filter, Sort, and Paginat
   assert.equal(conditions.typeOptions.fixedCollection.layout, 'inline');
   assert.equal(conditions.typeOptions.multipleValueButtonText, 'Add Condition');
   const conditionValues = conditions.options[0].values;
-  assert.equal(conditionValues.find((entry) => entry.name === 'predicate')?.displayName, 'Condition');
+  assert.equal(conditionValues.find((entry) => entry.name === 'predicate')?.displayName, 'Condition Name or ID');
   assert.equal(conditionValues.find((entry) => entry.name === 'predicate')?.type, 'options');
   assert.equal(conditionValues.find((entry) => entry.name === 'value')?.type, 'string');
 
