@@ -31,7 +31,7 @@ import {
 import { projectLifeSpaceHttpError } from './lifeSpaceErrorProjection';
 
 function mapperType(field: DiscoveryField | undefined, valueType?: QueryPredicate['valueType']): FieldType {
-  const type = valueType ?? field?.type ?? 'string';
+  const type = String(valueType ?? field?.type ?? 'string');
   if (type === 'integer' || type === 'number') return 'number';
   if (type === 'boolean') return 'boolean';
   if (type === 'date' || type === 'instant' || type === 'datetime') return 'dateTime';
@@ -185,7 +185,7 @@ function objectValue(value: unknown): IDataObject | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as IDataObject : null;
 }
 
-function normalizeMutationValue(type: DiscoveryField['type'], value: IDataObject[string]): IDataObject[string] {
+function normalizeMutationValue(type: string, value: IDataObject[string]): IDataObject[string] {
   if (type === 'date') return dateOnly(value);
   const object = objectValue(value);
   if (!object) return value;
