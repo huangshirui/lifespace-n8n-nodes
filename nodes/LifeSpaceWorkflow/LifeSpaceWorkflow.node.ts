@@ -8,6 +8,8 @@ import type {
 import { LifeSpace } from '../LifeSpace/LifeSpace.node';
 import { restoreLifeSpaceContinueOnFailErrors } from './lifeSpaceErrorProjection';
 import {
+  getCanonicalFilterFields,
+  getCanonicalFilterOperators,
   getCanonicalFilterOptions,
   getCanonicalTimeWindowFields,
   getHumanActionInputFields,
@@ -19,12 +21,28 @@ import {
 function filterConditionValues(): INodeProperties[] {
   return [
     {
-      displayName: 'Condition Name or ID',
-      name: 'predicate',
+      // eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-options
+      displayName: 'Field',
+      name: 'field',
       type: 'options',
       typeOptions: {
-        loadOptionsMethod: 'getCanonicalFilterOptions',
+        loadOptionsMethod: 'getCanonicalFilterFields',
         loadOptionsDependsOn: ['spaceId', 'recordType'],
+      },
+      options: [],
+      default: '',
+      required: true,
+      // eslint-disable-next-line n8n-nodes-base/node-param-description-wrong-for-dynamic-options
+      description: 'Choose from the list, or specify using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+    },
+    {
+      // eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-options
+      displayName: 'Operator',
+      name: 'operator',
+      type: 'options',
+      typeOptions: {
+        loadOptionsMethod: 'getCanonicalFilterOperators',
+        loadOptionsDependsOn: ['&field', 'spaceId', 'recordType'],
       },
       options: [],
       default: '',
@@ -237,6 +255,8 @@ export class LifeSpaceWorkflow extends LifeSpace {
       ...(node.methods ?? {}),
       loadOptions: {
         ...(node.methods?.loadOptions ?? {}),
+        getCanonicalFilterFields,
+        getCanonicalFilterOperators,
         getCanonicalFilterOptions,
         getCanonicalTimeWindowFields,
       },

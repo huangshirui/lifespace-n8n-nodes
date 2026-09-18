@@ -27,7 +27,7 @@ test('string filter builder lowers A AND (B OR C) into the canonical Boolean AST
     context,
     'all',
     [{
-      predicate: selector('status', 'eq', 'enum'),
+      field: 'status', operator: selector('status', 'eq', 'enum'),
       value: 'pending',
     }],
     [{
@@ -35,7 +35,7 @@ test('string filter builder lowers A AND (B OR C) into the canonical Boolean AST
       conditions: {
         condition: [
           {
-            predicate: selector('dueDate', 'within', 'date'),
+            field: 'dueDate', operator: selector('dueDate', 'within', 'date'),
             value: JSON.stringify({
               kind: 'local_date_window',
               startDate: '2026-09-18',
@@ -44,7 +44,7 @@ test('string filter builder lowers A AND (B OR C) into the canonical Boolean AST
             }),
           },
           {
-            predicate: selector('dueDate', 'isNull', 'date'),
+            field: 'dueDate', operator: selector('dueDate', 'isNull', 'date'),
             value: '',
           },
         ],
@@ -79,9 +79,9 @@ test('string values are parsed back to canonical number, integer and boolean val
     context,
     'all',
     [
-      { predicate: selector('score', 'gte', 'number'), value: '12.5' },
-      { predicate: selector('count', 'eq', 'integer'), value: '3' },
-      { predicate: selector('enabled', 'eq', 'boolean'), value: 'true' },
+      { field: 'score', operator: selector('score', 'gte', 'number'), value: '12.5' },
+      { field: 'count', operator: selector('count', 'eq', 'integer'), value: '3' },
+      { field: 'enabled', operator: selector('enabled', 'eq', 'boolean'), value: 'true' },
     ],
     [],
   );
@@ -100,7 +100,7 @@ test('TemporalRange JSON strings keep canonical shape and normalize date variant
     context,
     'all',
     [{
-      predicate: selector('when', 'overlaps', 'temporal_range'),
+      field: 'when', operator: selector('when', 'overlaps', 'temporal_range'),
       value: JSON.stringify({
         kind: 'date',
         start: '2026-09-20T00:00:00.000Z',
@@ -126,7 +126,7 @@ test('invalid typed string values fail before the Core request', () => {
     () => projectHumanFilterBuilder(
       context,
       'all',
-      [{ predicate: selector('count', 'eq', 'integer'), value: '3.5' }],
+      [{ field: 'count', operator: selector('count', 'eq', 'integer'), value: '3.5' }],
       [],
     ),
     /requires an integer value/u,
@@ -136,9 +136,32 @@ test('invalid typed string values fail before the Core request', () => {
     () => projectHumanFilterBuilder(
       context,
       'all',
-      [{ predicate: selector('enabled', 'eq', 'boolean'), value: 'yes' }],
+      [{ field: 'enabled', operator: selector('enabled', 'eq', 'boolean'), value: 'yes' }],
       [],
     ),
     /requires true or false/u,
+  );
+});
+
+
+test('stored 0.1.11 combined predicate rows remain executable', () => {
+  const filters = projectHumanFilterBuilder(
+    context,
+    'all',
+    [{ predicate: selector('status', 'eq', 'enum'), value: 'pending' }],
+    [],
+  );
+  assert.deepEqual(filters, [{ field: 'status', op: 'eq', value: 'pending' }]);
+});
+
+test('stale operator from a different field is rejected before the Core request', () => {
+  assert.throws(
+    () => projectHumanFilterBuilder(
+      context,
+      'all',
+      [{ field: 'status', operator: selector('dueDate', 'lt', 'date'), value: '2026-09-20' }],
+      [],
+    ),
+    /does not belong to field/u,
   );
 });

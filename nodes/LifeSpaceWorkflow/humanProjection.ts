@@ -139,6 +139,32 @@ function predicateLabel(predicate: QueryPredicate): string {
   return `${predicate.fieldLabel} — ${predicate.operatorLabel}`;
 }
 
+export async function getCanonicalFilterFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+  const selected = await selectedModel(this);
+  if (!selected) return [];
+
+  const fields = new Map<string, string>();
+  for (const predicate of queryPredicates(selected.model)) {
+    if (!fields.has(predicate.field)) fields.set(predicate.field, predicate.fieldLabel);
+  }
+
+  return [...fields.entries()].map(([value, name]) => ({ name, value }));
+}
+
+export async function getCanonicalFilterOperators(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+  const selected = await selectedModel(this);
+  if (!selected) return [];
+
+  const field = String(this.getCurrentNodeParameter('&field') ?? '').trim();
+  const predicates = queryPredicates(selected.model).filter((predicate) => !field || predicate.field === field);
+
+  return predicates.map((predicate) => ({
+    name: predicate.operatorLabel,
+    value: queryPredicateSelector(predicate),
+  }));
+}
+
+// 0.1.11/0.1.12 compatibility for stored workflows authored with the combined selector.
 export async function getCanonicalFilterOptions(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
   const selected = await selectedModel(this);
   if (!selected) return [];
@@ -262,6 +288,8 @@ export type CanonicalFilter =
 
 
 type HumanFilterCondition = {
+  field?: unknown;
+  operator?: unknown;
   predicate?: unknown;
   value?: unknown;
 };
@@ -353,8 +381,17 @@ function projectHumanFilterCondition(
   context: Pick<IExecuteFunctions, 'getNode'>,
   row: HumanFilterCondition,
 ): CanonicalFilter | null {
-  const predicate = parseQueryPredicateSelector(row.predicate);
+  const selector = row.operator ?? row.predicate;
+  const predicate = parseQueryPredicateSelector(selector);
   if (!predicate) return null;
+
+  const field = String(row.field ?? '').trim();
+  if (field && field !== predicate.field) {
+    throw new NodeOperationError(
+      context.getNode(),
+      `Filter operator "${predicate.operatorLabel}" does not belong to field "${field}"`,
+    );
+  }
 
   if (predicate.operator === 'isNull' || predicate.operator === 'isNotNull') {
     return { field: predicate.field, op: predicate.operator };
