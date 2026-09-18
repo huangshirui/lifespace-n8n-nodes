@@ -96,7 +96,10 @@ test('List Query exposes one canonical Search, grouped Filter, Sort, and Paginat
 
   const conditions = property(node, 'queryFilterConditions');
   assert.equal(conditions.type, 'fixedCollection');
+  assert.equal(conditions.typeOptions.fixedCollection.layout, 'inline');
+  assert.equal(conditions.typeOptions.multipleValueButtonText, 'Add Condition');
   const conditionValues = conditions.options[0].values;
+  assert.equal(conditionValues.find((entry) => entry.name === 'predicate')?.displayName, 'Condition Name or ID');
   assert.equal(conditionValues.find((entry) => entry.name === 'predicate')?.type, 'options');
   assert.equal(conditionValues.find((entry) => entry.name === 'value')?.type, 'string');
 
@@ -104,8 +107,12 @@ test('List Query exposes one canonical Search, grouped Filter, Sort, and Paginat
   assert.equal(groups.type, 'fixedCollection');
   const groupValues = groups.options[0].values;
   assert.equal(groupValues.find((entry) => entry.name === 'match')?.type, 'options');
-  assert.equal(groupValues.find((entry) => entry.name === 'conditions')?.type, 'fixedCollection');
+  const nestedConditions = groupValues.find((entry) => entry.name === 'conditions');
+  assert.equal(nestedConditions?.type, 'fixedCollection');
+  assert.equal(nestedConditions?.typeOptions.fixedCollection.layout, 'inline');
+  assert.equal(nestedConditions?.typeOptions.multipleValueButtonText, 'Add Condition');
 
+  assert.equal(node.description.parameterPane, 'wide');
   assert.equal(node.description.properties.some((entry) => entry.name === 'queryFilters'), false);
   assert.equal(node.description.properties.some((entry) => entry.name === 'queryTimeWindows'), false);
 
