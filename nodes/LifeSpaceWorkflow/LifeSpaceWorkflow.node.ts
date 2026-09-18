@@ -29,7 +29,7 @@ function filterConditionValues(): INodeProperties[] {
       options: [],
       default: '',
       required: true,
-      description: 'Choose a field/operator pair published by LifeSpace, or specify its stable ID with an expression',
+      description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
     },
     {
       displayName: 'Value',
