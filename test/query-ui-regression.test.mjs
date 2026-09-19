@@ -114,21 +114,28 @@ test('workflow node is a human-only projection with Discovery-driven Create fiel
   ]);
 });
 
-test('List Query exposes one canonical Search, grouped Filter, Sort, and Pagination surface', () => {
+test('List Query exposes Filters as group-only vertical conditions with query options', () => {
   const node = new LifeSpaceWorkflow();
   assert.equal(node.description.properties.some((entry) => entry.name === 'filters'), false);
+  assert.equal(node.description.properties.some((entry) => entry.name === 'queryFilterMatch'), false);
+  assert.equal(node.description.properties.some((entry) => entry.name === 'queryFilterConditions'), false);
 
-  const match = property(node, 'queryFilterMatch');
-  assert.equal(match.type, 'options');
-  assert.deepEqual(match.options.map((entry) => entry.value), ['all', 'any']);
+  const filters = property(node, 'queryFilterGroups');
+  assert.equal(filters.displayName, 'Filters');
+  assert.equal(filters.type, 'fixedCollection');
+  assert.equal(filters.placeholder, 'Add Filter Group');
 
-  const conditions = property(node, 'queryFilterConditions');
-  assert.equal(conditions.type, 'fixedCollection');
-  assert.equal(conditions.typeOptions.fixedCollection.layout, 'inline');
-  assert.equal(conditions.typeOptions.multipleValueButtonText, 'Add Condition');
+  const groupValues = filters.options[0].values;
+  assert.equal(groupValues.find((entry) => entry.name === 'match')?.type, 'options');
+  const conditions = groupValues.find((entry) => entry.name === 'conditions');
+  assert.equal(conditions?.type, 'fixedCollection');
+  assert.equal(conditions?.typeOptions.multipleValueButtonText, 'Add Condition');
+  assert.equal(conditions?.typeOptions.fixedCollection?.layout, undefined);
+
   const conditionValues = conditions.options[0].values;
   const field = conditionValues.find((entry) => entry.name === 'field');
   const operator = conditionValues.find((entry) => entry.name === 'operator');
+  const value = conditionValues.find((entry) => entry.name === 'value');
   assert.equal(field?.displayName, 'Field');
   assert.equal(field?.type, 'options');
   assert.equal(field?.typeOptions.loadOptionsMethod, 'getCanonicalFilterFields');
@@ -136,20 +143,16 @@ test('List Query exposes one canonical Search, grouped Filter, Sort, and Paginat
   assert.equal(operator?.type, 'options');
   assert.equal(operator?.typeOptions.loadOptionsMethod, 'getCanonicalFilterOperators');
   assert.ok(operator?.typeOptions.loadOptionsDependsOn.includes('&field'));
-  assert.equal(conditionValues.find((entry) => entry.name === 'value')?.type, 'string');
+  assert.equal(value?.type, 'string');
+  assert.equal(value?.displayOptions.hide.operator[0]._cnd.regex, '^lsqh1:(?:isNull|isNotNull)\\.');
 
-  const groups = property(node, 'queryFilterGroups');
-  assert.equal(groups.type, 'fixedCollection');
-  const groupValues = groups.options[0].values;
-  assert.equal(groupValues.find((entry) => entry.name === 'match')?.type, 'options');
-  const nestedConditions = groupValues.find((entry) => entry.name === 'conditions');
-  assert.equal(nestedConditions?.type, 'fixedCollection');
-  assert.equal(nestedConditions?.typeOptions.fixedCollection.layout, 'inline');
-  assert.equal(nestedConditions?.typeOptions.multipleValueButtonText, 'Add Condition');
-
-  assert.equal(node.description.parameterPane, 'wide');
+  assert.notEqual(node.description.parameterPane, 'wide');
   assert.equal(node.description.properties.some((entry) => entry.name === 'queryFilters'), false);
   assert.equal(node.description.properties.some((entry) => entry.name === 'queryTimeWindows'), false);
+  assert.equal(node.description.properties.some((entry) => entry.name === 'queryViewingTimezone'), false);
+
+  const queryOptions = property(node, 'options');
+  assert.ok(queryOptions.options.some((entry) => entry.name === 'viewingTimezone'));
 
   const sorts = property(node, 'sorts');
   assert.equal(Object.hasOwn(sorts.displayOptions.show, 'queryMode'), false);
@@ -158,7 +161,6 @@ test('List Query exposes one canonical Search, grouped Filter, Sort, and Paginat
     assert.equal(node.description.properties.some((entry) => entry.name === removed), false, `unexpected legacy field ${removed}`);
   }
 });
-
 
 test('Operator options are scoped to the Field selected in the same condition row', async () => {
   const fieldContext = optionContext('task');

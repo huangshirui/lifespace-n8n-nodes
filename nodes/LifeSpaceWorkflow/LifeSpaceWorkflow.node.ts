@@ -15,6 +15,7 @@ import {
   getHumanActionInputFields,
   getHumanQueryFilterFields,
   getHumanRecordFields,
+  getHumanSortableFields,
   humanExecutionContext,
 } from './humanProjection';
 
@@ -54,59 +55,27 @@ function filterConditionValues(): INodeProperties[] {
       name: 'value',
       type: 'string',
       default: '',
-      description: 'Enter a scalar value as text. Number, integer and boolean values are parsed by the adapter. For Range, TemporalRange and Within operands, enter the canonical JSON object. Is Empty and Is Not Empty ignore this value.',
+      displayOptions: {
+        hide: {
+          operator: [{ _cnd: { regex: '^lsqh1:(?:isNull|isNotNull)\\.' } }],
+        },
+      },
+      description: 'Enter a string or n8n expression. Number and boolean values are parsed by the adapter. Temporal range Overlaps uses paired Overlaps Start and Overlaps End conditions; Before and After accept a date or absolute date-time string.',
     },
   ];
 }
 
-function filterConditionsProperty(): INodeProperties {
-  return {
-    displayName: 'Conditions',
-    name: 'queryFilterConditions',
-    type: 'fixedCollection',
-    default: {},
-    placeholder: 'Add Condition',
-    typeOptions: {
-      multipleValues: true,
-      multipleValueButtonText: 'Add Condition',
-      fixedCollection: { layout: 'inline' },
-    },
-    displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
-    options: [{
-      displayName: 'Condition',
-      name: 'condition',
-      values: filterConditionValues(),
-    }],
-    description: 'Top-level filter conditions. The Match setting determines whether all or any top-level conditions and groups must match.',
-  };
-}
-
-function filterMatchProperty(): INodeProperties {
-  return {
-    displayName: 'Match',
-    name: 'queryFilterMatch',
-    type: 'options',
-    options: [
-      { name: 'All Conditions and Groups', value: 'all' },
-      { name: 'Any Condition or Group', value: 'any' },
-    ],
-    default: 'all',
-    displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
-    description: 'How top-level Conditions and Groups are combined',
-  };
-}
-
 function filterGroupsProperty(): INodeProperties {
   return {
-    displayName: 'Condition Groups',
+    displayName: 'Filters',
     name: 'queryFilterGroups',
     type: 'fixedCollection',
     default: {},
-    placeholder: 'Add Condition Group',
+    placeholder: 'Add Filter Group',
     typeOptions: { multipleValues: true },
     displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
     options: [{
-      displayName: 'Condition Group',
+      displayName: 'Filter Group',
       name: 'group',
       values: [
         {
@@ -128,7 +97,6 @@ function filterGroupsProperty(): INodeProperties {
           typeOptions: {
             multipleValues: true,
             multipleValueButtonText: 'Add Condition',
-            fixedCollection: { layout: 'inline' },
           },
           options: [{
             displayName: 'Condition',
@@ -138,19 +106,18 @@ function filterGroupsProperty(): INodeProperties {
         },
       ],
     }],
-    description: 'Add one level of nested Boolean groups. Each group has its own All/Any match rule and participates in the top-level Match rule.',
+    description: 'Add Filter Groups. Conditions inside a group use All or Any; multiple Filter Groups are combined with AND.',
   };
 }
 
-function queryViewingTimezoneProperty(): INodeProperties {
+function queryViewingTimezoneOption(): INodeProperties {
   return {
     displayName: 'Viewing Timezone',
-    name: 'queryViewingTimezone',
+    name: 'viewingTimezone',
     type: 'string',
     default: '',
     placeholder: 'Asia/Shanghai',
-    displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } },
-    description: 'IANA timezone used only when a TemporalRange field is sorted. LifeSpace requires this context to compare date and instant variants deterministically.',
+    description: 'Optional IANA timezone override for temporal range date interpretation and sorting. If omitted, the current n8n workflow timezone is used.',
   };
 }
 
@@ -198,18 +165,21 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
     if (property.name === 'search') {
       result.push(
         { ...property, displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } } },
-        filterMatchProperty(),
-        filterConditionsProperty(),
         filterGroupsProperty(),
       );
       continue;
     }
 
     if (property.name === 'sorts') {
-      result.push(
-        { ...property, displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } } },
-        queryViewingTimezoneProperty(),
-      );
+      result.push({ ...property, displayOptions: { show: { resource: ['modelRecord'], operation: ['list'] } } });
+      continue;
+    }
+
+    if (property.name === 'options') {
+      result.push({
+        ...property,
+        options: [...(property.options ?? []), queryViewingTimezoneOption()],
+      });
       continue;
     }
 
@@ -246,7 +216,6 @@ export class LifeSpaceWorkflow extends LifeSpace {
         dark: 'file:lifespace.dark.svg',
       },
       description: 'Use LifeSpace in human-authored n8n workflows',
-      parameterPane: 'wide',
       properties: humanProperties(description.properties),
     };
 
@@ -259,6 +228,7 @@ export class LifeSpaceWorkflow extends LifeSpace {
         getCanonicalFilterOperators,
         getCanonicalFilterOptions,
         getCanonicalTimeWindowFields,
+        getSortableFields: getHumanSortableFields,
       },
       resourceMapping: {
         ...(node.methods?.resourceMapping ?? {}),

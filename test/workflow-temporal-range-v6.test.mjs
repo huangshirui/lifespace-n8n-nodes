@@ -218,6 +218,17 @@ test('ordinary Workflow exposes current TemporalRange query predicates and kind 
     ['Instant', 'instant'],
   ]);
 
+  const operators = await node.methods.loadOptions.getCanonicalFilterOperators.call(
+    designContext({ operation: 'list', '&field': 'when' }),
+  );
+  assert.deepEqual(operators.map((option) => option.name), [
+    'Overlaps Start',
+    'Overlaps End',
+    'Before',
+    'After',
+    'Range Kind Is',
+  ]);
+
   const timeWindows = await node.methods.loadOptions.getCanonicalTimeWindowFields.call(
     designContext({ operation: 'list' }),
   );
@@ -274,8 +285,15 @@ test('ordinary Workflow local-date-window convenience targets canonical Temporal
   }]);
 });
 
-test('ordinary Workflow sends viewingTimezone context when sorting TemporalRange', async () => {
+test('ordinary Workflow defaults TemporalRange sort timezone to n8n and allows an Options override', async () => {
   const node = new LifeSpaceWorkflow();
+  const sortOptions = await node.methods.loadOptions.getSortableFields.call(
+    designContext({ operation: 'list' }),
+  );
+  const whenSort = sortOptions.find((option) => option.name === 'When');
+  assert.ok(whenSort);
+  assert.notEqual(whenSort.value, 'when');
+
   const calls = [];
   const parameters = {
     resource: 'modelRecord',
@@ -287,8 +305,7 @@ test('ordinary Workflow sends viewingTimezone context when sorting TemporalRange
     returnAll: false,
     limit: 20,
     options: {},
-    queryViewingTimezone: 'Asia/Shanghai',
-    'sorts.sort': [{ field: 'when', direction: 'asc' }],
+    'sorts.sort': [{ field: whenSort.value, direction: 'asc' }],
     'queryFilters.value': {},
     'queryTimeWindows.window': [],
   };
@@ -296,6 +313,7 @@ test('ordinary Workflow sends viewingTimezone context when sorting TemporalRange
     getInputData: () => [{ json: {} }],
     getCredentials: async () => ({ baseUrl: BASE_URL }),
     getNode: () => ({ name: 'LifeSpace' }),
+    getTimezone: () => 'Asia/Shanghai',
     getNodeParameter(name, _itemIndex, fallback) {
       return Object.hasOwn(parameters, name) ? parameters[name] : fallback;
     },
@@ -317,4 +335,9 @@ test('ordinary Workflow sends viewingTimezone context when sorting TemporalRange
     context: { viewingTimezone: 'Asia/Shanghai' },
     page: { limit: 20 },
   });
+
+  calls.length = 0;
+  parameters.options = { viewingTimezone: 'Asia/Tokyo' };
+  await node.execute.call(context);
+  assert.deepEqual(calls[0].options.body.context, { viewingTimezone: 'Asia/Tokyo' });
 });
