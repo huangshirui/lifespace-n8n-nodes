@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { join } from 'node:path';
 import test from 'node:test';
 
 const require = createRequire(import.meta.url);
@@ -12,6 +14,32 @@ const {
 const BASE_URL = 'https://example.invalid/api/v1';
 const HASH_TASK = 'sha256:synthetic-task-v10';
 const HASH_EVENT = 'sha256:synthetic-event-v9';
+
+async function emitAgentToolContract(fileName, tool) {
+  const directory = process.env.LIFESPACE_AGENT_TOOL_CONTRACT_DIR?.trim();
+  if (!directory) return;
+
+  await mkdir(directory, { recursive: true });
+  const structuralTool = {
+    name: tool.name,
+    description: tool.description,
+    schema: tool.schema,
+  };
+  const openAiFunctionTool = {
+    type: 'function',
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.schema,
+    },
+  };
+
+  await writeFile(
+    join(directory, fileName),
+    JSON.stringify({ structuralTool, openAiFunctionTool }, null, 2) + '\n',
+    'utf8',
+  );
+}
 
 const explicitOperators = (field) => ['eq', 'lt', 'lte', 'gt', 'gte'].map((operator) => ({
   operator,
@@ -163,7 +191,7 @@ function canonicalEventDetail() {
       declaredAccess: ['read', 'write'],
       fields: [
         { key: 'summary', type: 'string', title: 'Summary', required: true },
-        { key: 'when', type: 'temporal_range', title: 'When', required: true },
+        { key: 'when', type: 'temporal_range', title: 'When', description: 'When the occurrence happens.', required: true },
         {
           key: 'attendeePersonIds',
           type: 'person_list',
@@ -308,6 +336,7 @@ test('native LifeSpace Tool supplies distinct automatic tool identities and mode
   const node = new LifeSpaceTool();
   const queryContext = supplyContext(baseToolParameters);
   const queryTool = (await node.supplyData.call(queryContext, 0)).response;
+  await emitAgentToolContract('task-query.json', queryTool);
 
   const createContext = supplyContext({ ...baseToolParameters, operation: 'create' });
   const createTool = (await node.supplyData.call(createContext, 0)).response;
@@ -500,6 +529,7 @@ test('Agent Tool Create Event accepts semantic when and attendee names then lowe
   );
 
   const tool = (await new LifeSpaceTool().supplyData.call(context, 0)).response;
+  await emitAgentToolContract('event-create.json', tool);
   assert.match(tool.description, /workflow timezone Asia\/Shanghai/u);
   assert.deepEqual(tool.schema.required, ['summary', 'when']);
   assert.ok(tool.schema.properties.when.oneOf);
@@ -547,19 +577,26 @@ test('Agent Tool Canonical Query resolves relation names, inclusive date windows
   );
 
   const tool = (await new LifeSpaceTool().supplyData.call(context, 0)).response;
+  await emitAgentToolContract('event-query.json', tool);
   assert.deepEqual(tool.schema.properties.match.enum, ['all', 'any']);
+  assert.deepEqual(tool.schema.properties.timeWindow.required, ['startDate', 'endDate']);
+  assert.match(tool.schema.properties.timeWindow.description, /today, tomorrow, this week/u);
+  assert.match(tool.description, /use timeWindow; do not synthesize start\/end timestamp comparisons/u);
+
+  const filterBranches = tool.schema.properties.filters.items.oneOf;
+  const whenOverlap = filterBranches.find((branch) =>
+    branch.properties?.field?.enum?.[0] === 'when'
+    && branch.properties?.operator?.enum?.[0] === 'overlaps');
+  assert.ok(whenOverlap);
+  assert.match(whenOverlap.properties.field.description, /When the occurrence happens/u);
+  assert.match(whenOverlap.properties.operator.description, /intersects any part/u);
 
   await tool.invoke({
+    timeWindow: {
+      startDate: '2026-09-20',
+      endDate: '2026-09-20',
+    },
     filters: [
-      {
-        field: 'when',
-        operator: 'overlaps',
-        value: {
-          kind: 'local_date_window',
-          startDate: '2026-09-20',
-          endDate: '2026-09-20',
-        },
-      },
       {
         field: 'attendeePersonIds',
         operator: 'contains',
