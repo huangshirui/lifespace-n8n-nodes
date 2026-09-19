@@ -69,9 +69,17 @@ Runtime Discovery determines which Spaces, Record Types, fields, queries, Action
 The package deliberately exposes two different projections over the same LifeSpace Runtime Discovery semantics:
 
 - **LifeSpace** is the human-authored workflow node. Create/Update scalar and relation fields are generated through n8n Resource Mapper from the selected Record Type. Writable `temporal_range` fields are projected directly as three adjacent controls named from the field itself, for example **When · Type / When · Start / When · End**; there is no redundant Field selector and no raw object/JSON entry. List / Query exposes semantic predicates instead of asking the workflow author to choose a filter type first. Multi-value relations keep their dedicated multi-select UX.
-- **LifeSpace Agent Tool** is the native AI Tool surface. Its schema is generated from `query.canonical`: queries expose semantic `field` / `operator` / `value` inputs, and the adapter compiles them into the same structured Canonical Query used by human workflows.
+- **LifeSpace Agent Tool** is the native AI Tool surface. Its schema is generated from Runtime Discovery for Query/Create/Update/Delete/Action. AI-facing values stay semantic: `temporal_range` uses one `{ kind, start, end }` object, relation fields accept `{ name }` / `{ id }` references, and Canonical Query exposes semantic `field` / `operator` / `value` predicates. The adapter resolves names through the field's published relation lookup, injects the effective n8n workflow timezone when TemporalRange semantics require it, and lowers everything to the canonical LifeSpace transport.
 
 The human workflow node is not exposed through `usableAsTool`; this avoids maintaining two competing Agent Tool surfaces with different schema behavior.
+
+The Agent Tool never asks the user for internal relation IDs when the conversation already supplies a human label. For example, an Event create call may use `attendeePersonIds: [{ "name": "Alice" }]`; the adapter performs the authorized source-field relation lookup and sends the resolved stable ID to Core. Ambiguous or missing labels are returned to the Agent as structured errors instead of choosing a target. Stable IDs remain accepted when already known.
+
+Agent-facing TemporalRange values deliberately use Human end semantics: `{ "kind": "date", "start": "2026-09-20", "end": "2026-09-22" }` means an inclusive date end and is lowered to Core's `endExclusive=2026-09-23`; `kind=instant` uses absolute RFC3339 start/end values. Query local-date windows may likewise use inclusive `endDate`; Canonical Query receives `endDateExclusive` plus the effective workflow timezone.
+
+For Update/Delete/Action, the Agent Tool still requires a stable `recordId`. If it is not already known, the Agent should call the matching Query Tool first; the mutation Tool does not guess which record the user meant.
+
+
 
 The node displays the authorized human-readable `spaceName` when present while continuing to submit the stable `spc_*` ID.
 
