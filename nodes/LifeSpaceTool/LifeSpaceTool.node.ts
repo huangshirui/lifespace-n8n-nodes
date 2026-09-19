@@ -295,7 +295,7 @@ async function prepareAgentInput(
       const target = model.query.canonical.filter.targets.find((entry) => entry.field === fieldKey);
       const field = model.fields.find((entry) => entry.key === fieldKey);
       if (field && target && relationField(field) && filter.value !== undefined) {
-        filter.value = await resolveFieldReference(
+        filter.value = await resolveOneReference(
           context,
           baseUrl,
           config.spaceId,
