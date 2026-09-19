@@ -53,7 +53,24 @@ function taskDetail(overrides = {}) {
       fields: [
         { key: 'name', type: 'string', title: 'Name', required: true, minLength: 1, maxLength: 120 },
         { key: 'status', type: 'enum', title: 'Status', required: true, values: ['open', 'done'] },
-        { key: 'assigneePersonIds', type: 'person_list', title: 'Assignees', nullable: true },
+        {
+          key: 'assigneePersonIds',
+          type: 'person_list',
+          title: 'Assignees',
+          nullable: true,
+          relation: {
+            targetModel: 'person',
+            cardinality: 'many',
+            lookup: {
+              supported: true,
+              method: 'GET',
+              pathTemplate: '/api/v1/spaces/{spaceId}/_relation-targets/{modelKey}/{fieldKey}',
+              searchParameter: 'q',
+              cursorParameter: 'cursor',
+              limitParameter: 'limit',
+            },
+          },
+        },
         { key: 'dueDate', type: 'date', title: 'Due Date', nullable: true },
         { key: 'score', type: 'number', title: 'Score', nullable: true },
         { key: 'externalKey', type: 'string', title: 'External Key', immutable: true },
@@ -135,6 +152,127 @@ function eventDetail() {
   };
 }
 
+function canonicalEventDetail() {
+  return {
+    data: {
+      key: 'event',
+      version: 9,
+      schemaHash: HASH_EVENT,
+      display: { singular: 'Event', plural: 'Events' },
+      description: 'A calendar occurrence.',
+      declaredAccess: ['read', 'write'],
+      fields: [
+        { key: 'summary', type: 'string', title: 'Summary', required: true },
+        { key: 'when', type: 'temporal_range', title: 'When', required: true },
+        {
+          key: 'attendeePersonIds',
+          type: 'person_list',
+          title: 'Attendees',
+          relation: {
+            targetModel: 'person',
+            cardinality: 'many',
+            lookup: {
+              supported: true,
+              method: 'GET',
+              pathTemplate: '/api/v1/spaces/{spaceId}/_relation-targets/{modelKey}/{fieldKey}',
+              searchParameter: 'q',
+              cursorParameter: 'cursor',
+              limitParameter: 'limit',
+            },
+          },
+        },
+        { key: 'status', type: 'enum', title: 'Status', required: true, values: ['active', 'cancelled'] },
+      ],
+      defaults: { status: 'active' },
+      query: {
+        searchable: ['summary'],
+        filterable: ['when', 'attendeePersonIds'],
+        sortable: ['when', 'summary'],
+        search: { parameter: 'q', minLength: 1, maxLength: 100 },
+        filters: [],
+        comparisons: [],
+        capabilityQueries: [],
+        sort: {
+          parameter: 'sort',
+          syntax: 'field:direction',
+          repeatable: true,
+          ordered: true,
+          maxCriteria: 8,
+          genericDefault: ['createdAt:desc'],
+          envelopeFields: ['createdAt', 'updatedAt'],
+          nullPlacement: 'last',
+          genericValues: ['createdAt:desc', 'when:asc', 'when:desc', 'summary:asc', 'summary:desc'],
+        },
+        pagination: {
+          limit: { parameter: 'limit', minimum: 1, maximum: 200, default: 100 },
+          cursor: { parameter: 'cursor', type: 'string' },
+        },
+        canonical: {
+          invocation: {
+            method: 'POST',
+            pathTemplate: '/api/v1/spaces/{spaceId}/models/{modelKey}/records/query',
+          },
+          search: { fields: ['summary'], minLength: 1, maxLength: 100 },
+          filter: {
+            maxDepth: 8,
+            maxNodes: 100,
+            targets: [
+              {
+                field: 'attendeePersonIds',
+                kind: 'field',
+                valueType: 'person_list',
+                operators: ['contains'],
+                nullable: false,
+                acceptsCurrentActorPersonAlias: 'me',
+              },
+              {
+                field: 'when',
+                kind: 'field',
+                valueType: 'temporal_range',
+                operators: ['overlaps', 'contains', 'before', 'after', 'kindIs'],
+                nullable: false,
+              },
+            ],
+          },
+          sort: {
+            fields: ['createdAt', 'summary', 'updatedAt', 'when'],
+            directions: ['asc', 'desc'],
+            maxCriteria: 8,
+            default: [{ field: 'createdAt', direction: 'desc' }],
+            nullPlacement: 'last',
+            stableTieBreaker: 'record-id-asc',
+            temporalRange: {
+              context: 'context.viewingTimezone',
+              ordering: ['projectedStart', 'projectedEnd', 'record-id-asc'],
+            },
+          },
+          pagination: {
+            limit: { minimum: 1, maximum: 200, default: 100 },
+            cursor: {
+              opaque: true,
+              binds: ['normalized-search', 'normalized-filter', 'effective-sort', 'temporal-viewing-context', 'continuation-key'],
+              snapshotConsistency: false,
+            },
+          },
+        },
+      },
+      actions: [{
+        key: 'reschedule',
+        access: 'write',
+        kind: 'workflow',
+        input: { fields: [{ key: 'when', type: 'temporal_range', title: 'When', required: true }] },
+        concurrency: { strategy: 'record-version', required: true, transport: { in: 'body', name: 'version' } },
+        invocation: {
+          method: 'POST',
+          pathTemplate: '/api/v1/spaces/{spaceId}/models/event/records/{recordId}/actions/reschedule',
+        },
+      }],
+      capabilities: ['calendar'],
+      capabilityBindings: { calendar: { rangeField: 'when', attendeePersonField: 'attendeePersonIds' } },
+    },
+  };
+}
+
 function supplyContext(parameters, { model = taskIdentity, detail = taskDetail(), business } = {}) {
   const calls = [];
   const outputs = [];
@@ -146,6 +284,7 @@ function supplyContext(parameters, { model = taskIdentity, detail = taskDetail()
       return Object.prototype.hasOwnProperty.call(parameters, name) ? parameters[name] : defaultValue;
     },
     getNode: () => ({ name: 'LifeSpace Tool', typeVersion: 1 }),
+    getTimezone: () => 'Asia/Shanghai',
     addInputData: () => ({ index: 0 }),
     addOutputData: (...args) => outputs.push(args),
     helpers: {
@@ -340,6 +479,217 @@ test('delete and Action keep record-version concurrency out of the AI schema', a
       assert.equal(businessCalls[1].method, 'DELETE');
     }
   }
+});
+
+test('Agent Tool Create Event accepts semantic when and attendee names then lowers to canonical values', async () => {
+  const businessCalls = [];
+  const context = supplyContext(
+    { ...baseToolParameters, recordType: 'event', operation: 'create' },
+    {
+      model: eventIdentity,
+      detail: canonicalEventDetail(),
+      business(options) {
+        businessCalls.push(options);
+        if (options.method === 'GET' && options.url.includes('/_relation-targets/event/attendeePersonIds')) {
+          assert.equal(options.qs.q, '小天');
+          return { data: { items: [{ id: 'per_xiaotian', label: '小天' }], nextCursor: null } };
+        }
+        return { data: { id: 'rec_event', version: 1, data: options.body } };
+      },
+    },
+  );
+
+  const tool = (await new LifeSpaceTool().supplyData.call(context, 0)).response;
+  assert.match(tool.description, /workflow timezone Asia\/Shanghai/u);
+  assert.deepEqual(tool.schema.required, ['summary', 'when']);
+  assert.ok(tool.schema.properties.when.oneOf);
+  assert.equal(tool.schema.properties.attendeePersonIds.oneOf[0].type, 'array');
+
+  await tool.invoke({
+    summary: '数学课',
+    when: {
+      kind: 'instant',
+      start: '2026-09-20T19:00:00+08:00',
+      end: '2026-09-20T20:30:00+08:00',
+    },
+    attendeePersonIds: [{ name: '小天' }],
+  });
+
+  const post = businessCalls.find((call) => call.method === 'POST');
+  assert.ok(post);
+  assert.deepEqual(post.body, {
+    summary: '数学课',
+    when: {
+      kind: 'instant',
+      start: '2026-09-20T19:00:00+08:00',
+      endExclusive: '2026-09-20T20:30:00+08:00',
+    },
+    attendeePersonIds: ['per_xiaotian'],
+  });
+});
+
+test('Agent Tool Canonical Query resolves relation names, inclusive date windows and TemporalRange sort timezone', async () => {
+  const businessCalls = [];
+  const context = supplyContext(
+    { ...baseToolParameters, recordType: 'event', operation: 'query' },
+    {
+      model: eventIdentity,
+      detail: canonicalEventDetail(),
+      business(options) {
+        businessCalls.push(options);
+        if (options.method === 'GET' && options.url.includes('/_relation-targets/event/attendeePersonIds')) {
+          return { data: { items: [{ id: 'per_xiaotian', label: '小天' }], nextCursor: null } };
+        }
+        return { data: { items: [], nextCursor: null } };
+      },
+    },
+  );
+
+  const tool = (await new LifeSpaceTool().supplyData.call(context, 0)).response;
+  assert.deepEqual(tool.schema.properties.match.enum, ['all', 'any']);
+
+  await tool.invoke({
+    filters: [
+      {
+        field: 'when',
+        operator: 'overlaps',
+        value: {
+          kind: 'local_date_window',
+          startDate: '2026-09-20',
+          endDate: '2026-09-20',
+        },
+      },
+      {
+        field: 'attendeePersonIds',
+        operator: 'contains',
+        value: { name: '小天' },
+      },
+    ],
+    sort: [{ field: 'when', direction: 'asc' }],
+  });
+
+  const query = businessCalls.find((call) => call.method === 'POST' && call.url.endsWith('/records/query'));
+  assert.ok(query);
+  assert.deepEqual(query.body, {
+    filter: {
+      and: [
+        {
+          field: 'when',
+          op: 'overlaps',
+          value: {
+            kind: 'local_date_window',
+            startDate: '2026-09-20',
+            endDateExclusive: '2026-09-21',
+            timezone: 'Asia/Shanghai',
+          },
+        },
+        { field: 'attendeePersonIds', op: 'contains', value: 'per_xiaotian' },
+      ],
+    },
+    sort: [{ field: 'when', direction: 'asc' }],
+    context: { viewingTimezone: 'Asia/Shanghai' },
+  });
+});
+
+test('Agent Tool returns structured ambiguity instead of guessing relation IDs', async () => {
+  const context = supplyContext(
+    { ...baseToolParameters, recordType: 'event', operation: 'create' },
+    {
+      model: eventIdentity,
+      detail: canonicalEventDetail(),
+      business(options) {
+        if (options.method === 'GET' && options.url.includes('/_relation-targets/event/attendeePersonIds')) {
+          return {
+            data: {
+              items: [
+                { id: 'per_1', label: '王老师' },
+                { id: 'per_2', label: '王老师' },
+              ],
+              nextCursor: null,
+            },
+          };
+        }
+        throw new Error('mutation must not run after ambiguous reference');
+      },
+    },
+  );
+  const tool = (await new LifeSpaceTool().supplyData.call(context, 0)).response;
+  const output = JSON.parse(await tool.invoke({
+    summary: '家长会',
+    when: {
+      kind: 'date',
+      start: '2026-09-20',
+      end: '2026-09-20',
+    },
+    attendeePersonIds: [{ name: '王老师' }],
+  }));
+
+  assert.equal(output.ok, false);
+  assert.equal(output.error.code, 'AMBIGUOUS_REFERENCE');
+  assert.equal(output.error.field, 'attendeePersonIds');
+  assert.equal(output.error.candidates.length, 2);
+});
+
+test('Agent Tool supports Any/OR filter composition and rejects empty updates', () => {
+  const model = {
+    ...canonicalEventDetail().data,
+    access: ['read', 'write'],
+  };
+  const query = buildAgentToolRequest(
+    model,
+    { spaceId: 'spc_test', operation: 'query', queryMode: 'generic', viewingTimezone: 'Asia/Shanghai' },
+    {
+      match: 'any',
+      filters: [
+        { field: 'attendeePersonIds', operator: 'contains', value: 'per_a' },
+        { field: 'attendeePersonIds', operator: 'contains', value: 'per_b' },
+      ],
+    },
+  );
+  assert.deepEqual(query.body.filter, {
+    or: [
+      { field: 'attendeePersonIds', op: 'contains', value: 'per_a' },
+      { field: 'attendeePersonIds', op: 'contains', value: 'per_b' },
+    ],
+  });
+
+  assert.throws(
+    () => buildAgentToolRequest(
+      model,
+      { spaceId: 'spc_test', operation: 'update' },
+      { recordId: 'rec_event' },
+    ),
+    /requires at least one field/u,
+  );
+});
+
+test('Agent Tool Action lowers TemporalRange semantic input after record lookup', () => {
+  const model = {
+    ...canonicalEventDetail().data,
+    access: ['read', 'write'],
+  };
+  const request = buildAgentToolRequest(
+    model,
+    { spaceId: 'spc_test', operation: 'action', actionKey: 'reschedule' },
+    {
+      recordId: 'rec_event',
+      when: {
+        kind: 'date',
+        start: '2026-09-20',
+        end: '2026-09-22',
+      },
+    },
+    7,
+  );
+
+  assert.deepEqual(request.body, {
+    when: {
+      kind: 'date',
+      start: '2026-09-20',
+      endExclusive: '2026-09-23',
+    },
+    version: 7,
+  });
 });
 
 test('future synthetic models require no source-specific Tool implementation', () => {
