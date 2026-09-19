@@ -243,10 +243,21 @@ test('relation filters accept an ID string or an n8n object carrying id, but not
   );
 });
 
-test('enum values are validated in the adapter when Discovery provides declared values', () => {
-  const declared = predicate('status', 'eq', 'enum');
-  declared.enumValues = ['pending', 'completed'];
-  const operator = humanFilterOperatorSelector(declared);
+test('enum filters keep string semantics and reject non-string runtime values', () => {
+  const operator = humanSelector('status', 'eq', 'enum');
+
+  const filters = projectHumanFilterBuilder(
+    context,
+    'all',
+    [],
+    [{
+      match: 'all',
+      conditions: {
+        condition: [{ field: 'status', operator, value: 'pending' }],
+      },
+    }],
+  );
+  assert.deepEqual(filters, [{ field: 'status', op: 'eq', value: 'pending' }]);
 
   assert.throws(
     () => projectHumanFilterBuilder(
@@ -256,11 +267,11 @@ test('enum values are validated in the adapter when Discovery provides declared 
       [{
         match: 'all',
         conditions: {
-          condition: [{ field: 'status', operator, value: 'unknown' }],
+          condition: [{ field: 'status', operator, value: 123 }],
         },
       }],
     ),
-    /declared enum value/u,
+    /string enum value/u,
   );
 });
 
