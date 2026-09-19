@@ -213,9 +213,13 @@ test('registered Agent Tool execute path handles n8n tool simulation input', asy
     },
     [{
       json: {
+        sessionId: 'session_test',
+        action: 'sendMessage',
+        chatInput: 'find milk',
         search: 'milk',
         sort: [{ field: 'dueDate', direction: 'asc' }],
         limit: 20,
+        toolCallId: 'call_test',
       },
     }],
   );
@@ -234,6 +238,29 @@ test('registered Agent Tool execute path handles n8n tool simulation input', asy
   assert.deepEqual(JSON.parse(result[0][0].json.response), {
     data: { items: [{ id: 'rec_1', data: { name: 'Milk' } }], nextCursor: null },
   });
+});
+
+test('registered Agent Tool execute path still validates semantic arguments after envelope projection', async () => {
+  const execution = context(
+    baseParameters,
+    () => {
+      throw new Error('business request must not run for invalid semantic input');
+    },
+    [{
+      json: {
+        action: 'sendMessage',
+        chatInput: 'bad query',
+        filters: [{ field: 'unknownField', operator: 'eq', value: 'x' }],
+        toolCallId: 'call_invalid',
+      },
+    }],
+  );
+
+  const node = new LifeSpaceAgentTool();
+  await assert.rejects(
+    () => node.execute.call(execution),
+    /must match exactly one published shape|does not allow/u,
+  );
 });
 
 test('registered Agent Tool delegates Create while preserving omission semantics', async () => {
