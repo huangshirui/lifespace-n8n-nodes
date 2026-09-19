@@ -32,6 +32,8 @@ function temporalRangesProperty(): INodeProperties {
     options: [{
       displayName: 'Temporal Range',
       name: 'range',
+      // Field → Type → Start → End is intentional human form order.
+      // eslint-disable-next-line n8n-nodes-base/node-param-fixed-collection-type-unsorted-items
       values: [
         {
           // eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-options
@@ -45,7 +47,7 @@ function temporalRangesProperty(): INodeProperties {
           options: [],
           default: '',
           required: true,
-          description: 'Choose a writable LifeSpace TemporalRange field',
+          description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
         },
         {
           displayName: 'Type',
