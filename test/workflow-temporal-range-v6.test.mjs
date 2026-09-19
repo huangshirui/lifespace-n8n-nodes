@@ -219,6 +219,56 @@ test('ordinary Workflow projects TemporalRange mutations through a dedicated hum
   ]);
 });
 
+test('Create execution lowers the Temporal Ranges form into the canonical mutation body', async () => {
+  const node = new LifeSpaceWorkflow();
+  const calls = [];
+  const parameters = {
+    resource: 'modelRecord',
+    operation: 'create',
+    spaceId: 'spc_test',
+    recordType: 'event',
+    modelRoute: '',
+    'fields.value': { 'lsf:string:summary': 'School meeting' },
+    'fields.schema': [],
+    'humanTemporalRanges.range': [{
+      field: 'when',
+      kind: 'date',
+      dateStart: '2026-09-20',
+      dateEnd: '2026-09-20',
+    }],
+    'dateFields.date': [],
+    'singleRelations.relation': [],
+    'multiRelations.relation': [],
+  };
+  const context = {
+    getInputData: () => [{ json: {} }],
+    getCredentials: async () => ({ baseUrl: BASE_URL }),
+    getNode: () => ({ name: 'LifeSpace' }),
+    getNodeParameter(name, _itemIndex, fallback) {
+      return Object.hasOwn(parameters, name) ? parameters[name] : fallback;
+    },
+    continueOnFail: () => false,
+    helpers: {
+      async httpRequestWithAuthentication(credentialName, options) {
+        calls.push({ credentialName, options });
+        return { data: { id: 'evt_test' } };
+      },
+    },
+  };
+
+  await node.execute.call(context);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.method, 'POST');
+  assert.deepEqual(calls[0].options.body, {
+    summary: 'School meeting',
+    when: {
+      kind: 'date',
+      start: '2026-09-20',
+      endExclusive: '2026-09-21',
+    },
+  });
+});
+
 test('ordinary Workflow exposes current TemporalRange query predicates and kind selector', async () => {
   const node = new LifeSpaceWorkflow();
   const filters = await node.methods.resourceMapping.getHumanQueryFilterFields.call(
