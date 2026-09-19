@@ -101,6 +101,7 @@ export async function getHumanRecordFields(this: ILoadOptionsFunctions): Promise
   const result: ResourceMapperField[] = [];
 
   for (const field of writableMutationFields(selected.model, operation)) {
+    if (field.type === 'temporal_range') continue;
     if (field.relation?.lookup.supported && field.relation.cardinality === 'many') continue;
     let options: INodePropertyOptions[] | undefined;
     if (field.relation?.lookup.supported && field.relation.cardinality === 'one') {
@@ -123,6 +124,20 @@ export async function getHumanRecordFields(this: ILoadOptionsFunctions): Promise
       ...result.filter((field) => !field.required),
     ],
   };
+}
+
+export async function getHumanTemporalRangeFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+  const selected = await selectedModel(this);
+  if (!selected) return [];
+  const operation = (loadOptionParameter(this, 'operation') || 'create') as 'create' | 'update';
+
+  return writableMutationFields(selected.model, operation)
+    .filter((field) => field.type === 'temporal_range')
+    .map((field) => ({
+      name: `${field.title?.trim() || field.key}${operation === 'create' && field.required === true ? ' (Required)' : ''}`,
+      value: field.key,
+      description: field.description,
+    }));
 }
 
 export async function getHumanActionInputFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
@@ -429,6 +444,79 @@ function absoluteHumanInstant(raw: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:\d{2})$/u.test(raw)) return null;
   const time = Date.parse(raw);
   return Number.isFinite(time) ? new Date(time).toISOString() : null;
+}
+
+type HumanTemporalRangeRow = {
+  field?: unknown;
+  kind?: unknown;
+  dateStart?: unknown;
+  dateEnd?: unknown;
+  instantStart?: unknown;
+  instantEnd?: unknown;
+};
+
+function humanTemporalRangeRows(value: unknown): HumanTemporalRangeRow[] {
+  if (Array.isArray(value)) return value as HumanTemporalRangeRow[];
+  if (!value || typeof value !== 'object') return [];
+  const rows = (value as IDataObject).range;
+  return Array.isArray(rows) ? rows as HumanTemporalRangeRow[] : [];
+}
+
+export function projectHumanTemporalRanges(
+  context: Pick<IExecuteFunctions, 'getNode'>,
+  value: unknown,
+): IDataObject {
+  const result: IDataObject = {};
+
+  for (const row of humanTemporalRangeRows(value)) {
+    const field = String(row.field ?? '').trim();
+    if (!field) continue;
+    if (Object.prototype.hasOwnProperty.call(result, field)) {
+      throw new NodeOperationError(context.getNode(), `Temporal range field ${field} is configured more than once`);
+    }
+
+    const kind = String(row.kind ?? '').trim();
+    if (kind === 'date') {
+      const start = exactHumanDate(String(dateOnly(row.dateStart) ?? '').trim());
+      const end = exactHumanDate(String(dateOnly(row.dateEnd) ?? '').trim());
+      if (!start || !end) {
+        throw new NodeOperationError(context.getNode(), `Temporal range ${field} requires valid Start and End dates`);
+      }
+      if (end < start) {
+        throw new NodeOperationError(context.getNode(), `Temporal range ${field} End must not be earlier than Start`);
+      }
+      result[field] = {
+        kind: 'date',
+        start,
+        endExclusive: nextHumanDate(end),
+      };
+      continue;
+    }
+
+    if (kind === 'instant') {
+      const start = absoluteHumanInstant(String(row.instantStart ?? '').trim());
+      const end = absoluteHumanInstant(String(row.instantEnd ?? '').trim());
+      if (!start || !end) {
+        throw new NodeOperationError(
+          context.getNode(),
+          `Temporal range ${field} requires absolute RFC3339 Start and End date-times`,
+        );
+      }
+      if (Date.parse(end) <= Date.parse(start)) {
+        throw new NodeOperationError(context.getNode(), `Temporal range ${field} End must be later than Start`);
+      }
+      result[field] = {
+        kind: 'instant',
+        start,
+        endExclusive: end,
+      };
+      continue;
+    }
+
+    throw new NodeOperationError(context.getNode(), `Temporal range ${field} requires Type Date or Date & Time`);
+  }
+
+  return result;
 }
 
 function overlapWindowValue(
@@ -894,7 +982,16 @@ export function humanExecutionContext(context: IExecuteFunctions): IExecuteFunct
         if (name === 'fields.value') {
           const value = target.getNodeParameter(name, itemIndex, fallback as never, options as never);
           const schema = target.getNodeParameter('fields.schema', itemIndex, []) as ResourceMapperField[];
-          return projectMutationValues(value, schema);
+          const projected = projectMutationValues(value, schema);
+          const temporalRows = target.getNodeParameter('humanTemporalRanges.range', itemIndex, [], options as never);
+          const temporal = projectHumanTemporalRanges(target, temporalRows);
+          for (const [field, entry] of Object.entries(temporal)) {
+            if (Object.prototype.hasOwnProperty.call(projected, field)) {
+              throw new NodeOperationError(target.getNode(), `Field ${field} is configured more than once`);
+            }
+            projected[field] = entry;
+          }
+          return projected;
         }
         if (name === 'filters.filter') {
           const mapped = target.getNodeParameter('queryFilters.value', itemIndex, {}, options as never);
