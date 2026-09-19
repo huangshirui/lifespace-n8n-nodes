@@ -803,7 +803,7 @@ export function projectCanonicalTimeWindows(value: unknown): CanonicalFilter[] {
   return result;
 }
 
-function queryTimezone(context: IExecuteFunctions, itemIndex: number, options?: unknown): string {
+function queryTimezone(context: IExecuteFunctions, itemIndex: number): string {
   const configured = context.getNodeParameter('options', itemIndex, {}) as IDataObject;
   const explicit = String(configured.viewingTimezone ?? '').trim();
   if (explicit) return explicit;
@@ -866,7 +866,7 @@ export function humanExecutionContext(context: IExecuteFunctions): IExecuteFunct
             delete value.viewingTimezone;
             return value;
           }
-          value.viewingTimezone = queryTimezone(target, itemIndex, options);
+          value.viewingTimezone = queryTimezone(target, itemIndex);
           return value;
         }
         if (name === 'canonicalFilters') {
@@ -881,7 +881,7 @@ export function humanExecutionContext(context: IExecuteFunctions): IExecuteFunct
               match,
               conditions,
               groups,
-              queryTimezone(target, itemIndex, options),
+              queryTimezone(target, itemIndex),
             );
           }
           const mapped = target.getNodeParameter('queryFilters.value', itemIndex, {}, options as never);
