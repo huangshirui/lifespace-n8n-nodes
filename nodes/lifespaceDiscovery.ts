@@ -687,7 +687,7 @@ function relationTargetUrl(
 }
 
 function parseRelationTargets(
-  context: ILoadOptionsFunctions | ISupplyDataFunctions,
+  context: ILoadOptionsFunctions | IExecuteFunctions | ISupplyDataFunctions,
   response: RelationTargetResponse,
 ): { items: RelationTarget[]; nextCursor: string | null } {
   const rawItems = response.data?.items;
@@ -766,7 +766,7 @@ export async function loadRelationTargets(
 }
 
 export async function searchRelationTargetsForAgent(
-  context: ISupplyDataFunctions,
+  context: IExecuteFunctions | ISupplyDataFunctions,
   baseUrl: string,
   spaceId: string,
   modelKey: string,
@@ -834,7 +834,7 @@ export async function loadExecutionRuntimeDiscovery(
 
 
 export async function loadAgentToolRuntimeDiscovery(
-  context: ISupplyDataFunctions,
+  context: IExecuteFunctions | ISupplyDataFunctions,
   baseUrl: string,
   spaceId: string,
   modelKey: string,

@@ -106,7 +106,7 @@ function detail() {
   };
 }
 
-function context(parameters, onBusiness) {
+function context(parameters, onBusiness, input = [{ json: {} }]) {
   const calls = [];
   return {
     calls,
@@ -116,6 +116,7 @@ function context(parameters, onBusiness) {
     },
     getNode: () => ({ name: 'LifeSpace AI Tool', typeVersion: 1 }),
     getTimezone: () => 'Asia/Shanghai',
+    getInputData: () => input,
     addInputData: () => ({ index: 0 }),
     addOutputData: () => undefined,
     helpers: {
@@ -199,6 +200,39 @@ test('registered Agent Tool exposes and executes Canonical Query', async () => {
     },
     sort: [{ field: 'dueDate', direction: 'asc' }],
     page: { limit: 20 },
+  });
+});
+
+test('registered Agent Tool execute path handles n8n tool simulation input', async () => {
+  let requested;
+  const execution = context(
+    baseParameters,
+    (options) => {
+      requested = options;
+      return { data: { items: [{ id: 'rec_1', data: { name: 'Milk' } }], nextCursor: null } };
+    },
+    [{
+      json: {
+        search: 'milk',
+        sort: [{ field: 'dueDate', direction: 'asc' }],
+        limit: 20,
+      },
+    }],
+  );
+
+  const node = new LifeSpaceAgentTool();
+  assert.equal(typeof node.execute, 'function');
+
+  const result = await node.execute.call(execution);
+  assert.equal(requested.method, 'POST');
+  assert.equal(requested.url, `${BASE_URL}/spaces/spc_test/models/${MODEL_KEY}/records/query`);
+  assert.deepEqual(requested.body, {
+    search: { text: 'milk' },
+    sort: [{ field: 'dueDate', direction: 'asc' }],
+    page: { limit: 20 },
+  });
+  assert.deepEqual(JSON.parse(result[0][0].json.response), {
+    data: { items: [{ id: 'rec_1', data: { name: 'Milk' } }], nextCursor: null },
   });
 });
 

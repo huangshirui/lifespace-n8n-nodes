@@ -1,5 +1,7 @@
 import type {
   IDataObject,
+  IExecuteFunctions,
+  INodeExecutionData,
   IHttpRequestOptions,
   ILoadOptionsFunctions,
   INodePropertyOptions,
@@ -45,6 +47,15 @@ type StructuralAiTool = {
   invoke: (query: unknown) => Promise<string>;
 };
 
+type AgentRuntimeContext = IExecuteFunctions | ISupplyDataFunctions;
+
+type AgentRuntime = {
+  baseUrl: string;
+  model: DiscoveryModel;
+  config: AgentToolConfig;
+  definition: ReturnType<typeof buildAgentToolDefinition>;
+};
+
 function requiredAccess(operation: string): DiscoveryAccess | null {
   if (operation === 'query') return 'read';
   if (['create', 'update', 'delete'].includes(operation)) return 'write';
@@ -88,7 +99,7 @@ function currentRecordPath(request: AgentToolRequest): string {
   return actionIndex >= 0 ? request.path.slice(0, actionIndex) : request.path;
 }
 
-function currentRecordVersion(context: ISupplyDataFunctions, response: unknown): number {
+function currentRecordVersion(context: AgentRuntimeContext, response: unknown): number {
   if (!response || typeof response !== 'object' || Array.isArray(response)) {
     throw new NodeOperationError(context.getNode(), 'LifeSpace record lookup returned an invalid response');
   }
@@ -119,7 +130,7 @@ function requestOptions(baseUrl: string, request: AgentToolRequest): IHttpReques
 }
 
 async function performRequest(
-  context: ISupplyDataFunctions,
+  context: AgentRuntimeContext,
   baseUrl: string,
   request: AgentToolRequest,
 ): Promise<unknown> {
@@ -201,7 +212,7 @@ function referenceInput(value: unknown): { id?: string; name?: string } {
 }
 
 async function resolveOneReference(
-  context: ISupplyDataFunctions,
+  context: AgentRuntimeContext,
   baseUrl: string,
   spaceId: string,
   model: DiscoveryModel,
@@ -254,7 +265,7 @@ async function resolveOneReference(
 }
 
 async function resolveFieldReference(
-  context: ISupplyDataFunctions,
+  context: AgentRuntimeContext,
   baseUrl: string,
   spaceId: string,
   model: DiscoveryModel,
@@ -273,7 +284,7 @@ async function resolveFieldReference(
 }
 
 async function prepareAgentInput(
-  context: ISupplyDataFunctions,
+  context: AgentRuntimeContext,
   baseUrl: string,
   model: DiscoveryModel,
   config: AgentToolConfig,
@@ -348,7 +359,7 @@ function toolFailureOutput(error: unknown, executionError: NodeOperationError): 
   });
 }
 
-function toolError(context: ISupplyDataFunctions, error: unknown): NodeOperationError {
+function toolError(context: AgentRuntimeContext, error: unknown): NodeOperationError {
   if (error instanceof NodeOperationError) return error;
   if (error && typeof error === 'object') {
     try {
@@ -556,26 +567,29 @@ export class LifeSpaceTool implements INodeType {
     },
   };
 
-  async supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {
-    const credentials = await this.getCredentials('lifeSpaceApi', itemIndex);
+  private async agentRuntime(
+    context: AgentRuntimeContext,
+    itemIndex: number,
+  ): Promise<AgentRuntime> {
+    const credentials = await context.getCredentials('lifeSpaceApi', itemIndex);
     const baseUrl = normalizeBaseUrl(credentials.baseUrl);
-    const spaceId = String(this.getNodeParameter('spaceId', itemIndex)).trim();
-    const recordType = decodeRecordTypeSelector(this.getNodeParameter('recordType', itemIndex, ''));
+    const spaceId = String(context.getNodeParameter('spaceId', itemIndex)).trim();
+    const recordType = decodeRecordTypeSelector(context.getNodeParameter('recordType', itemIndex, ''));
     if (!recordType) {
-      throw new NodeOperationError(this.getNode(), 'Choose a valid LifeSpace Record Type from Runtime Discovery', { itemIndex });
+      throw new NodeOperationError(context.getNode(), 'Choose a valid LifeSpace Record Type from Runtime Discovery', { itemIndex });
     }
 
-    const operation = this.getNodeParameter('operation', itemIndex) as AgentToolOperation;
-    const queryMode = this.getNodeParameter('queryMode', itemIndex, 'generic') as AgentToolQueryMode;
-    const capabilityQueryKey = String(this.getNodeParameter('capabilityQueryKey', itemIndex, '') ?? '').trim();
-    const actionKey = String(this.getNodeParameter('actionKey', itemIndex, '') ?? '').trim();
-    const descriptionOverride = String(this.getNodeParameter('descriptionOverride', itemIndex, '') ?? '').trim();
+    const operation = context.getNodeParameter('operation', itemIndex) as AgentToolOperation;
+    const queryMode = context.getNodeParameter('queryMode', itemIndex, 'generic') as AgentToolQueryMode;
+    const capabilityQueryKey = String(context.getNodeParameter('capabilityQueryKey', itemIndex, '') ?? '').trim();
+    const actionKey = String(context.getNodeParameter('actionKey', itemIndex, '') ?? '').trim();
+    const descriptionOverride = String(context.getNodeParameter('descriptionOverride', itemIndex, '') ?? '').trim();
 
-    const discovery = await loadAgentToolRuntimeDiscovery(this, baseUrl, spaceId, recordType.modelKey);
+    const discovery = await loadAgentToolRuntimeDiscovery(context, baseUrl, spaceId, recordType.modelKey);
     const model = discoveryModel(discovery, spaceId, recordType.modelKey);
     const space = discoverySpace(discovery, spaceId);
     if (!model || !space) {
-      throw new NodeOperationError(this.getNode(), 'The selected LifeSpace model is no longer visible in this Space', { itemIndex });
+      throw new NodeOperationError(context.getNode(), 'The selected LifeSpace model is no longer visible in this Space', { itemIndex });
     }
 
     const config: AgentToolConfig = {
@@ -586,36 +600,62 @@ export class LifeSpaceTool implements INodeType {
       capabilityQueryKey,
       actionKey,
       descriptionOverride,
-      viewingTimezone: this.getTimezone(),
+      viewingTimezone: context.getTimezone(),
     };
+
     let definition;
     try {
       definition = buildAgentToolDefinition(model, config);
     } catch (error) {
-      throw new NodeOperationError(this.getNode(), error as Error, { itemIndex });
+      throw new NodeOperationError(context.getNode(), error as Error, { itemIndex });
     }
 
+    return { baseUrl, model, config, definition };
+  }
+
+  private async invokeAgentTool(
+    context: AgentRuntimeContext,
+    runtime: AgentRuntime,
+    query: unknown,
+  ): Promise<string> {
+    const prepared = await prepareAgentInput(
+      context,
+      runtime.baseUrl,
+      runtime.model,
+      runtime.config,
+      query,
+    );
+    let request = buildAgentToolRequest(runtime.model, runtime.config, prepared);
+    if (request.needsCurrentVersion) {
+      const recordResponse = await performRequest(context, runtime.baseUrl, {
+        method: 'GET',
+        path: currentRecordPath(request),
+      });
+      request = buildAgentToolRequest(
+        runtime.model,
+        runtime.config,
+        prepared,
+        currentRecordVersion(context, recordResponse),
+      );
+    }
+    const response = await performRequest(context, runtime.baseUrl, request);
+    return stringifyToolOutput(response);
+  }
+
+  async supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {
+    const runtime = await LifeSpaceTool.prototype.agentRuntime.call(this, this, itemIndex);
+
     const tool: StructuralAiTool = {
-      name: definition.name,
-      description: definition.description,
-      schema: definition.schema,
+      name: runtime.definition.name,
+      description: runtime.definition.description,
+      schema: runtime.definition.schema,
       metadata: {},
       invoke: async (query: unknown): Promise<string> => {
         const { index } = this.addInputData(NodeConnectionTypes.AiTool, [[{ json: { query: inputForLog(query) } }]]);
         let output: string;
         let executionError: NodeOperationError | undefined;
         try {
-          const prepared = await prepareAgentInput(this, baseUrl, model, config, query);
-          let request = buildAgentToolRequest(model, config, prepared);
-          if (request.needsCurrentVersion) {
-            const recordResponse = await performRequest(this, baseUrl, {
-              method: 'GET',
-              path: currentRecordPath(request),
-            });
-            request = buildAgentToolRequest(model, config, prepared, currentRecordVersion(this, recordResponse));
-          }
-          const response = await performRequest(this, baseUrl, request);
-          output = stringifyToolOutput(response);
+          output = await LifeSpaceTool.prototype.invokeAgentTool.call(this, this, runtime, query);
         } catch (error) {
           executionError = toolError(this, error);
           output = toolFailureOutput(error, executionError);
@@ -631,5 +671,37 @@ export class LifeSpaceTool implements INodeType {
     };
 
     return { response: tool };
+  }
+
+  async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
+    const items = this.getInputData();
+    const output: INodeExecutionData[] = [];
+
+    for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
+      const item = items[itemIndex];
+      if (!item) continue;
+
+      try {
+        const runtime = await LifeSpaceTool.prototype.agentRuntime.call(this, this, itemIndex);
+        const response = await LifeSpaceTool.prototype.invokeAgentTool.call(this, this, runtime, item.json);
+        output.push({
+          json: { response },
+          pairedItem: { item: itemIndex },
+        });
+      } catch (error) {
+        const executionError = toolError(this, error);
+        const reference = parseReferenceFailure(error);
+        if (reference) {
+          output.push({
+            json: { response: toolFailureOutput(error, executionError) },
+            pairedItem: { item: itemIndex },
+          });
+          continue;
+        }
+        throw new NodeOperationError(this.getNode(), executionError.message, { itemIndex });
+      }
+    }
+
+    return [output];
   }
 }
