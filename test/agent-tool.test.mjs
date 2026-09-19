@@ -503,7 +503,8 @@ test('Agent Tool Create Event accepts semantic when and attendee names then lowe
   assert.match(tool.description, /workflow timezone Asia\/Shanghai/u);
   assert.deepEqual(tool.schema.required, ['summary', 'when']);
   assert.ok(tool.schema.properties.when.oneOf);
-  assert.equal(tool.schema.properties.attendeePersonIds.oneOf[0].type, 'array');
+  assert.equal(tool.schema.properties.attendeePersonIds.type, 'array');
+  assert.ok(tool.schema.properties.attendeePersonIds.items.oneOf);
 
   await tool.invoke({
     summary: '数学课',
