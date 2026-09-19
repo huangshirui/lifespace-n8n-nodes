@@ -36,3 +36,14 @@ jobs:
 
       - name: Test
         run: npm test
+        env:
+          LIFESPACE_AGENT_TOOL_CONTRACT_DIR: .artifacts/agent-tool-contracts
+
+      - name: Upload generated Agent Tool contracts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-tool-contracts
+          path: .artifacts/agent-tool-contracts/*.json
+          if-no-files-found: error
+          retention-days: 30
