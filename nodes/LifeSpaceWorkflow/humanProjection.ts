@@ -126,18 +126,88 @@ export async function getHumanRecordFields(this: ILoadOptionsFunctions): Promise
   };
 }
 
-export async function getHumanTemporalRangeFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-  const selected = await selectedModel(this);
-  if (!selected) return [];
-  const operation = (loadOptionParameter(this, 'operation') || 'create') as 'create' | 'update';
+const TEMPORAL_MUTATION_COMPONENT_PREFIX = 'lstm1:';
 
-  return writableMutationFields(selected.model, operation)
-    .filter((field) => String(field.type) === 'temporal_range')
-    .map((field) => ({
-      name: `${field.title?.trim() || field.key}${operation === 'create' && field.required === true ? ' (Required)' : ''}`,
-      value: field.key,
-      description: field.description,
-    }));
+type TemporalMutationComponent = 'kind' | 'start' | 'end';
+
+export function temporalMutationComponentSelector(
+  field: string,
+  component: TemporalMutationComponent,
+): string {
+  return `${TEMPORAL_MUTATION_COMPONENT_PREFIX}${component}.${Buffer.from(field).toString('base64url')}`;
+}
+
+function parseTemporalMutationComponentSelector(value: unknown): {
+  field: string;
+  component: TemporalMutationComponent;
+} | null {
+  const raw = String(value ?? '');
+  if (!raw.startsWith(TEMPORAL_MUTATION_COMPONENT_PREFIX)) return null;
+  const rest = raw.slice(TEMPORAL_MUTATION_COMPONENT_PREFIX.length);
+  const separator = rest.indexOf('.');
+  if (separator < 1) return null;
+  const component = rest.slice(0, separator);
+  if (!['kind', 'start', 'end'].includes(component)) return null;
+  try {
+    const field = Buffer.from(rest.slice(separator + 1), 'base64url').toString('utf8').trim();
+    return field ? { field, component: component as TemporalMutationComponent } : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getHumanTemporalRangeMutationFields(
+  this: ILoadOptionsFunctions,
+): Promise<ResourceMapperFields> {
+  const selected = await selectedModel(this);
+  if (!selected) return { fields: [] };
+  const operation = (loadOptionParameter(this, 'operation') || 'create') as 'create' | 'update';
+  const result: ResourceMapperField[] = [];
+
+  for (const field of writableMutationFields(selected.model, operation)) {
+    if (String(field.type) !== 'temporal_range') continue;
+    const label = field.title?.trim() || field.key;
+    const required = operation === 'create' && field.required === true;
+
+    result.push(
+      {
+        id: temporalMutationComponentSelector(field.key, 'kind'),
+        displayName: `${label} · Type`,
+        required,
+        defaultMatch: false,
+        canBeUsedToMatch: false,
+        display: true,
+        type: 'options',
+        options: [
+          { name: 'All Day / Date', value: 'date' },
+          { name: 'Date & Time', value: 'instant' },
+        ],
+        ...(required ? { defaultValue: 'instant' } : {}),
+      },
+      {
+        id: temporalMutationComponentSelector(field.key, 'start'),
+        displayName: `${label} · Start`,
+        required,
+        defaultMatch: false,
+        canBeUsedToMatch: false,
+        display: true,
+        type: 'dateTime',
+        options: [],
+      },
+      {
+        id: temporalMutationComponentSelector(field.key, 'end'),
+        displayName: `${label} · End`,
+        required,
+        defaultMatch: false,
+        canBeUsedToMatch: false,
+        display: true,
+        type: 'dateTime',
+        options: [],
+      },
+    );
+  }
+
+  return { fields: result };
 }
 
 export async function getHumanActionInputFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
@@ -450,6 +520,86 @@ function humanDateInput(value: unknown): string | null {
   const raw = String(value ?? '').trim();
   const match = /^(\d{4}-\d{2}-\d{2})(?:$|T)/u.exec(raw);
   return match ? exactHumanDate(match[1]) : null;
+}
+
+type HumanTemporalMutationParts = {
+  kind?: unknown;
+  start?: unknown;
+  end?: unknown;
+};
+
+export function projectHumanTemporalRangeMutationFields(
+  context: Pick<IExecuteFunctions, 'getNode'>,
+  value: unknown,
+): IDataObject {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+
+  const grouped = new Map<string, HumanTemporalMutationParts>();
+  for (const [selector, entry] of Object.entries(value as IDataObject)) {
+    const parsed = parseTemporalMutationComponentSelector(selector);
+    if (!parsed || entry === undefined || entry === null || entry === '') continue;
+    const parts = grouped.get(parsed.field) ?? {};
+    if (parts[parsed.component] !== undefined) {
+      throw new NodeOperationError(
+        context.getNode(),
+        `Temporal range ${parsed.field} ${parsed.component} is configured more than once`,
+      );
+    }
+    parts[parsed.component] = entry;
+    grouped.set(parsed.field, parts);
+  }
+
+  const result: IDataObject = {};
+  for (const [field, parts] of grouped) {
+    const kind = String(parts.kind ?? '').trim();
+    if (!kind || parts.start === undefined || parts.end === undefined) {
+      throw new NodeOperationError(
+        context.getNode(),
+        `Temporal range ${field} requires Type, Start, and End`,
+      );
+    }
+
+    if (kind === 'date') {
+      const start = humanDateInput(parts.start);
+      const end = humanDateInput(parts.end);
+      if (!start || !end) {
+        throw new NodeOperationError(context.getNode(), `Temporal range ${field} requires valid Start and End dates`);
+      }
+      if (end < start) {
+        throw new NodeOperationError(context.getNode(), `Temporal range ${field} End must not be earlier than Start`);
+      }
+      result[field] = {
+        kind: 'date',
+        start,
+        endExclusive: nextHumanDate(end),
+      };
+      continue;
+    }
+
+    if (kind === 'instant') {
+      const start = absoluteHumanInstant(String(parts.start ?? '').trim());
+      const end = absoluteHumanInstant(String(parts.end ?? '').trim());
+      if (!start || !end) {
+        throw new NodeOperationError(
+          context.getNode(),
+          `Temporal range ${field} requires absolute RFC3339 Start and End date-times`,
+        );
+      }
+      if (Date.parse(end) <= Date.parse(start)) {
+        throw new NodeOperationError(context.getNode(), `Temporal range ${field} End must be later than Start`);
+      }
+      result[field] = {
+        kind: 'instant',
+        start,
+        endExclusive: end,
+      };
+      continue;
+    }
+
+    throw new NodeOperationError(context.getNode(), `Temporal range ${field} requires Type Date or Date & Time`);
+  }
+
+  return result;
 }
 
 type HumanTemporalRangeRow = {
@@ -989,9 +1139,21 @@ export function humanExecutionContext(context: IExecuteFunctions): IExecuteFunct
           const value = target.getNodeParameter(name, itemIndex, fallback as never, options as never);
           const schema = target.getNodeParameter('fields.schema', itemIndex, []) as ResourceMapperField[];
           const projected = projectMutationValues(value, schema);
-          const temporalRows = target.getNodeParameter('humanTemporalRanges.range', itemIndex, [], options as never);
-          const temporal = projectHumanTemporalRanges(target, temporalRows);
-          for (const [field, entry] of Object.entries(temporal)) {
+          const temporalMapped = target.getNodeParameter('temporalFields.value', itemIndex, {}, options as never);
+          const temporal = projectHumanTemporalRangeMutationFields(target, temporalMapped);
+
+          // 0.1.15 pre-release compatibility: keep executing workflows saved with
+          // the earlier Field → Type → Start → End fixedCollection projection.
+          const legacyRows = target.getNodeParameter('humanTemporalRanges.range', itemIndex, [], options as never);
+          const legacyTemporal = projectHumanTemporalRanges(target, legacyRows);
+
+          for (const [field, entry] of Object.entries({ ...legacyTemporal, ...temporal })) {
+            if (
+              Object.prototype.hasOwnProperty.call(legacyTemporal, field)
+              && Object.prototype.hasOwnProperty.call(temporal, field)
+            ) {
+              throw new NodeOperationError(target.getNode(), `Field ${field} is configured more than once`);
+            }
             if (Object.prototype.hasOwnProperty.call(projected, field)) {
               throw new NodeOperationError(target.getNode(), `Field ${field} is configured more than once`);
             }
