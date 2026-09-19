@@ -22,6 +22,7 @@ export type AgentToolConfig = {
   capabilityQueryKey?: string;
   actionKey?: string;
   descriptionOverride?: string;
+  viewingTimezone?: string;
 };
 
 export type AgentToolSchema = {
@@ -46,6 +47,9 @@ export type JsonSchema = {
   format?: string;
   default?: unknown;
   oneOf?: JsonSchema[];
+  properties?: Record<string, JsonSchema>;
+  required?: string[];
+  additionalProperties?: boolean;
 };
 
 export type LifeSpaceAgentToolDefinition = {
@@ -112,15 +116,89 @@ function fieldLabel(field: DiscoveryField): string {
 function fieldDescription(field: DiscoveryField): string {
   const base = field.description?.trim() || `${fieldLabel(field)} (${field.type}).`;
   if (field.type === 'person' || field.type === 'record') {
-    return `${base} Supply a stable LifeSpace record ID.`;
+    return `${base} Prefer {"name":"..."} when the user names the target; {"id":"..."} or a stable ID string is also accepted.`;
   }
   if (field.type === 'person_list' || field.type === 'record_list') {
-    return `${base} Supply stable LifeSpace record IDs.`;
+    return `${base} Supply an array of references. Prefer {"name":"..."} values when the user names targets; {"id":"..."} or stable ID strings are also accepted.`;
+  }
+  if (field.type === 'temporal_range') {
+    return `${base} Supply one object with kind, start, and end. kind=date uses inclusive YYYY-MM-DD dates; kind=instant uses absolute RFC3339 date-times.`;
   }
   return base;
 }
 
-function scalarSchema(field: DiscoveryField): JsonSchema {
+function referenceSchema(): JsonSchema {
+  return {
+    oneOf: [
+      {
+        type: 'object',
+        properties: { name: { type: 'string', minLength: 1 } },
+        required: ['name'],
+        additionalProperties: false,
+      },
+      {
+        type: 'object',
+        properties: { id: { type: 'string', minLength: 1 } },
+        required: ['id'],
+        additionalProperties: false,
+      },
+      { type: 'string', minLength: 1 },
+    ],
+  };
+}
+
+function fixedRangeSchema(kind: 'date' | 'instant'): JsonSchema {
+  const format = kind === 'date' ? 'date' : 'date-time';
+  return {
+    type: 'object',
+    properties: {
+      start: { type: 'string', format },
+      endExclusive: { type: 'string', format },
+    },
+    required: ['start', 'endExclusive'],
+    additionalProperties: false,
+  };
+}
+
+function temporalRangeSchema(): JsonSchema {
+  return {
+    oneOf: [
+      {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['date'] },
+          start: { type: 'string', format: 'date' },
+          end: { type: 'string', format: 'date' },
+        },
+        required: ['kind', 'start', 'end'],
+        additionalProperties: false,
+      },
+      {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['instant'] },
+          start: { type: 'string', format: 'date-time' },
+          end: { type: 'string', format: 'date-time' },
+        },
+        required: ['kind', 'start', 'end'],
+        additionalProperties: false,
+      },
+    ],
+  };
+}
+
+function withNullable(field: DiscoveryField, schema: JsonSchema): JsonSchema {
+  schema.description = fieldDescription(field);
+  if (field.nullable === true) {
+    return {
+      description: schema.description,
+      oneOf: [schema, { type: 'null' }],
+    };
+  }
+  return schema;
+}
+
+function fieldSchema(field: DiscoveryField): JsonSchema {
   let schema: JsonSchema;
   switch (field.type) {
     case 'boolean':
@@ -136,23 +214,35 @@ function scalarSchema(field: DiscoveryField): JsonSchema {
       if (!field.values?.length) throw new Error(`LifeSpace enum field ${field.key} has no published values`);
       schema = { type: 'string', enum: [...field.values] };
       break;
+    case 'person':
+    case 'record':
+      schema = referenceSchema();
+      break;
     case 'person_list':
     case 'record_list':
-      schema = { type: 'array', items: { type: 'string', minLength: 1 } };
+      schema = { type: 'array', items: referenceSchema() };
       break;
     case 'date':
       schema = { type: 'string', format: 'date' };
       break;
+    case 'instant':
     case 'datetime':
       schema = { type: 'string', format: 'date-time' };
+      break;
+    case 'range<date>':
+      schema = fixedRangeSchema('date');
+      break;
+    case 'range<instant>':
+      schema = fixedRangeSchema('instant');
+      break;
+    case 'temporal_range':
+      schema = temporalRangeSchema();
       break;
     case 'timezone':
       schema = { type: 'string', minLength: 1 };
       break;
     case 'string':
     case 'text':
-    case 'person':
-    case 'record':
       schema = { type: 'string' };
       break;
     default: {
@@ -165,16 +255,36 @@ function scalarSchema(field: DiscoveryField): JsonSchema {
   if (typeof field.maxLength === 'number') schema.maxLength = field.maxLength;
   if (typeof field.minimum === 'number') schema.minimum = field.minimum;
   if (typeof field.maximum === 'number') schema.maximum = field.maximum;
-  schema.description = fieldDescription(field);
-
-  if (field.nullable === true) {
-    return {
-      description: schema.description,
-      oneOf: [schema, { type: 'null' }],
-    };
-  }
-  return schema;
+  return withNullable(field, schema);
 }
+
+function nextDate(date: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(date);
+  if (!match) throw new Error(`Invalid date ${date}`);
+  const next = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + 1));
+  return next.toISOString().slice(0, 10);
+}
+
+function normalizeTemporalRange(field: DiscoveryField, value: unknown): unknown {
+  if (value === null || field.type !== 'temporal_range') return value;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${field.key} must be a TemporalRange object`);
+  }
+  const input = value as Record<string, unknown>;
+  const kind = String(input.kind ?? '');
+  const start = String(input.start ?? '');
+  const end = String(input.end ?? '');
+  if (kind === 'date') {
+    if (end < start) throw new Error(`${field.key}.end must not be earlier than start`);
+    return { kind: 'date', start, endExclusive: nextDate(end) };
+  }
+  if (kind === 'instant') {
+    if (Date.parse(end) <= Date.parse(start)) throw new Error(`${field.key}.end must be later than start`);
+    return { kind: 'instant', start, endExclusive: end };
+  }
+  throw new Error(`${field.key}.kind must be date or instant`);
+}
+
 
 function queryScalarSchema(type: string, description: string): JsonSchema {
   if (type === 'boolean') return { type: 'boolean', description };
@@ -221,7 +331,7 @@ function genericQuerySchema(model: DiscoveryModel): AgentToolSchema {
       };
       continue;
     }
-    const schema = scalarSchema({ ...field, nullable: false });
+    const schema = fieldSchema({ ...field, nullable: false });
     if (filter.acceptsCurrentActorPersonAlias === 'me') {
       schema.description = `${schema.description ?? ''} The special value "me" means the current actor's Person.`.trim();
     }
@@ -355,7 +465,7 @@ function mutationSchema(model: DiscoveryModel, operation: 'create' | 'update'): 
   }
 
   for (const field of mutationFields(model, operation)) {
-    const schema = scalarSchema(field);
+    const schema = fieldSchema(field);
     if (operation === 'create' && hasOwn(model.defaults ?? {}, field.key)) {
       const defaultValue = model.defaults[field.key];
       schema.description = `${schema.description ?? ''} Optional: LifeSpace applies its published default when omitted.`.trim();
@@ -397,7 +507,7 @@ function actionSchema(model: DiscoveryModel, actionKey: string): AgentToolSchema
   };
   const required = [RECORD_ID];
   for (const field of action.input.fields) {
-    properties[field.key] = scalarSchema(field);
+    properties[field.key] = fieldSchema(field);
     if (field.required) required.push(field.key);
   }
   return { type: 'object', properties, required, additionalProperties: false };
@@ -455,7 +565,14 @@ function defaultDescription(model: DiscoveryModel, config: AgentToolConfig): str
     const action = selectedAction(model, text(config.actionKey));
     purpose = `Execute LifeSpace ${action.kind} Action "${action.key}" on a ${modelName} record`;
   }
-  return `${purpose} in Space "${space}".${modelDescription ? ` ${modelDescription}` : ''} Use only when this configured operation and Space match the user's intent.`;
+  const timezone = config.viewingTimezone?.trim();
+  const recordLookupHint = ['update', 'delete', 'action'].includes(config.operation)
+    ? ' If the stable recordId is not already known, use the matching LifeSpace Query Tool first; never guess a record ID.'
+    : '';
+  const timezoneHint = timezone
+    ? ` Interpret local/relative dates in workflow timezone ${timezone}; timed values must be absolute RFC3339 date-times.`
+    : '';
+  return `${purpose} in Space "${space}".${modelDescription ? ` ${modelDescription}` : ''} Use only when this configured operation and Space match the user's intent.${recordLookupHint}${timezoneHint}`;
 }
 
 export function buildAgentToolDefinition(model: DiscoveryModel, config: AgentToolConfig): LifeSpaceAgentToolDefinition {
@@ -475,25 +592,49 @@ export function buildAgentToolDefinition(model: DiscoveryModel, config: AgentToo
   };
 }
 
-function schemaAllowsNull(schema: JsonSchema): boolean {
-  if (Array.isArray(schema.type) && schema.type.includes('null')) return true;
-  return schema.oneOf?.some((entry) => entry.type === 'null') === true;
+function validDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
+  if (!match) return false;
+  const parsed = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return parsed.getUTCFullYear() === Number(match[1])
+    && parsed.getUTCMonth() + 1 === Number(match[2])
+    && parsed.getUTCDate() === Number(match[3]);
 }
 
-function validatePrimitive(schema: JsonSchema, value: unknown, key: string): void {
-  if (value === null) {
-    if (!schemaAllowsNull(schema)) throw new Error(`${key} cannot be null`);
+function validateValue(schema: JsonSchema, value: unknown, key: string): void {
+  if (schema.oneOf?.length) {
+    let matches = 0;
+    for (const candidate of schema.oneOf) {
+      try {
+        validateValue(candidate, value, key);
+        matches += 1;
+      } catch {
+        // Try the next published shape.
+      }
+    }
+    if (matches !== 1) throw new Error(`${key} must match exactly one published shape`);
     return;
   }
-  if (schema.oneOf) {
-    const candidates = schema.oneOf.filter((entry) => entry.type !== 'null');
-    if (candidates.length === 1) return validatePrimitive(candidates[0], value, key);
+
+  const types = Array.isArray(schema.type)
+    ? schema.type
+    : schema.type
+      ? [schema.type]
+      : [];
+  if (value === null) {
+    if (!types.includes('null')) throw new Error(`${key} cannot be null`);
+    return;
   }
-  const type = Array.isArray(schema.type) ? schema.type.find((entry) => entry !== 'null') : schema.type;
+
+  const type = types.find((entry) => entry !== 'null');
   if (type === 'string') {
     if (typeof value !== 'string') throw new Error(`${key} must be a string`);
     if (schema.minLength !== undefined && value.length < schema.minLength) throw new Error(`${key} is too short`);
     if (schema.maxLength !== undefined && value.length > schema.maxLength) throw new Error(`${key} is too long`);
+    if (schema.format === 'date' && !validDate(value)) throw new Error(`${key} must be a YYYY-MM-DD date`);
+    if (schema.format === 'date-time' && (!value.includes('T') || !Number.isFinite(Date.parse(value)))) {
+      throw new Error(`${key} must be a valid RFC3339 date-time`);
+    }
   } else if (type === 'number') {
     if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`${key} must be a number`);
   } else if (type === 'integer') {
@@ -504,14 +645,30 @@ function validatePrimitive(schema: JsonSchema, value: unknown, key: string): voi
     if (!Array.isArray(value)) throw new Error(`${key} must be an array`);
     if (schema.minItems !== undefined && value.length < schema.minItems) throw new Error(`${key} contains too few items`);
     if (schema.maxItems !== undefined && value.length > schema.maxItems) throw new Error(`${key} contains too many items`);
-    if (schema.items) value.forEach((entry, index) => validatePrimitive(schema.items!, entry, `${key}[${index}]`));
+    if (schema.items) value.forEach((entry, index) => validateValue(schema.items!, entry, `${key}[${index}]`));
+  } else if (type === 'object') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${key} must be an object`);
+    const input = value as Record<string, unknown>;
+    for (const required of schema.required ?? []) {
+      if (!hasOwn(input, required) || input[required] === undefined) throw new Error(`${key} requires ${required}`);
+    }
+    for (const [property, entry] of Object.entries(input)) {
+      const propertySchema = schema.properties?.[property];
+      if (!propertySchema) {
+        if (schema.additionalProperties === false) throw new Error(`${key} contains unknown property ${property}`);
+        continue;
+      }
+      validateValue(propertySchema, entry, `${key}.${property}`);
+    }
   }
+
   if (schema.enum && !schema.enum.includes(value as never)) throw new Error(`${key} must be one of the published values`);
   if (typeof value === 'number') {
     if (schema.minimum !== undefined && value < schema.minimum) throw new Error(`${key} is below the minimum`);
     if (schema.maximum !== undefined && value > schema.maximum) throw new Error(`${key} is above the maximum`);
   }
 }
+
 
 export function validateAgentToolInput(schema: AgentToolSchema, input: unknown): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('LifeSpace Tool input must be an object');
@@ -523,7 +680,7 @@ export function validateAgentToolInput(schema: AgentToolSchema, input: unknown):
     if (value === undefined) continue;
     const propertySchema = schema.properties[key];
     if (!propertySchema) throw new Error(`LifeSpace Tool input contains unknown property ${key}`);
-    validatePrimitive(propertySchema, value, key);
+    validateValue(propertySchema, value, key);
     result[key] = value;
   }
   for (const [key, dependencies] of Object.entries(schema.dependentRequired ?? {})) {
@@ -550,7 +707,7 @@ function queryRequest(model: DiscoveryModel, config: AgentToolConfig, input: Rec
     return {
       method: 'POST',
       path: canonicalQueryPath(model, config.spaceId),
-      body: compileGenericQuery(model, input),
+      body: compileGenericQuery(model, input, config.viewingTimezone),
     };
   }
   const qs: NonNullable<AgentToolRequest['qs']> = {};
@@ -585,12 +742,19 @@ function queryRequest(model: DiscoveryModel, config: AgentToolConfig, input: Rec
   };
 }
 
-function semanticBody(schema: AgentToolSchema, input: Record<string, unknown>, excluded: string[] = []): Record<string, unknown> {
+function semanticBody(
+  schema: AgentToolSchema,
+  input: Record<string, unknown>,
+  fields: DiscoveryField[],
+  excluded: string[] = [],
+): Record<string, unknown> {
   const validated = validateAgentToolInput(schema, input);
+  const byKey = new Map(fields.map((field) => [field.key, field]));
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(validated)) {
     if (excluded.includes(key) || value === undefined) continue;
-    result[key] = value;
+    const field = byKey.get(key);
+    result[key] = field ? normalizeTemporalRange(field, value) : value;
   }
   return result;
 }
@@ -606,12 +770,13 @@ export function buildAgentToolRequest(
 
   if (config.operation === 'query') return queryRequest(model, config, validated);
   if (config.operation === 'create') {
-    return { method: 'POST', path: collectionPath(model, config), body: semanticBody(schema, validated) };
+    return { method: 'POST', path: collectionPath(model, config), body: semanticBody(schema, validated, mutationFields(model, 'create')) };
   }
 
   const path = recordPath(model, config, validated);
   if (config.operation === 'update') {
-    const body = semanticBody(schema, validated, [RECORD_ID]);
+    const body = semanticBody(schema, validated, mutationFields(model, 'update'), [RECORD_ID]);
+    if (!Object.keys(body).length) throw new Error('LifeSpace Update requires at least one field to change');
     if (currentVersion === undefined) return { method: 'PATCH', path, body, needsCurrentVersion: true, versionParameter: 'version' };
     return { method: 'PATCH', path, body: { ...body, version: currentVersion } };
   }
@@ -625,7 +790,7 @@ export function buildAgentToolRequest(
     throw new Error(`LifeSpace Action ${action.key} uses an unsupported concurrency contract`);
   }
   const actionPath = `${path}/actions/${encodeURIComponent(action.key)}`;
-  const body = semanticBody(schema, validated, [RECORD_ID]);
+  const body = semanticBody(schema, validated, action.input.fields, [RECORD_ID]);
   if (currentVersion === undefined) {
     return {
       method: 'POST',

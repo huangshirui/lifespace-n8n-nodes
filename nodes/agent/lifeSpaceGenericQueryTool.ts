@@ -41,58 +41,171 @@ function descriptor(model: DiscoveryModel) {
   return model.query.canonical;
 }
 
+function referenceValueSchema(field: DiscoveryField, target: DiscoveryCanonicalFilterTarget): JsonSchema {
+  const reference: JsonSchema = {
+    oneOf: [
+      {
+        type: 'object',
+        properties: { name: { type: 'string', minLength: 1 } },
+        required: ['name'],
+        additionalProperties: false,
+      },
+      {
+        type: 'object',
+        properties: { id: { type: 'string', minLength: 1 } },
+        required: ['id'],
+        additionalProperties: false,
+      },
+      { type: 'string', minLength: 1 },
+    ],
+  };
+  if (target.acceptsCurrentActorPersonAlias === 'me' && ['person', 'person_list'].includes(field.type)) {
+    reference.description = 'Reference by name or stable ID. The string "me" means the current actor Person.';
+  } else {
+    reference.description = 'Reference by {"name":"..."} when the user supplies a label, or by {"id":"..."} / stable ID when already known.';
+  }
+  return reference;
+}
+
 function scalarValueSchema(field: DiscoveryField | undefined, target: DiscoveryCanonicalFilterTarget): JsonSchema {
+  if (field && ['person', 'person_list', 'record', 'record_list'].includes(field.type)) {
+    return referenceValueSchema(field, target);
+  }
   if (field?.values?.length) return { type: 'string', enum: [...field.values] };
   const type = target.valueType;
   if (type === 'integer') return { type: 'integer' };
   if (type === 'number') return { type: 'number' };
   if (type === 'boolean') return { type: 'boolean' };
   if (type === 'date') return { type: 'string', format: 'date' };
-  if (type === 'datetime') return { type: 'string', format: 'date-time' };
+  if (type === 'instant' || type === 'datetime') return { type: 'string', format: 'date-time' };
   return { type: 'string', minLength: 1 };
 }
 
-function localDateWindowSchema(): JsonSchema {
-  return {
-    type: 'object',
-    properties: {
-      kind: { type: 'string', enum: ['local_date_window'] },
-      startDate: { type: 'string', format: 'date' },
-      endDateExclusive: { type: 'string', format: 'date' },
-      timezone: { type: 'string', minLength: 1, description: 'IANA timezone' },
+function localDateWindowSchemas(): JsonSchema[] {
+  return [
+    {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['local_date_window'] },
+        startDate: { type: 'string', format: 'date' },
+        endDate: { type: 'string', format: 'date', description: 'Inclusive human end date.' },
+      },
+      required: ['kind', 'startDate', 'endDate'],
+      additionalProperties: false,
     },
-    required: ['kind', 'startDate', 'endDateExclusive', 'timezone'],
-    additionalProperties: false,
-  };
+    {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['local_date_window'] },
+        startDate: { type: 'string', format: 'date' },
+        endDateExclusive: { type: 'string', format: 'date' },
+        timezone: { type: 'string', minLength: 1, description: 'IANA timezone' },
+      },
+      required: ['kind', 'startDate', 'endDateExclusive', 'timezone'],
+      additionalProperties: false,
+    },
+  ];
 }
 
 function rangeValueSchema(target: DiscoveryCanonicalFilterTarget): JsonSchema {
-  const branches: JsonSchema[] = [localDateWindowSchema()];
-  if (target.valueType === 'date' || target.valueType === 'date-range' || target.valueType === 'temporal-range') {
-    branches.push({
-      type: 'object',
-      properties: {
-        kind: { type: 'string', enum: ['date'] },
-        start: { type: 'string', format: 'date' },
-        endExclusive: { type: 'string', format: 'date' },
+  const branches: JsonSchema[] = localDateWindowSchemas();
+  const valueType = String(target.valueType);
+  if (['date', 'date-range', 'range<date>', 'temporal-range', 'temporal_range'].includes(valueType)) {
+    branches.push(
+      {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['date'] },
+          start: { type: 'string', format: 'date' },
+          end: { type: 'string', format: 'date', description: 'Inclusive human end date.' },
+        },
+        required: ['kind', 'start', 'end'],
+        additionalProperties: false,
       },
-      required: ['kind', 'start', 'endExclusive'],
-      additionalProperties: false,
-    });
+      {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['date'] },
+          start: { type: 'string', format: 'date' },
+          endExclusive: { type: 'string', format: 'date' },
+        },
+        required: ['kind', 'start', 'endExclusive'],
+        additionalProperties: false,
+      },
+    );
   }
-  if (target.valueType === 'datetime' || target.valueType === 'instant-range' || target.valueType === 'temporal-range') {
-    branches.push({
-      type: 'object',
-      properties: {
-        kind: { type: 'string', enum: ['instant'] },
-        start: { type: 'string', format: 'date-time' },
-        endExclusive: { type: 'string', format: 'date-time' },
+  if (['instant', 'datetime', 'instant-range', 'range<instant>', 'temporal-range', 'temporal_range'].includes(valueType)) {
+    branches.push(
+      {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['instant'] },
+          start: { type: 'string', format: 'date-time' },
+          end: { type: 'string', format: 'date-time' },
+        },
+        required: ['kind', 'start', 'end'],
+        additionalProperties: false,
       },
-      required: ['kind', 'start', 'endExclusive'],
-      additionalProperties: false,
-    });
+      {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['instant'] },
+          start: { type: 'string', format: 'date-time' },
+          endExclusive: { type: 'string', format: 'date-time' },
+        },
+        required: ['kind', 'start', 'endExclusive'],
+        additionalProperties: false,
+      },
+    );
   }
   return { oneOf: branches };
+}
+
+function nextDate(date: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(date);
+  if (!match) throw new Error(`Invalid date ${date}`);
+  const next = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + 1));
+  return next.toISOString().slice(0, 10);
+}
+
+function asRangeObject(value: unknown, path: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${path} must be a range object`);
+  return value as Record<string, unknown>;
+}
+
+function normalizeRangeValue(
+  target: DiscoveryCanonicalFilterTarget,
+  raw: unknown,
+  viewingTimezone?: string,
+): Record<string, unknown> {
+  const value = asRangeObject(raw, `${target.field}.value`);
+  const kind = String(value.kind ?? '');
+  if (kind === 'local_date_window') {
+    const startDate = String(value.startDate ?? '');
+    const endDateExclusive = value.endDateExclusive !== undefined
+      ? String(value.endDateExclusive)
+      : nextDate(String(value.endDate ?? ''));
+    const timezone = String(value.timezone ?? viewingTimezone ?? '').trim();
+    if (!timezone) throw new Error(`${target.field} local_date_window requires a viewing timezone`);
+    return { kind, startDate, endDateExclusive, timezone };
+  }
+
+  const start = String(value.start ?? '');
+  if (kind === 'date') {
+    const endExclusive = value.endExclusive !== undefined
+      ? String(value.endExclusive)
+      : nextDate(String(value.end ?? ''));
+    if (endExclusive <= start) throw new Error(`${target.field} date range end must be after start`);
+    return { kind, start, endExclusive };
+  }
+  if (kind === 'instant') {
+    const endExclusive = String(value.endExclusive ?? value.end ?? '');
+    if (Date.parse(endExclusive) <= Date.parse(start)) {
+      throw new Error(`${target.field} instant range end must be after start`);
+    }
+    return { kind, start, endExclusive };
+  }
+  throw new Error(`${target.field} range kind is invalid`);
 }
 
 function filterBranch(model: DiscoveryModel, target: DiscoveryCanonicalFilterTarget, operator: string): JsonSchema {
@@ -103,8 +216,9 @@ function filterBranch(model: DiscoveryModel, target: DiscoveryCanonicalFilterTar
   };
   const required = ['field', 'operator'];
   if (operator !== 'isNull' && operator !== 'isNotNull') {
+    const valueType = String(target.valueType);
     const rangeOperator = ['within', 'overlaps', 'before', 'after'].includes(operator)
-      || (operator === 'contains' && ['date-range', 'instant-range', 'temporal-range'].includes(target.valueType));
+      || (operator === 'contains' && ['date-range', 'instant-range', 'range<date>', 'range<instant>', 'temporal-range', 'temporal_range'].includes(valueType));
     properties.value = rangeOperator
       ? rangeValueSchema(target)
       : operator === 'kindIs'
@@ -147,7 +261,12 @@ export function genericQuerySchema(model: DiscoveryModel): GenericQuerySchema {
       type: 'array',
       items: { oneOf: branches },
       maxItems: canonical.filter.maxNodes,
-      description: 'Canonical LifeSpace predicates combined with AND.',
+      description: 'LifeSpace predicates. Use match=all for AND or match=any for OR.',
+    };
+    properties.match = {
+      type: 'string',
+      enum: ['all', 'any'],
+      description: 'How multiple filters combine. Defaults to all (AND).',
     };
   }
 
@@ -176,7 +295,7 @@ function asObject(input: unknown): Record<string, unknown> {
   return input as Record<string, unknown>;
 }
 
-function predicate(model: DiscoveryModel, raw: unknown): CanonicalPredicate {
+function predicate(model: DiscoveryModel, raw: unknown, viewingTimezone?: string): CanonicalPredicate {
   const input = asObject(raw);
   const field = String(input.field ?? '');
   const op = String(input.operator ?? input.op ?? '');
@@ -184,10 +303,17 @@ function predicate(model: DiscoveryModel, raw: unknown): CanonicalPredicate {
   if (!target?.operators.includes(op)) throw new Error(`LifeSpace query does not allow ${field} ${op}`);
   if (op === 'isNull' || op === 'isNotNull') return { field, op };
   if (input.value === undefined || input.value === null) throw new Error(`${field} ${op} requires a value`);
-  return { field, op, value: input.value };
+  const valueType = String(target.valueType);
+  const rangeOperator = ['within', 'overlaps', 'before', 'after'].includes(op)
+    || (op === 'contains' && ['date-range', 'instant-range', 'range<date>', 'range<instant>', 'temporal-range', 'temporal_range'].includes(valueType));
+  return {
+    field,
+    op,
+    value: rangeOperator ? normalizeRangeValue(target, input.value, viewingTimezone) : input.value,
+  };
 }
 
-export function compileGenericQuery(model: DiscoveryModel, input: unknown): Record<string, unknown> {
+export function compileGenericQuery(model: DiscoveryModel, input: unknown, viewingTimezone?: string): Record<string, unknown> {
   const canonical = descriptor(model);
   const value = asObject(input);
   const result: Record<string, unknown> = {};
@@ -199,9 +325,12 @@ export function compileGenericQuery(model: DiscoveryModel, input: unknown): Reco
     result.search = { text: value.search };
   }
 
-  const filters = (Array.isArray(value.filters) ? value.filters : []).map((entry) => predicate(model, entry));
+  const filters = (Array.isArray(value.filters) ? value.filters : [])
+    .map((entry) => predicate(model, entry, viewingTimezone));
   if (filters.length === 1) result.filter = filters[0];
-  if (filters.length > 1) result.filter = { and: filters };
+  if (filters.length > 1) {
+    result.filter = String(value.match ?? 'all') === 'any' ? { or: filters } : { and: filters };
+  }
 
   if (Array.isArray(value.sort) && value.sort.length) {
     const used = new Set<string>();
@@ -216,6 +345,14 @@ export function compileGenericQuery(model: DiscoveryModel, input: unknown): Reco
       used.add(field);
       return { field, direction };
     });
+    const temporalFields = new Set(
+      model.fields.filter((field) => field.type === 'temporal_range').map((field) => field.key),
+    );
+    if ((result.sort as Array<{ field: string }>).some((sort) => temporalFields.has(sort.field))) {
+      const timezone = String(viewingTimezone ?? '').trim();
+      if (!timezone) throw new Error('TemporalRange sorting requires the n8n workflow timezone');
+      result.context = { viewingTimezone: timezone };
+    }
   }
 
   const page: Record<string, unknown> = {};

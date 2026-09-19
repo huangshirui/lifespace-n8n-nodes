@@ -22,8 +22,8 @@ test('Agent Tool remains a native AiTool and keeps structural scope outside mode
   assert.match(base, /outputs: \[NodeConnectionTypes\.AiTool\]/u);
   assert.match(base, /noDataExpression: true/u);
   assert.match(projection, /async supplyData\(this: ISupplyDataFunctions/u);
-  assert.match(projection, /genericQuerySchema\(model\)/u);
-  assert.match(projection, /compileGenericQuery\(model, input\)/u);
+  assert.match(projection, /LifeSpaceTool\.prototype\.supplyData\.call/u);
+  assert.match(base, /buildAgentToolRequest\(model, config, prepared/u);
   assert.doesNotMatch(projection, /@langchain\/core/u);
   assert.doesNotMatch(projection, /DynamicStructuredTool/u);
 });
@@ -40,7 +40,7 @@ test('Agent Tool remains model-agnostic and projects Discovery semantics', async
   assert.doesNotMatch(source, /switch\s*\(\s*model\.key\s*\)/u);
   assert.doesNotMatch(source, /create_task|query_event|complete_task/u);
   assert.match(source, /query\.canonical/u);
-  assert.match(source, /canonicalQueryPath\(model, spaceId\)/u);
+  assert.match(source, /canonicalQueryPath\(model, config\.spaceId\)/u);
   assert.match(source, /model\.fields/u);
 });
 

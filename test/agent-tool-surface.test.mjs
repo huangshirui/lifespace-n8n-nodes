@@ -115,6 +115,7 @@ function context(parameters, onBusiness) {
       return Object.hasOwn(parameters, name) ? parameters[name] : defaultValue;
     },
     getNode: () => ({ name: 'LifeSpace AI Tool', typeVersion: 1 }),
+    getTimezone: () => 'Asia/Shanghai',
     addInputData: () => ({ index: 0 }),
     addOutputData: () => undefined,
     helpers: {

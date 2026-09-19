@@ -22,7 +22,9 @@ import {
   loadOptionParameter,
   loadRuntimeDiscovery,
   normalizeBaseUrl,
+  searchRelationTargetsForAgent,
   type DiscoveryAccess,
+  type DiscoveryField,
   type DiscoveryModel,
 } from '../lifespaceDiscovery';
 import {
@@ -126,6 +128,224 @@ async function performRequest(
     'lifeSpaceApi',
     requestOptions(baseUrl, request),
   );
+}
+
+type AgentReferenceFailure = {
+  code: 'REFERENCE_NOT_FOUND' | 'AMBIGUOUS_REFERENCE' | 'REFERENCE_LOOKUP_UNAVAILABLE';
+  field: string;
+  input: string;
+  candidates?: Array<{ id: string; label: string }>;
+};
+
+const REFERENCE_ERROR_PREFIX = 'LIFESPACE_AGENT_REFERENCE:';
+
+function referenceErrorMessage(
+  code: AgentReferenceFailure['code'],
+  field: string,
+  input: string,
+  candidates: Array<{ id: string; label: string }> = [],
+): string {
+  const message = code === 'REFERENCE_NOT_FOUND'
+    ? `No LifeSpace reference matched "${input}" for ${field}`
+    : code === 'AMBIGUOUS_REFERENCE'
+      ? `Multiple LifeSpace references matched "${input}" for ${field}`
+      : `LifeSpace reference lookup is unavailable for ${field}`;
+  return REFERENCE_ERROR_PREFIX + JSON.stringify({
+    code,
+    field,
+    input,
+    message,
+    ...(candidates.length ? { candidates } : {}),
+  });
+}
+
+function parseReferenceFailure(error: unknown): AgentReferenceFailure & { message: string } | null {
+  if (!(error instanceof Error)) return null;
+  const index = error.message.indexOf(REFERENCE_ERROR_PREFIX);
+  if (index < 0) return null;
+  try {
+    const value = JSON.parse(error.message.slice(index + REFERENCE_ERROR_PREFIX.length)) as unknown;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const failure = value as Record<string, unknown>;
+    if (
+      !['REFERENCE_NOT_FOUND', 'AMBIGUOUS_REFERENCE', 'REFERENCE_LOOKUP_UNAVAILABLE'].includes(String(failure.code))
+      || typeof failure.field !== 'string'
+      || typeof failure.input !== 'string'
+      || typeof failure.message !== 'string'
+    ) return null;
+    return value as AgentReferenceFailure & { message: string };
+  } catch {
+    return null;
+  }
+}
+
+function relationField(field: DiscoveryField): boolean {
+  return ['person', 'person_list', 'record', 'record_list'].includes(field.type);
+}
+
+function stableReferenceId(field: DiscoveryField, value: string): boolean {
+  if (field.type === 'person' || field.type === 'person_list') return /^per_[A-Za-z0-9_-]+$/u.test(value);
+  return /^rec_[A-Za-z0-9_-]+$/u.test(value);
+}
+
+function referenceInput(value: unknown): { id?: string; name?: string } {
+  if (typeof value === 'string') return { id: value };
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const input = value as Record<string, unknown>;
+  const id = typeof input.id === 'string' ? input.id.trim() : '';
+  const name = typeof input.name === 'string' ? input.name.trim() : '';
+  return {
+    ...(id ? { id } : {}),
+    ...(name ? { name } : {}),
+  };
+}
+
+async function resolveOneReference(
+  context: ISupplyDataFunctions,
+  baseUrl: string,
+  spaceId: string,
+  model: DiscoveryModel,
+  field: DiscoveryField,
+  value: unknown,
+  allowMe = false,
+): Promise<string> {
+  const parsed = referenceInput(value);
+  const raw = parsed.id ?? parsed.name ?? '';
+  if (!raw) {
+    throw new NodeOperationError(
+      context.getNode(),
+      referenceErrorMessage('REFERENCE_NOT_FOUND', field.key, String(value ?? '')),
+    );
+  }
+
+  if (allowMe && raw === 'me') return 'me';
+  if (parsed.id && stableReferenceId(field, parsed.id)) return parsed.id;
+
+  const name = parsed.name ?? parsed.id ?? '';
+  const lookup = field.relation?.lookup;
+  if (!lookup?.supported) {
+    throw new NodeOperationError(
+      context.getNode(),
+      referenceErrorMessage('REFERENCE_LOOKUP_UNAVAILABLE', field.key, name),
+    );
+  }
+
+  const candidates = await searchRelationTargetsForAgent(context, baseUrl, spaceId, model.key, field, name);
+  const normalized = name.toLocaleLowerCase();
+  const exact = candidates.filter((candidate) => candidate.label.trim().toLocaleLowerCase() === normalized);
+  if (exact.length === 1) return exact[0].id;
+  if (exact.length > 1) {
+    throw new NodeOperationError(
+      context.getNode(),
+      referenceErrorMessage('AMBIGUOUS_REFERENCE', field.key, name, exact),
+    );
+  }
+  if (candidates.length === 1) return candidates[0].id;
+  if (!candidates.length) {
+    throw new NodeOperationError(
+      context.getNode(),
+      referenceErrorMessage('REFERENCE_NOT_FOUND', field.key, name),
+    );
+  }
+  throw new NodeOperationError(
+    context.getNode(),
+    referenceErrorMessage('AMBIGUOUS_REFERENCE', field.key, name, candidates.slice(0, 10)),
+  );
+}
+
+async function resolveFieldReference(
+  context: ISupplyDataFunctions,
+  baseUrl: string,
+  spaceId: string,
+  model: DiscoveryModel,
+  field: DiscoveryField,
+  value: unknown,
+  allowMe = false,
+): Promise<unknown> {
+  if (value === null || value === undefined) return value;
+  if (field.type === 'person_list' || field.type === 'record_list') {
+    if (!Array.isArray(value)) return value;
+    return await Promise.all(
+      value.map((entry) => resolveOneReference(context, baseUrl, spaceId, model, field, entry, allowMe)),
+    );
+  }
+  return await resolveOneReference(context, baseUrl, spaceId, model, field, value, allowMe);
+}
+
+async function prepareAgentInput(
+  context: ISupplyDataFunctions,
+  baseUrl: string,
+  model: DiscoveryModel,
+  config: AgentToolConfig,
+  raw: unknown,
+): Promise<unknown> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const input = { ...(raw as Record<string, unknown>) };
+
+  if (config.operation === 'query' && model.query.canonical && config.queryMode !== 'capability') {
+    if (!Array.isArray(input.filters)) return input;
+    const filters = [];
+    for (const rawFilter of input.filters) {
+      if (!rawFilter || typeof rawFilter !== 'object' || Array.isArray(rawFilter)) {
+        filters.push(rawFilter);
+        continue;
+      }
+      const filter = { ...(rawFilter as Record<string, unknown>) };
+      const fieldKey = String(filter.field ?? '');
+      const target = model.query.canonical.filter.targets.find((entry) => entry.field === fieldKey);
+      const field = model.fields.find((entry) => entry.key === fieldKey);
+      if (field && target && relationField(field) && filter.value !== undefined) {
+        filter.value = await resolveOneReference(
+          context,
+          baseUrl,
+          config.spaceId,
+          model,
+          field,
+          filter.value,
+          target.acceptsCurrentActorPersonAlias === 'me',
+        );
+      }
+      filters.push(filter);
+    }
+    input.filters = filters;
+    return input;
+  }
+
+  const fields = config.operation === 'action'
+    ? model.actions.find((action) => action.key === config.actionKey)?.input.fields ?? []
+    : config.operation === 'create' || config.operation === 'update'
+      ? model.fields
+      : [];
+
+  for (const field of fields) {
+    if (!relationField(field) || input[field.key] === undefined) continue;
+    input[field.key] = await resolveFieldReference(
+      context,
+      baseUrl,
+      config.spaceId,
+      model,
+      field,
+      input[field.key],
+    );
+  }
+  return input;
+}
+
+function toolFailureOutput(error: unknown, executionError: NodeOperationError): string {
+  const reference = parseReferenceFailure(error);
+  if (reference) {
+    return JSON.stringify({
+      ok: false,
+      error: reference,
+    });
+  }
+  return JSON.stringify({
+    ok: false,
+    error: {
+      code: 'LIFESPACE_TOOL_CALL_FAILED',
+      message: executionError.message,
+    },
+  });
 }
 
 function toolError(context: ISupplyDataFunctions, error: unknown): NodeOperationError {
@@ -366,6 +586,7 @@ export class LifeSpaceTool implements INodeType {
       capabilityQueryKey,
       actionKey,
       descriptionOverride,
+      viewingTimezone: this.getTimezone(),
     };
     let definition;
     try {
@@ -384,19 +605,20 @@ export class LifeSpaceTool implements INodeType {
         let output: string;
         let executionError: NodeOperationError | undefined;
         try {
-          let request = buildAgentToolRequest(model, config, query);
+          const prepared = await prepareAgentInput(this, baseUrl, model, config, query);
+          let request = buildAgentToolRequest(model, config, prepared);
           if (request.needsCurrentVersion) {
             const recordResponse = await performRequest(this, baseUrl, {
               method: 'GET',
               path: currentRecordPath(request),
             });
-            request = buildAgentToolRequest(model, config, query, currentRecordVersion(this, recordResponse));
+            request = buildAgentToolRequest(model, config, prepared, currentRecordVersion(this, recordResponse));
           }
           const response = await performRequest(this, baseUrl, request);
           output = stringifyToolOutput(response);
         } catch (error) {
           executionError = toolError(this, error);
-          output = `LifeSpace Tool call failed: ${executionError.message}`;
+          output = toolFailureOutput(error, executionError);
         }
 
         if (executionError) {

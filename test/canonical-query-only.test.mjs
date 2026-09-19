@@ -61,6 +61,8 @@ test('published Agent Tool source no longer falls back to Capability Query for s
   const source = await readFile(new URL('../nodes/LifeSpaceAgentTool/LifeSpaceAgentTool.node.ts', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /storedQueryMode/u);
   assert.doesNotMatch(source, /storedQueryMode === 'capability'/u);
-  assert.match(source, /if \(operation !== 'query'\)/u);
-  assert.match(source, /compileGenericQuery\(model, input\)/u);
+  assert.match(source, /LifeSpaceTool\.prototype\.supplyData\.call/u);
+  const base = await readFile(new URL('../nodes/LifeSpaceTool/LifeSpaceTool.node.ts', import.meta.url), 'utf8');
+  assert.match(base, /queryMode/);
+  assert.match(base, /buildAgentToolRequest\(model, config, prepared/u);
 });

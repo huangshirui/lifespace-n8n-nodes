@@ -43,7 +43,7 @@ export type DiscoveryRelation = {
 
 export type DiscoveryField = {
   key: string;
-  type: 'string' | 'text' | 'integer' | 'number' | 'boolean' | 'date' | 'datetime' | 'timezone' | 'enum' | 'person' | 'person_list' | 'record' | 'record_list';
+  type: 'string' | 'text' | 'integer' | 'number' | 'boolean' | 'date' | 'instant' | 'datetime' | 'timezone' | 'enum' | 'person' | 'person_list' | 'record' | 'record_list' | 'range<date>' | 'range<instant>' | 'temporal_range';
   title?: string;
   description?: string;
   required?: boolean;
@@ -687,7 +687,7 @@ function relationTargetUrl(
 }
 
 function parseRelationTargets(
-  context: ILoadOptionsFunctions,
+  context: ILoadOptionsFunctions | ISupplyDataFunctions,
   response: RelationTargetResponse,
 ): { items: RelationTarget[]; nextCursor: string | null } {
   const rawItems = response.data?.items;
@@ -763,6 +763,43 @@ export async function loadRelationTargets(
   } while (cursor);
 
   return targets;
+}
+
+export async function searchRelationTargetsForAgent(
+  context: ISupplyDataFunctions,
+  baseUrl: string,
+  spaceId: string,
+  modelKey: string,
+  field: DiscoveryField,
+  query: string,
+): Promise<RelationTarget[]> {
+  const lookup = field.relation?.lookup;
+  if (!lookup?.supported) {
+    throw new NodeOperationError(
+      context.getNode(),
+      `LifeSpace relation field ${field.title?.trim() || humanizeKey(field.key)} does not support name lookup`,
+    );
+  }
+  if (lookup.method !== 'GET' || !lookup.pathTemplate) {
+    throw new NodeOperationError(context.getNode(), `LifeSpace relation lookup for ${field.key} uses an unsupported contract`);
+  }
+
+  const url = relationTargetUrl(baseUrl, lookup.pathTemplate, spaceId, modelKey, field.key);
+  const qs: Record<string, string | number> = {
+    [lookup.searchParameter]: query,
+    [lookup.limitParameter]: RELATION_TARGET_PAGE_SIZE,
+  };
+  let response: RelationTargetResponse;
+  try {
+    response = await context.helpers.httpRequestWithAuthentication.call(
+      context,
+      'lifeSpaceApi',
+      { method: 'GET', url, qs, json: true },
+    ) as RelationTargetResponse;
+  } catch (error) {
+    throw new NodeApiError(context.getNode(), error as JsonObject);
+  }
+  return parseRelationTargets(context, response).items;
 }
 
 export async function loadRuntimeDiscovery(this: ILoadOptionsFunctions): Promise<DiscoveryResponse> {
