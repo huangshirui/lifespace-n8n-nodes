@@ -151,17 +151,116 @@ export async function getCanonicalFilterFields(this: ILoadOptionsFunctions): Pro
   return [...fields.entries()].map(([value, name]) => ({ name, value }));
 }
 
+const HUMAN_OPERATOR_SELECTOR_PREFIX = 'lsqh1:';
+const TEMPORAL_SORT_SELECTOR_PREFIX = 'lsqts1.';
+
+function rangeLikeValueType(valueType: QueryPredicate['valueType']): boolean {
+  return [
+    'range<date>',
+    'range<instant>',
+    'temporal_range',
+    'date-range',
+    'instant-range',
+    'temporal-range',
+  ].includes(String(valueType));
+}
+
+export function humanFilterOperatorSelector(
+  predicate: QueryPredicate,
+  role = predicate.operator,
+): string {
+  const payload = Buffer.from(queryPredicateSelector(predicate)).toString('base64url');
+  return `${HUMAN_OPERATOR_SELECTOR_PREFIX}${role}.${payload}`;
+}
+
+function parseHumanFilterOperatorSelector(value: unknown): {
+  predicate: QueryPredicate;
+  overlapBoundary?: 'start' | 'end';
+} | null {
+  const raw = String(value ?? '');
+  if (!raw.startsWith(HUMAN_OPERATOR_SELECTOR_PREFIX)) {
+    const predicate = parseQueryPredicateSelector(raw);
+    return predicate ? { predicate } : null;
+  }
+
+  const rest = raw.slice(HUMAN_OPERATOR_SELECTOR_PREFIX.length);
+  const separator = rest.indexOf('.');
+  if (separator < 1) return null;
+  const role = rest.slice(0, separator);
+  try {
+    const selector = Buffer.from(rest.slice(separator + 1), 'base64url').toString('utf8');
+    const predicate = parseQueryPredicateSelector(selector);
+    if (!predicate) return null;
+    if (role === 'overlapsStart') return { predicate, overlapBoundary: 'start' };
+    if (role === 'overlapsEnd') return { predicate, overlapBoundary: 'end' };
+    return role === predicate.operator ? { predicate } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function temporalSortFieldSelector(field: string): string {
+  return TEMPORAL_SORT_SELECTOR_PREFIX + Buffer.from(field).toString('base64url');
+}
+
+function parseTemporalSortFieldSelector(value: unknown): { field: string; temporalRange: boolean } {
+  const raw = String(value ?? '').trim();
+  if (!raw.startsWith(TEMPORAL_SORT_SELECTOR_PREFIX)) return { field: raw, temporalRange: false };
+  try {
+    const field = Buffer.from(raw.slice(TEMPORAL_SORT_SELECTOR_PREFIX.length), 'base64url').toString('utf8').trim();
+    return { field, temporalRange: Boolean(field) };
+  } catch {
+    return { field: raw, temporalRange: false };
+  }
+}
+
+export async function getHumanSortableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+  const selected = await selectedModel(this);
+  if (!selected) return [];
+  const canonicalFields = selected.model.query.canonical?.sort.fields;
+  const fields = canonicalFields?.length
+    ? canonicalFields
+    : [...selected.model.query.sort.envelopeFields, ...selected.model.query.sortable];
+  const temporalFields = new Set(
+    (selected.model.query.canonical?.filter.targets ?? [])
+      .filter((target) => ['temporal_range', 'temporal-range'].includes(String(target.valueType)))
+      .map((target) => target.field),
+  );
+
+  return [...new Set(fields)].map((fieldKey) => {
+    const field = selected.model.fields.find((entry) => entry.key === fieldKey);
+    return {
+      name: field?.title?.trim() || fieldKey,
+      value: temporalFields.has(fieldKey) ? temporalSortFieldSelector(fieldKey) : fieldKey,
+    };
+  });
+}
+
 export async function getCanonicalFilterOperators(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
   const selected = await selectedModel(this);
   if (!selected) return [];
 
   const field = String(this.getCurrentNodeParameter('&field') ?? '').trim();
   const predicates = queryPredicates(selected.model).filter((predicate) => !field || predicate.field === field);
+  const result: INodePropertyOptions[] = [];
 
-  return predicates.map((predicate) => ({
-    name: predicate.operatorLabel,
-    value: queryPredicateSelector(predicate),
-  }));
+  for (const predicate of predicates) {
+    if (rangeLikeValueType(predicate.valueType) && predicate.operator === 'overlaps') {
+      result.push(
+        { name: 'Overlaps Start', value: humanFilterOperatorSelector(predicate, 'overlapsStart') },
+        { name: 'Overlaps End', value: humanFilterOperatorSelector(predicate, 'overlapsEnd') },
+      );
+      continue;
+    }
+    // Contains still requires a structured range operand. Keep stored workflows executable,
+    // but do not expose JSON-only input in the Human Workflow UI.
+    if (rangeLikeValueType(predicate.valueType) && predicate.operator === 'contains') continue;
+    result.push({
+      name: predicate.operatorLabel,
+      value: humanFilterOperatorSelector(predicate),
+    });
+  }
+  return result;
 }
 
 // 0.1.11/0.1.12 compatibility for stored workflows authored with the combined selector.
@@ -309,20 +408,115 @@ function humanFilterConditions(value: unknown): HumanFilterCondition[] {
 function structuredQueryValue(predicate: QueryPredicate): boolean {
   if (predicate.operator === 'within') return true;
   if (predicate.operator === 'kindIs') return false;
-  return [
-    'range<date>',
-    'range<instant>',
-    'temporal_range',
-    'date-range',
-    'instant-range',
-    'temporal-range',
-  ].includes(String(predicate.valueType));
+  return rangeLikeValueType(predicate.valueType);
+}
+
+function exactHumanDate(raw: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(raw)) return null;
+  const [year, month, day] = raw.split('-').map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() + 1 !== month || parsed.getUTCDate() !== day) return null;
+  return raw;
+}
+
+function nextHumanDate(date: string): string {
+  const [year, month, day] = date.split('-').map(Number);
+  const next = new Date(Date.UTC(year, month - 1, day + 1));
+  return next.toISOString().slice(0, 10);
+}
+
+function absoluteHumanInstant(raw: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:\d{2})$/u.test(raw)) return null;
+  const time = Date.parse(raw);
+  return Number.isFinite(time) ? new Date(time).toISOString() : null;
+}
+
+function overlapWindowValue(
+  context: Pick<IExecuteFunctions, 'getNode'>,
+  field: string,
+  startValue: unknown,
+  endValue: unknown,
+  timezone: string,
+): IDataObject {
+  const startRaw = String(startValue ?? '').trim();
+  const endRaw = String(endValue ?? '').trim();
+  const startDate = exactHumanDate(startRaw);
+  const endDate = exactHumanDate(endRaw);
+
+  if (startDate && endDate) {
+    if (endDate < startDate) {
+      throw new NodeOperationError(context.getNode(), `Filter ${field} Overlaps End must not be earlier than Overlaps Start`);
+    }
+    return {
+      kind: 'local_date_window',
+      startDate,
+      endDateExclusive: nextHumanDate(endDate),
+      timezone,
+    };
+  }
+
+  const startInstant = absoluteHumanInstant(startRaw);
+  const endInstant = absoluteHumanInstant(endRaw);
+  if (startInstant && endInstant) {
+    if (Date.parse(endInstant) <= Date.parse(startInstant)) {
+      throw new NodeOperationError(context.getNode(), `Filter ${field} Overlaps End must be later than Overlaps Start`);
+    }
+    return { kind: 'instant', start: startInstant, endExclusive: endInstant };
+  }
+
+  throw new NodeOperationError(
+    context.getNode(),
+    `Filter ${field} Overlaps Start and End must both be YYYY-MM-DD dates or both be absolute RFC3339 date-times`,
+  );
+}
+
+function singleRangeBoundaryValue(
+  context: Pick<IExecuteFunctions, 'getNode'>,
+  predicate: QueryPredicate,
+  value: unknown,
+  timezone: string,
+): IDataObject {
+  const raw = String(value ?? '').trim();
+  const date = exactHumanDate(raw);
+  if (date) {
+    return {
+      kind: 'local_date_window',
+      startDate: date,
+      endDateExclusive: nextHumanDate(date),
+      timezone,
+    };
+  }
+
+  const instant = absoluteHumanInstant(raw);
+  if (instant) {
+    const time = Date.parse(instant);
+    if (predicate.operator === 'before') {
+      return {
+        kind: 'instant',
+        start: instant,
+        endExclusive: new Date(time + 1).toISOString(),
+      };
+    }
+    if (predicate.operator === 'after') {
+      return {
+        kind: 'instant',
+        start: new Date(time - 1).toISOString(),
+        endExclusive: instant,
+      };
+    }
+  }
+
+  throw new NodeOperationError(
+    context.getNode(),
+    `Filter ${predicate.field} — ${predicate.operatorLabel} requires YYYY-MM-DD or an absolute RFC3339 date-time`,
+  );
 }
 
 function parseHumanFilterValue(
   context: Pick<IExecuteFunctions, 'getNode'>,
   predicate: QueryPredicate,
   value: unknown,
+  timezone: string,
 ): unknown {
   const raw = String(value ?? '').trim();
   if (!raw) {
@@ -330,6 +524,10 @@ function parseHumanFilterValue(
       context.getNode(),
       `Filter ${predicate.field} — ${predicate.operatorLabel} requires a value`,
     );
+  }
+
+  if (rangeLikeValueType(predicate.valueType) && ['before', 'after'].includes(predicate.operator)) {
+    return singleRangeBoundaryValue(context, predicate, raw, timezone);
   }
 
   if (structuredQueryValue(predicate)) {
@@ -377,14 +575,11 @@ function parseHumanFilterValue(
   return raw;
 }
 
-function projectHumanFilterCondition(
+function validateConditionField(
   context: Pick<IExecuteFunctions, 'getNode'>,
   row: HumanFilterCondition,
-): CanonicalFilter | null {
-  const selector = row.operator ?? row.predicate;
-  const predicate = parseQueryPredicateSelector(selector);
-  if (!predicate) return null;
-
+  predicate: QueryPredicate,
+): void {
   const field = String(row.field ?? '').trim();
   if (field && field !== predicate.field) {
     throw new NodeOperationError(
@@ -392,6 +587,15 @@ function projectHumanFilterCondition(
       `Filter operator "${predicate.operatorLabel}" does not belong to field "${field}"`,
     );
   }
+}
+
+function projectHumanFilterCondition(
+  context: Pick<IExecuteFunctions, 'getNode'>,
+  row: HumanFilterCondition,
+  predicate: QueryPredicate,
+  timezone: string,
+): CanonicalFilter | null {
+  validateConditionField(context, row, predicate);
 
   if (predicate.operator === 'isNull' || predicate.operator === 'isNotNull') {
     return { field: predicate.field, op: predicate.operator };
@@ -419,7 +623,7 @@ function projectHumanFilterCondition(
   return {
     field: predicate.field,
     op: predicate.operator,
-    value: parseHumanFilterValue(context, predicate, row.value),
+    value: parseHumanFilterValue(context, predicate, row.value, timezone),
   };
 }
 
@@ -429,31 +633,92 @@ function combineHumanFilters(match: unknown, filters: CanonicalFilter[]): Canoni
   return String(match ?? 'all') === 'any' ? { or: filters } : { and: filters };
 }
 
+function projectHumanFilterRows(
+  context: Pick<IExecuteFunctions, 'getNode'>,
+  match: unknown,
+  rows: HumanFilterCondition[],
+  timezone: string,
+): CanonicalFilter | null {
+  const filters: CanonicalFilter[] = [];
+  const overlapBounds = new Map<string, {
+    predicate: QueryPredicate;
+    start?: unknown;
+    end?: unknown;
+  }>();
+
+  for (const row of rows) {
+    const selection = parseHumanFilterOperatorSelector(row.operator ?? row.predicate);
+    if (!selection) continue;
+    validateConditionField(context, row, selection.predicate);
+
+    if (selection.overlapBoundary) {
+      const current = overlapBounds.get(selection.predicate.field) ?? { predicate: selection.predicate };
+      if (current[selection.overlapBoundary] !== undefined) {
+        throw new NodeOperationError(
+          context.getNode(),
+          `Filter ${selection.predicate.field} may contain only one Overlaps ${selection.overlapBoundary === 'start' ? 'Start' : 'End'} in a Filter Group`,
+        );
+      }
+      current[selection.overlapBoundary] = row.value;
+      overlapBounds.set(selection.predicate.field, current);
+      continue;
+    }
+
+    const filter = projectHumanFilterCondition(context, row, selection.predicate, timezone);
+    if (filter) filters.push(filter);
+  }
+
+  for (const [field, pair] of overlapBounds) {
+    if (pair.start === undefined || pair.end === undefined) {
+      throw new NodeOperationError(
+        context.getNode(),
+        `Filter ${field} requires Overlaps Start and Overlaps End in the same Filter Group`,
+      );
+    }
+    filters.push({
+      field,
+      op: 'overlaps',
+      value: overlapWindowValue(context, field, pair.start, pair.end, timezone),
+    });
+  }
+
+  return combineHumanFilters(match, filters);
+}
+
 export function projectHumanFilterBuilder(
   context: Pick<IExecuteFunctions, 'getNode'>,
   match: unknown,
   conditions: unknown,
   groups: unknown,
+  timezone = 'UTC',
 ): CanonicalFilter[] {
-  const children = humanFilterConditions(conditions)
-    .map((row) => projectHumanFilterCondition(context, row))
-    .filter((entry): entry is CanonicalFilter => entry !== null);
-
+  const legacyRows = humanFilterConditions(conditions);
   const groupRows = Array.isArray(groups)
     ? groups as HumanFilterGroup[]
     : groups && typeof groups === 'object' && Array.isArray((groups as IDataObject).group)
       ? (groups as IDataObject).group as HumanFilterGroup[]
       : [];
 
-  for (const group of groupRows) {
-    const nested = humanFilterConditions(group.conditions)
-      .map((row) => projectHumanFilterCondition(context, row))
-      .filter((entry): entry is CanonicalFilter => entry !== null);
-    const combined = combineHumanFilters(group.match, nested);
-    if (combined) children.push(combined);
+  const projectedGroups = groupRows
+    .map((group) => projectHumanFilterRows(
+      context,
+      group.match,
+      humanFilterConditions(group.conditions),
+      timezone,
+    ))
+    .filter((entry): entry is CanonicalFilter => entry !== null);
+
+  // Compatibility: workflows authored before 0.1.14 may still contain top-level
+  // Conditions + Match. Preserve their previous Boolean semantics.
+  if (legacyRows.length) {
+    const legacy = projectHumanFilterRows(context, match, legacyRows, timezone);
+    const children = [...(legacy ? [legacy] : []), ...projectedGroups];
+    const combined = combineHumanFilters(match, children);
+    return combined ? [combined] : [];
   }
 
-  const combined = combineHumanFilters(match, children);
+  // New Human UI exposes only Filter Groups. Groups compose by AND.
+  const combined = combineHumanFilters('all', projectedGroups);
   return combined ? [combined] : [];
 }
 
@@ -538,6 +803,24 @@ export function projectCanonicalTimeWindows(value: unknown): CanonicalFilter[] {
   return result;
 }
 
+function queryTimezone(context: IExecuteFunctions, itemIndex: number, options?: unknown): string {
+  const configured = context.getNodeParameter('options', itemIndex, {}) as IDataObject;
+  const explicit = String(configured.viewingTimezone ?? '').trim();
+  if (explicit) return explicit;
+  const legacy = String(context.getNodeParameter('queryViewingTimezone', itemIndex, '') ?? '').trim();
+  return legacy || context.getTimezone();
+}
+
+function rawSortRows(context: IExecuteFunctions, itemIndex: number, options?: unknown): Array<{ field?: unknown; direction?: unknown }> {
+  const rows = context.getNodeParameter('sorts.sort', itemIndex, [], options as never);
+  return Array.isArray(rows) ? rows as Array<{ field?: unknown; direction?: unknown }> : [];
+}
+
+function hasTemporalRangeSort(context: IExecuteFunctions, itemIndex: number, options?: unknown): boolean {
+  return rawSortRows(context, itemIndex, options)
+    .some((row) => parseTemporalSortFieldSelector(row.field).temporalRange);
+}
+
 function errorAwareHelpers(context: IExecuteFunctions) {
   return new Proxy(context.helpers, {
     get(target, property, receiver) {
@@ -567,14 +850,24 @@ export function humanExecutionContext(context: IExecuteFunctions): IExecuteFunct
             return stored === 'capability' ? 'capability' : 'canonical';
           }
         }
+        if (name === 'sorts.sort') {
+          return rawSortRows(target, itemIndex, options).map((row) => ({
+            ...row,
+            field: parseTemporalSortFieldSelector(row.field).field,
+          }));
+        }
         if (name === 'options') {
           const base = target.getNodeParameter(name, itemIndex, fallback as never, options as never);
+          const value = base && typeof base === 'object' && !Array.isArray(base)
+            ? { ...(base as IDataObject) }
+            : {};
           const operation = String(target.getNodeParameter('operation', itemIndex, '') ?? '');
-          const timezone = operation === 'list'
-            ? String(target.getNodeParameter('queryViewingTimezone', itemIndex, '') ?? '').trim()
-            : '';
-          if (!timezone || !base || typeof base !== 'object' || Array.isArray(base)) return base;
-          return { ...(base as IDataObject), viewingTimezone: timezone };
+          if (operation !== 'list' || !hasTemporalRangeSort(target, itemIndex, options)) {
+            delete value.viewingTimezone;
+            return value;
+          }
+          value.viewingTimezone = queryTimezone(target, itemIndex, options);
+          return value;
         }
         if (name === 'canonicalFilters') {
           const conditions = target.getNodeParameter('queryFilterConditions.condition', itemIndex, [], options as never);
@@ -583,7 +876,13 @@ export function humanExecutionContext(context: IExecuteFunctions): IExecuteFunct
             || (Array.isArray(groups) && groups.length > 0);
           if (hasBuilder) {
             const match = target.getNodeParameter('queryFilterMatch', itemIndex, 'all', options as never);
-            return projectHumanFilterBuilder(target, match, conditions, groups);
+            return projectHumanFilterBuilder(
+              target,
+              match,
+              conditions,
+              groups,
+              queryTimezone(target, itemIndex, options),
+            );
           }
           const mapped = target.getNodeParameter('queryFilters.value', itemIndex, {}, options as never);
           return projectQueryFilters(mapped);
