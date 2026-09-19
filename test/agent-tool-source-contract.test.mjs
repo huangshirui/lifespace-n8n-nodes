@@ -23,6 +23,7 @@ test('Agent Tool remains a native AiTool and keeps structural scope outside mode
   assert.match(base, /noDataExpression: true/u);
   assert.match(projection, /async supplyData\(this: ISupplyDataFunctions/u);
   assert.match(projection, /LifeSpaceTool\.prototype\.supplyData\.call/u);
+  assert.match(base, /async execute\(this: IExecuteFunctions/u);
   assert.match(base, /buildAgentToolRequest\(model, config, prepared/u);
   assert.doesNotMatch(projection, /@langchain\/core/u);
   assert.doesNotMatch(projection, /DynamicStructuredTool/u);
