@@ -572,7 +572,21 @@ function defaultDescription(model: DiscoveryModel, config: AgentToolConfig): str
   const timezoneHint = timezone
     ? ` Interpret local/relative dates in workflow timezone ${timezone}; timed values must be absolute RFC3339 date-times.`
     : '';
-  return `${purpose} in Space "${space}".${modelDescription ? ` ${modelDescription}` : ''} Use only when this configured operation and Space match the user's intent.${recordLookupHint}${timezoneHint}`;
+  const calendarBinding = model.capabilityBindings?.calendar;
+  const calendarRangeField = calendarBinding && 'rangeField' in calendarBinding
+    ? calendarBinding.rangeField
+    : null;
+  const calendarTimeWindowHint = (
+    config.operation === 'query'
+    && config.queryMode !== 'capability'
+    && calendarRangeField
+    && model.query.canonical?.filter.targets.some(
+      (target) => target.field === calendarRangeField && target.operators.includes('overlaps'),
+    )
+  )
+    ? ' For calendar date questions such as today, tomorrow, this week, or a date range, use timeWindow; do not synthesize start/end timestamp comparisons.'
+    : '';
+  return `${purpose} in Space "${space}".${modelDescription ? ` ${modelDescription}` : ''} Use only when this configured operation and Space match the user's intent.${recordLookupHint}${timezoneHint}${calendarTimeWindowHint}`;
 }
 
 export function buildAgentToolDefinition(model: DiscoveryModel, config: AgentToolConfig): LifeSpaceAgentToolDefinition {
