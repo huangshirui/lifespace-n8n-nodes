@@ -130,13 +130,14 @@ async function performRequest(
   );
 }
 
-class AgentReferenceError extends Error {
+class AgentReferenceError extends NodeOperationError {
   code: 'REFERENCE_NOT_FOUND' | 'AMBIGUOUS_REFERENCE' | 'REFERENCE_LOOKUP_UNAVAILABLE';
   field: string;
   input: string;
   candidates: Array<{ id: string; label: string }>;
 
   constructor(
+    context: ISupplyDataFunctions,
     code: AgentReferenceError['code'],
     field: string,
     input: string,
@@ -147,7 +148,7 @@ class AgentReferenceError extends Error {
       : code === 'AMBIGUOUS_REFERENCE'
         ? `Multiple LifeSpace references matched "${input}" for ${field}`
         : `LifeSpace reference lookup is unavailable for ${field}`;
-    super(message);
+    super(context.getNode(), message);
     this.name = 'AgentReferenceError';
     this.code = code;
     this.field = field;
@@ -188,23 +189,23 @@ async function resolveOneReference(
 ): Promise<string> {
   const parsed = referenceInput(value);
   const raw = parsed.id ?? parsed.name ?? '';
-  if (!raw) throw new AgentReferenceError('REFERENCE_NOT_FOUND', field.key, String(value ?? ''));
+  if (!raw) throw new AgentReferenceError(context, 'REFERENCE_NOT_FOUND', field.key, String(value ?? ''));
 
   if (allowMe && raw === 'me') return 'me';
   if (parsed.id && stableReferenceId(field, parsed.id)) return parsed.id;
 
   const name = parsed.name ?? parsed.id ?? '';
   const lookup = field.relation?.lookup;
-  if (!lookup?.supported) throw new AgentReferenceError('REFERENCE_LOOKUP_UNAVAILABLE', field.key, name);
+  if (!lookup?.supported) throw new AgentReferenceError(context, 'REFERENCE_LOOKUP_UNAVAILABLE', field.key, name);
 
   const candidates = await searchRelationTargetsForAgent(context, baseUrl, spaceId, model.key, field, name);
   const normalized = name.toLocaleLowerCase();
   const exact = candidates.filter((candidate) => candidate.label.trim().toLocaleLowerCase() === normalized);
   if (exact.length === 1) return exact[0].id;
-  if (exact.length > 1) throw new AgentReferenceError('AMBIGUOUS_REFERENCE', field.key, name, exact);
+  if (exact.length > 1) throw new AgentReferenceError(context, 'AMBIGUOUS_REFERENCE', field.key, name, exact);
   if (candidates.length === 1) return candidates[0].id;
-  if (!candidates.length) throw new AgentReferenceError('REFERENCE_NOT_FOUND', field.key, name);
-  throw new AgentReferenceError('AMBIGUOUS_REFERENCE', field.key, name, candidates.slice(0, 10));
+  if (!candidates.length) throw new AgentReferenceError(context, 'REFERENCE_NOT_FOUND', field.key, name);
+  throw new AgentReferenceError(context, 'AMBIGUOUS_REFERENCE', field.key, name, candidates.slice(0, 10));
 }
 
 async function resolveFieldReference(
