@@ -132,6 +132,138 @@ test('TemporalRange JSON strings keep canonical shape and normalize date variant
   }]);
 });
 
+test('native n8n scalar values are normalized to canonical filter types', () => {
+  const luxonLike = {
+    toISO: () => '2026-09-19T10:30:00+08:00',
+  };
+  const filters = projectHumanFilterBuilder(
+    context,
+    'all',
+    [
+      { field: 'enabled', operator: selector('enabled', 'eq', 'boolean'), value: true },
+      { field: 'score', operator: selector('score', 'eq', 'number'), value: 12.5 },
+      { field: 'count', operator: selector('count', 'eq', 'integer'), value: 3 },
+      { field: 'updatedAt', operator: selector('updatedAt', 'gte', 'datetime'), value: luxonLike },
+    ],
+    [],
+  );
+
+  assert.deepEqual(filters, [{
+    and: [
+      { field: 'enabled', op: 'eq', value: true },
+      { field: 'score', op: 'eq', value: 12.5 },
+      { field: 'count', op: 'eq', value: 3 },
+      { field: 'updatedAt', op: 'gte', value: '2026-09-19T02:30:00.000Z' },
+    ],
+  }]);
+});
+
+test('date filters accept native Date and use the workflow timezone for the local date', () => {
+  const filters = projectHumanFilterBuilder(
+    context,
+    'all',
+    [],
+    [{
+      match: 'all',
+      conditions: {
+        condition: [{
+          field: 'dueDate',
+          operator: humanSelector('dueDate', 'eq', 'date'),
+          value: new Date('2026-09-19T23:30:00.000Z'),
+        }],
+      },
+    }],
+    'Asia/Shanghai',
+  );
+
+  assert.deepEqual(filters, [{
+    field: 'dueDate',
+    op: 'eq',
+    value: '2026-09-20',
+  }]);
+});
+
+test('legacy multi-value query operators accept n8n arrays as well as comma-separated strings', () => {
+  const arrayFilters = projectHumanFilterBuilder(
+    context,
+    'all',
+    [{
+      field: 'status',
+      operator: selector('status', 'in', 'enum'),
+      value: ['pending', 'completed'],
+    }],
+    [],
+  );
+  assert.deepEqual(arrayFilters, [{
+    or: [
+      { field: 'status', op: 'eq', value: 'pending' },
+      { field: 'status', op: 'eq', value: 'completed' },
+    ],
+  }]);
+
+  const stringFilters = projectHumanFilterBuilder(
+    context,
+    'all',
+    [{
+      field: 'status',
+      operator: selector('status', 'in', 'enum'),
+      value: 'pending,completed',
+    }],
+    [],
+  );
+  assert.deepEqual(stringFilters, arrayFilters);
+});
+
+test('relation filters accept an ID string or an n8n object carrying id, but not a list', () => {
+  const filters = projectHumanFilterBuilder(
+    context,
+    'all',
+    [
+      { field: 'assignee', operator: selector('assignee', 'contains', 'person'), value: { id: 'per_123', label: 'Alice' } },
+      { field: 'attendees', operator: selector('attendees', 'contains', 'person_list'), value: 'per_456' },
+    ],
+    [],
+  );
+
+  assert.deepEqual(filters, [{
+    and: [
+      { field: 'assignee', op: 'contains', value: 'per_123' },
+      { field: 'attendees', op: 'contains', value: 'per_456' },
+    ],
+  }]);
+
+  assert.throws(
+    () => projectHumanFilterBuilder(
+      context,
+      'all',
+      [{ field: 'attendees', operator: selector('attendees', 'contains', 'person_list'), value: ['per_1', 'per_2'] }],
+      [],
+    ),
+    /requires one relation ID/u,
+  );
+});
+
+test('enum values are validated in the adapter when Discovery provides declared values', () => {
+  const declared = predicate('status', 'eq', 'enum');
+  declared.enumValues = ['pending', 'completed'];
+  const operator = humanFilterOperatorSelector(declared);
+
+  assert.throws(
+    () => projectHumanFilterBuilder(
+      context,
+      'all',
+      [],
+      [{
+        match: 'all',
+        conditions: {
+          condition: [{ field: 'status', operator, value: 'unknown' }],
+        },
+      }],
+    ),
+    /declared enum value/u,
+  );
+});
+
 test('invalid typed string values fail before the Core request', () => {
   assert.throws(
     () => projectHumanFilterBuilder(
