@@ -21,6 +21,7 @@
     "agent-contract:openai": "node scripts/agent-tool-contract-openai.mjs",
     "agent-contract:diff": "node scripts/agent-tool-contract-diff.mjs",
     "agent-contract:guard": "node scripts/agent-tool-contract-guard.mjs",
+    "agent-contract:summary": "node scripts/agent-tool-contract-summary.mjs",
     "release": "n8n-node release",
     "prepublishOnly": "n8n-node prerelease"
   },
