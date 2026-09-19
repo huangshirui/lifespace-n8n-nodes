@@ -301,16 +301,14 @@ test('ordinary Workflow exposes current TemporalRange query predicates and kind 
   assert.ok(timeWindows.some((option) => option.name === 'when — overlaps'));
 });
 
-test('ordinary Workflow normalizes date-shaped Range mutation values but preserves canonical object shape', async () => {
+test('stored canonical TemporalRange object mutations remain executable for compatibility', async () => {
   const node = new LifeSpaceWorkflow();
   const fields = await node.methods.resourceMapping.getHumanRecordFields.call(designContext());
-  const when = fields.fields.find((field) => field.displayName === 'When');
   const vacation = fields.fields.find((field) => field.displayName === 'Vacation Window');
-  assert.ok(when);
   assert.ok(vacation);
 
   const projected = projectMutationValues({
-    [when.id]: {
+    'lsf:temporal_range:when': {
       kind: 'date',
       start: '2026-09-20T00:00:00.000Z',
       endExclusive: '2026-09-22T00:00:00.000Z',
@@ -319,7 +317,7 @@ test('ordinary Workflow normalizes date-shaped Range mutation values but preserv
       start: '2026-10-01T00:00:00.000Z',
       endExclusive: '2026-10-08T00:00:00.000Z',
     },
-  }, fields.fields);
+  });
 
   assert.deepEqual(projected.when, {
     kind: 'date',
