@@ -130,30 +130,52 @@ async function performRequest(
   );
 }
 
-class AgentReferenceError extends NodeOperationError {
+type AgentReferenceFailure = {
   code: 'REFERENCE_NOT_FOUND' | 'AMBIGUOUS_REFERENCE' | 'REFERENCE_LOOKUP_UNAVAILABLE';
   field: string;
   input: string;
-  candidates: Array<{ id: string; label: string }>;
+  candidates?: Array<{ id: string; label: string }>;
+};
 
-  constructor(
-    context: ISupplyDataFunctions,
-    code: AgentReferenceError['code'],
-    field: string,
-    input: string,
-    candidates: Array<{ id: string; label: string }> = [],
-  ) {
-    const message = code === 'REFERENCE_NOT_FOUND'
-      ? `No LifeSpace reference matched "${input}" for ${field}`
-      : code === 'AMBIGUOUS_REFERENCE'
-        ? `Multiple LifeSpace references matched "${input}" for ${field}`
-        : `LifeSpace reference lookup is unavailable for ${field}`;
-    super(context.getNode(), message);
-    this.name = 'AgentReferenceError';
-    this.code = code;
-    this.field = field;
-    this.input = input;
-    this.candidates = candidates;
+const REFERENCE_ERROR_PREFIX = 'LIFESPACE_AGENT_REFERENCE:';
+
+function referenceErrorMessage(
+  code: AgentReferenceFailure['code'],
+  field: string,
+  input: string,
+  candidates: Array<{ id: string; label: string }> = [],
+): string {
+  const message = code === 'REFERENCE_NOT_FOUND'
+    ? `No LifeSpace reference matched "${input}" for ${field}`
+    : code === 'AMBIGUOUS_REFERENCE'
+      ? `Multiple LifeSpace references matched "${input}" for ${field}`
+      : `LifeSpace reference lookup is unavailable for ${field}`;
+  return REFERENCE_ERROR_PREFIX + JSON.stringify({
+    code,
+    field,
+    input,
+    message,
+    ...(candidates.length ? { candidates } : {}),
+  });
+}
+
+function parseReferenceFailure(error: unknown): AgentReferenceFailure & { message: string } | null {
+  if (!(error instanceof Error)) return null;
+  const index = error.message.indexOf(REFERENCE_ERROR_PREFIX);
+  if (index < 0) return null;
+  try {
+    const value = JSON.parse(error.message.slice(index + REFERENCE_ERROR_PREFIX.length)) as unknown;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const failure = value as Record<string, unknown>;
+    if (
+      !['REFERENCE_NOT_FOUND', 'AMBIGUOUS_REFERENCE', 'REFERENCE_LOOKUP_UNAVAILABLE'].includes(String(failure.code))
+      || typeof failure.field !== 'string'
+      || typeof failure.input !== 'string'
+      || typeof failure.message !== 'string'
+    ) return null;
+    return value as AgentReferenceFailure & { message: string };
+  } catch {
+    return null;
   }
 }
 
@@ -189,23 +211,46 @@ async function resolveOneReference(
 ): Promise<string> {
   const parsed = referenceInput(value);
   const raw = parsed.id ?? parsed.name ?? '';
-  if (!raw) throw new AgentReferenceError(context, 'REFERENCE_NOT_FOUND', field.key, String(value ?? ''));
+  if (!raw) {
+    throw new NodeOperationError(
+      context.getNode(),
+      referenceErrorMessage('REFERENCE_NOT_FOUND', field.key, String(value ?? '')),
+    );
+  }
 
   if (allowMe && raw === 'me') return 'me';
   if (parsed.id && stableReferenceId(field, parsed.id)) return parsed.id;
 
   const name = parsed.name ?? parsed.id ?? '';
   const lookup = field.relation?.lookup;
-  if (!lookup?.supported) throw new AgentReferenceError(context, 'REFERENCE_LOOKUP_UNAVAILABLE', field.key, name);
+  if (!lookup?.supported) {
+    throw new NodeOperationError(
+      context.getNode(),
+      referenceErrorMessage('REFERENCE_LOOKUP_UNAVAILABLE', field.key, name),
+    );
+  }
 
   const candidates = await searchRelationTargetsForAgent(context, baseUrl, spaceId, model.key, field, name);
   const normalized = name.toLocaleLowerCase();
   const exact = candidates.filter((candidate) => candidate.label.trim().toLocaleLowerCase() === normalized);
   if (exact.length === 1) return exact[0].id;
-  if (exact.length > 1) throw new AgentReferenceError(context, 'AMBIGUOUS_REFERENCE', field.key, name, exact);
+  if (exact.length > 1) {
+    throw new NodeOperationError(
+      context.getNode(),
+      referenceErrorMessage('AMBIGUOUS_REFERENCE', field.key, name, exact),
+    );
+  }
   if (candidates.length === 1) return candidates[0].id;
-  if (!candidates.length) throw new AgentReferenceError(context, 'REFERENCE_NOT_FOUND', field.key, name);
-  throw new AgentReferenceError(context, 'AMBIGUOUS_REFERENCE', field.key, name, candidates.slice(0, 10));
+  if (!candidates.length) {
+    throw new NodeOperationError(
+      context.getNode(),
+      referenceErrorMessage('REFERENCE_NOT_FOUND', field.key, name),
+    );
+  }
+  throw new NodeOperationError(
+    context.getNode(),
+    referenceErrorMessage('AMBIGUOUS_REFERENCE', field.key, name, candidates.slice(0, 10)),
+  );
 }
 
 async function resolveFieldReference(
@@ -287,16 +332,11 @@ async function prepareAgentInput(
 }
 
 function toolFailureOutput(error: unknown, executionError: NodeOperationError): string {
-  if (error instanceof AgentReferenceError) {
+  const reference = parseReferenceFailure(error);
+  if (reference) {
     return JSON.stringify({
       ok: false,
-      error: {
-        code: error.code,
-        message: error.message,
-        field: error.field,
-        input: error.input,
-        ...(error.candidates.length ? { candidates: error.candidates } : {}),
-      },
+      error: reference,
     });
   }
   return JSON.stringify({
