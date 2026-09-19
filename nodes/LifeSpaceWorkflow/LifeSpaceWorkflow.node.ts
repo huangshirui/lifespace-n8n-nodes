@@ -16,8 +16,93 @@ import {
   getHumanQueryFilterFields,
   getHumanRecordFields,
   getHumanSortableFields,
+  getHumanTemporalRangeFields,
   humanExecutionContext,
 } from './humanProjection';
+
+function temporalRangesProperty(): INodeProperties {
+  return {
+    displayName: 'Temporal Ranges',
+    name: 'humanTemporalRanges',
+    type: 'fixedCollection',
+    default: {},
+    placeholder: 'Add Temporal Range',
+    typeOptions: { multipleValues: true },
+    displayOptions: { show: { resource: ['modelRecord'], operation: ['create', 'update'] } },
+    options: [{
+      displayName: 'Temporal Range',
+      name: 'range',
+      // Field → Type → Start → End is intentional human form order.
+      // eslint-disable-next-line n8n-nodes-base/node-param-fixed-collection-type-unsorted-items
+      values: [
+        {
+          // eslint-disable-next-line n8n-nodes-base/node-param-display-name-wrong-for-dynamic-options
+          displayName: 'Field',
+          name: 'field',
+          type: 'options',
+          typeOptions: {
+            loadOptionsMethod: 'getHumanTemporalRangeFields',
+            loadOptionsDependsOn: ['spaceId', 'recordType', 'operation'],
+          },
+          options: [],
+          default: '',
+          required: true,
+          description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+        },
+        {
+          displayName: 'Type',
+          name: 'kind',
+          type: 'options',
+          options: [
+            { name: 'All Day / Date', value: 'date' },
+            { name: 'Date & Time', value: 'instant' },
+          ],
+          default: 'instant',
+          required: true,
+        },
+        {
+          displayName: 'Start',
+          name: 'dateStart',
+          type: 'dateTime',
+          typeOptions: { dateOnly: true },
+          default: '',
+          required: true,
+          displayOptions: { show: { kind: ['date'] } },
+          description: 'Inclusive start date',
+        },
+        {
+          displayName: 'End',
+          name: 'dateEnd',
+          type: 'dateTime',
+          typeOptions: { dateOnly: true },
+          default: '',
+          required: true,
+          displayOptions: { show: { kind: ['date'] } },
+          description: 'Inclusive end date. The adapter converts it to LifeSpace endExclusive.',
+        },
+        {
+          displayName: 'Start',
+          name: 'instantStart',
+          type: 'dateTime',
+          default: '',
+          required: true,
+          displayOptions: { show: { kind: ['instant'] } },
+          description: 'Start date and time',
+        },
+        {
+          displayName: 'End',
+          name: 'instantEnd',
+          type: 'dateTime',
+          default: '',
+          required: true,
+          displayOptions: { show: { kind: ['instant'] } },
+          description: 'End date and time',
+        },
+      ],
+    }],
+    description: 'Configure writable TemporalRange fields without entering JSON. Use All Day / Date for date-only ranges or Date & Time for timed ranges.',
+  };
+}
 
 function filterConditionValues(): INodeProperties[] {
   return [
@@ -135,21 +220,24 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
     ].includes(property.name)) continue;
 
     if (property.name === 'fields') {
-      result.push({
-        ...property,
-        typeOptions: {
-          loadOptionsDependsOn: ['spaceId', 'recordType', 'operation'],
-          resourceMapper: {
-            resourceMapperMethod: 'getHumanRecordFields',
-            mode: 'add',
-            fieldWords: { singular: 'field', plural: 'fields' },
-            addAllFields: false,
-            supportAutoMap: false,
-            noFieldsError: 'The selected LifeSpace Record Type has no writable fields for this operation.',
+      result.push(
+        {
+          ...property,
+          typeOptions: {
+            loadOptionsDependsOn: ['spaceId', 'recordType', 'operation'],
+            resourceMapper: {
+              resourceMapperMethod: 'getHumanRecordFields',
+              mode: 'add',
+              fieldWords: { singular: 'field', plural: 'fields' },
+              addAllFields: false,
+              supportAutoMap: false,
+              noFieldsError: 'The selected LifeSpace Record Type has no scalar or relation fields for this operation.',
+            },
           },
+          description: 'Only fields selected for this operation are sent. TemporalRange fields use the Temporal Ranges form below instead of JSON.',
         },
-        description: 'Only fields selected for this operation are sent. Required Create fields are shown first; optional fields can be added from LifeSpace Discovery.',
-      });
+        temporalRangesProperty(),
+      );
       continue;
     }
 
@@ -228,6 +316,7 @@ export class LifeSpaceWorkflow extends LifeSpace {
         getCanonicalFilterOperators,
         getCanonicalFilterOptions,
         getCanonicalTimeWindowFields,
+        getHumanTemporalRangeFields,
         getSortableFields: getHumanSortableFields,
       },
       resourceMapping: {

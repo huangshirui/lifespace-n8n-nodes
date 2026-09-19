@@ -7,6 +7,7 @@ const { LifeSpaceWorkflow } = require('../dist/nodes/LifeSpaceWorkflow/LifeSpace
 const {
   canonicalTimeWindowSelector,
   projectCanonicalTimeWindows,
+  projectHumanTemporalRanges,
   projectMutationValues,
 } = require('../dist/nodes/LifeSpaceWorkflow/humanProjection.js');
 
@@ -184,16 +185,31 @@ function designContext(parameters = {}) {
   };
 }
 
-test('ordinary Workflow projects current LifeSpace temporal field types without Event split-field assumptions', async () => {
+test('ordinary Workflow projects TemporalRange mutations through a dedicated human form', async () => {
   const node = new LifeSpaceWorkflow();
   const createFields = await node.methods.resourceMapping.getHumanRecordFields.call(designContext());
   const byName = Object.fromEntries(createFields.fields.map((field) => [field.displayName, field]));
 
   assert.equal(byName.Summary.type, 'string');
-  assert.equal(byName.When.type, 'object');
+  assert.equal(byName.When, undefined);
   assert.equal(byName['Starts At'].type, 'dateTime');
   assert.equal(byName['Vacation Window'].type, 'object');
   assert.equal(byName['Busy Window'].type, 'object');
+
+  const temporalFields = await node.methods.loadOptions.getHumanTemporalRangeFields.call(
+    designContext({ operation: 'create' }),
+  );
+  assert.deepEqual(temporalFields.map((option) => [option.name, option.value]), [
+    ['When (Required)', 'when'],
+  ]);
+
+  const temporalProperty = node.description.properties.find((entry) => entry.name === 'humanTemporalRanges');
+  assert.ok(temporalProperty);
+  assert.deepEqual(temporalProperty.displayOptions.show.operation, ['create', 'update']);
+  const values = temporalProperty.options[0].values;
+  assert.deepEqual(values.find((entry) => entry.name === 'kind')?.options.map((option) => option.value), ['date', 'instant']);
+  assert.equal(values.find((entry) => entry.name === 'dateStart')?.typeOptions.dateOnly, true);
+  assert.equal(values.find((entry) => entry.name === 'dateEnd')?.typeOptions.dateOnly, true);
 
   const actionFields = await node.methods.resourceMapping.getActionInputFields.call(
     designContext({ operation: 'executeAction', actionKey: 'reschedule' }),
@@ -201,6 +217,56 @@ test('ordinary Workflow projects current LifeSpace temporal field types without 
   assert.deepEqual(actionFields.fields.map((field) => [field.displayName, field.type, field.required]), [
     ['When', 'object', true],
   ]);
+});
+
+test('Create execution lowers the Temporal Ranges form into the canonical mutation body', async () => {
+  const node = new LifeSpaceWorkflow();
+  const calls = [];
+  const parameters = {
+    resource: 'modelRecord',
+    operation: 'create',
+    spaceId: 'spc_test',
+    recordType: 'event',
+    modelRoute: '',
+    'fields.value': { 'lsf:string:summary': 'School meeting' },
+    'fields.schema': [],
+    'humanTemporalRanges.range': [{
+      field: 'when',
+      kind: 'date',
+      dateStart: '2026-09-20',
+      dateEnd: '2026-09-20',
+    }],
+    'dateFields.date': [],
+    'singleRelations.relation': [],
+    'multiRelations.relation': [],
+  };
+  const context = {
+    getInputData: () => [{ json: {} }],
+    getCredentials: async () => ({ baseUrl: BASE_URL }),
+    getNode: () => ({ name: 'LifeSpace' }),
+    getNodeParameter(name, _itemIndex, fallback) {
+      return Object.hasOwn(parameters, name) ? parameters[name] : fallback;
+    },
+    continueOnFail: () => false,
+    helpers: {
+      async httpRequestWithAuthentication(credentialName, options) {
+        calls.push({ credentialName, options });
+        return { data: { id: 'evt_test' } };
+      },
+    },
+  };
+
+  await node.execute.call(context);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.method, 'POST');
+  assert.deepEqual(calls[0].options.body, {
+    summary: 'School meeting',
+    when: {
+      kind: 'date',
+      start: '2026-09-20',
+      endExclusive: '2026-09-21',
+    },
+  });
 });
 
 test('ordinary Workflow exposes current TemporalRange query predicates and kind selector', async () => {
@@ -235,16 +301,14 @@ test('ordinary Workflow exposes current TemporalRange query predicates and kind 
   assert.ok(timeWindows.some((option) => option.name === 'when — overlaps'));
 });
 
-test('ordinary Workflow normalizes date-shaped Range mutation values but preserves canonical object shape', async () => {
+test('stored canonical TemporalRange object mutations remain executable for compatibility', async () => {
   const node = new LifeSpaceWorkflow();
   const fields = await node.methods.resourceMapping.getHumanRecordFields.call(designContext());
-  const when = fields.fields.find((field) => field.displayName === 'When');
   const vacation = fields.fields.find((field) => field.displayName === 'Vacation Window');
-  assert.ok(when);
   assert.ok(vacation);
 
   const projected = projectMutationValues({
-    [when.id]: {
+    'lsf:temporal_range:when': {
       kind: 'date',
       start: '2026-09-20T00:00:00.000Z',
       endExclusive: '2026-09-22T00:00:00.000Z',
@@ -253,7 +317,7 @@ test('ordinary Workflow normalizes date-shaped Range mutation values but preserv
       start: '2026-10-01T00:00:00.000Z',
       endExclusive: '2026-10-08T00:00:00.000Z',
     },
-  }, fields.fields);
+  });
 
   assert.deepEqual(projected.when, {
     kind: 'date',
@@ -264,6 +328,72 @@ test('ordinary Workflow normalizes date-shaped Range mutation values but preserv
     start: '2026-10-01',
     endExclusive: '2026-10-08',
   });
+});
+
+test('Create and Update TemporalRange form lowers all-day End as inclusive human date', () => {
+  const projected = projectHumanTemporalRanges(
+    { getNode: () => ({ name: 'LifeSpace' }) },
+    [{
+      field: 'when',
+      kind: 'date',
+      dateStart: '2026-09-20',
+      dateEnd: '2026-09-22',
+    }],
+  );
+
+  assert.deepEqual(projected, {
+    when: {
+      kind: 'date',
+      start: '2026-09-20',
+      endExclusive: '2026-09-23',
+    },
+  });
+});
+
+test('Create and Update TemporalRange form normalizes timed values and validates ordering', () => {
+  const context = { getNode: () => ({ name: 'LifeSpace' }) };
+  const projected = projectHumanTemporalRanges(context, [{
+    field: 'when',
+    kind: 'instant',
+    instantStart: '2026-09-20T10:00:00+08:00',
+    instantEnd: '2026-09-20T11:30:00+08:00',
+  }]);
+
+  assert.deepEqual(projected, {
+    when: {
+      kind: 'instant',
+      start: '2026-09-20T02:00:00.000Z',
+      endExclusive: '2026-09-20T03:30:00.000Z',
+    },
+  });
+
+  assert.throws(
+    () => projectHumanTemporalRanges(context, [{
+      field: 'when',
+      kind: 'instant',
+      instantStart: '2026-09-20T11:30:00+08:00',
+      instantEnd: '2026-09-20T10:00:00+08:00',
+    }]),
+    /End must be later than Start/u,
+  );
+
+  assert.throws(
+    () => projectHumanTemporalRanges(context, [
+      {
+        field: 'when',
+        kind: 'date',
+        dateStart: '2026-09-20',
+        dateEnd: '2026-09-20',
+      },
+      {
+        field: 'when',
+        kind: 'date',
+        dateStart: '2026-09-21',
+        dateEnd: '2026-09-21',
+      },
+    ]),
+    /configured more than once/u,
+  );
 });
 
 test('ordinary Workflow local-date-window convenience targets canonical TemporalRange predicates', () => {

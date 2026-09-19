@@ -68,7 +68,7 @@ Runtime Discovery determines which Spaces, Record Types, fields, queries, Action
 
 The package deliberately exposes two different projections over the same LifeSpace Runtime Discovery semantics:
 
-- **LifeSpace** is the human-authored workflow node. Create/Update fields are generated through n8n Resource Mapper from the selected Record Type, so field type, required state, enum values, calendar dates and supported single relations determine the control automatically. List / Query exposes semantic predicates such as `Status — Is One Of` or `Due Date — After or Equal` instead of asking the workflow author to choose a filter type first. Multi-value relations keep their dedicated multi-select UX.
+- **LifeSpace** is the human-authored workflow node. Create/Update scalar and relation fields are generated through n8n Resource Mapper from the selected Record Type. Writable `temporal_range` fields use a dedicated **Temporal Ranges** form with **Field → Type → Start → End**, avoiding raw object/JSON entry. List / Query exposes semantic predicates instead of asking the workflow author to choose a filter type first. Multi-value relations keep their dedicated multi-select UX.
 - **LifeSpace Agent Tool** is the native AI Tool surface. Its schema is generated from `query.canonical`: queries expose semantic `field` / `operator` / `value` inputs, and the adapter compiles them into the same structured Canonical Query used by human workflows.
 
 The human workflow node is not exposed through `usableAsTool`; this avoids maintaining two competing Agent Tool surfaces with different schema behavior.
@@ -77,7 +77,7 @@ The node displays the authorized human-readable `spaceName` when present while c
 
 Record Type is the LifeSpace `modelKey` (for example `task`). Design-time options, expressions, Trigger output and downstream Record nodes all use that plain value. CRUD calls go directly to `/spaces/{spaceId}/models/{modelKey}/records/...`, so execution adds no Discovery request and the adapter maintains no modelKey-to-route mapping. Existing `lsrt1...` workflow values are decoded only as a deprecated read-compatibility path and are never emitted or written by new configuration.
 
-Current Calendar models expose the canonical `capabilityBindings.calendar.rangeField` role, which points at one authoritative `temporal_range` field (for example Event v6 `when`). Historical split-field Calendar bindings remain readable only for already-published compatibility models. Date-only values are normalized to `YYYY-MM-DD`; `instant` uses the n8n date-time control, while `range<date>`, `range<instant>` and `temporal_range` use object inputs that preserve the LifeSpace canonical value shape. Create/Update execution does not fetch fresh semantic Discovery solely to produce an adapter-local Calendar conflict error; the canonical mutation goes directly to LifeSpace Core, which remains authoritative for Calendar validation and current authorization.
+Current Calendar models expose the canonical `capabilityBindings.calendar.rangeField` role, which points at one authoritative `temporal_range` field (for example Event v6 `when`). Historical split-field Calendar bindings remain readable only for already-published compatibility models. Date-only values are normalized to `YYYY-MM-DD`; ordinary `instant` fields use the n8n date-time control. Create/Update `temporal_range` fields use the dedicated **Temporal Ranges** form: **All Day / Date** stores `{ kind: "date", start, endExclusive }` and treats the Human End date as inclusive, while **Date & Time** stores `{ kind: "instant", start, endExclusive }` from the date-time controls. Existing stored workflows that already contain canonical object values remain executable. Create/Update execution does not fetch fresh semantic Discovery solely to produce an adapter-local Calendar conflict error; the canonical mutation goes directly to LifeSpace Core, which remains authoritative for Calendar validation and current authorization.
 
 ## LifeSpace contract compatibility
 
@@ -155,7 +155,7 @@ The same applies to ordinary values such as Record ID, Search, Return All, Limit
 Two boundaries are intentional:
 
 - **Resource** and **Operation** are structural node controls and do not accept expressions because they determine which parameter schema and execution path the node has.
-- **Fields** and **Action Input** remain generated from Runtime Discovery. **Filters** use Discovery-backed field/operator selectors plus string/expression values so Boolean grouping does not depend on dynamically changing n8n value-control types.
+- **Fields**, **Temporal Ranges**, and **Action Input** remain generated from Runtime Discovery. Scalar/relation CRUD fields stay in Resource Mapper; writable `temporal_range` CRUD fields use the dedicated form. **Filters** use Discovery-backed field/operator selectors plus string/expression values so Boolean grouping does not depend on dynamically changing n8n value-control types.
 
 For List / Query, **Filters** is a Discovery-driven group builder. There are no separate top-level Match or Conditions surfaces: every condition belongs to a Filter Group, each group chooses All/Any, and groups are ANDed together. Conditions use the same vertical layout as n8n's Data Table filters: **Field**, then **Operator**, then **Value**. Changing Field reloads only the operators published for that field. Scalar values remain text or n8n expressions and are deterministically converted back to canonical typed values before the request.
 
@@ -197,6 +197,16 @@ Writable fields are generated from Runtime Discovery.
 LifeSpace server defaults are authoritative. A field that is `required` but has a declared server default is not required from the n8n user. Read-only state owned by a LifeSpace Action/Capability is not exposed as a normal Create/Update field.
 
 For example, lifecycle state such as Task status can remain server/Action-owned instead of being manually entered by the workflow author.
+
+Writable `temporal_range` fields are not shown as generic object controls. Add them under **Temporal Ranges**:
+
+- choose the Discovery-backed field, for example **When**;
+- choose **All Day / Date** or **Date & Time**;
+- enter **Start** and **End** with n8n's date/date-time controls;
+- for All Day / Date, End is inclusive in the UI and the adapter converts it to LifeSpace's exclusive end boundary;
+- for Date & Time, End must be later than Start.
+
+This projection is adapter-only; LifeSpace continues to receive the canonical TemporalRange value shape.
 
 When Runtime Discovery advertises relation semantics, supported single-value `person` / `record` fields are rendered as selectors from the current authorized `{ id, label }` target projection. Multi-value relations retain the dedicated multi-select control rather than falling back to n8n Resource Mapper's generic JSON array editor. The displayed value is the canonical LifeSpace reference label, while the workflow payload still stores and submits the stable target ID.
 
