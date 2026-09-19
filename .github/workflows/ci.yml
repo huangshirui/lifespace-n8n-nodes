@@ -37,11 +37,15 @@ jobs:
       - name: Test
         run: npm test
         env:
-          LIFESPACE_AGENT_TOOL_CONTRACT_DIR: .artifacts/agent-tool-contracts
+          LIFESPACE_AGENT_TOOL_CONTRACT_DIR: .artifacts/agent-tool-contracts/raw
+
+      - name: Build provider-facing Agent Tool contracts
+        run: |
+          npm run agent-contract:build -- .artifacts/agent-tool-contracts/raw .artifacts/agent-tool-contracts/openai
 
       - name: Guard generated Agent Tool contracts
         run: |
-          for file in .artifacts/agent-tool-contracts/*.json; do
+          for file in .artifacts/agent-tool-contracts/openai/*.json; do
             npm run agent-contract:guard -- "$file"
           done
 
@@ -50,6 +54,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: agent-tool-contracts
-          path: .artifacts/agent-tool-contracts/*.json
+          path: .artifacts/agent-tool-contracts
           if-no-files-found: error
           retention-days: 30
