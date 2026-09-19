@@ -4,34 +4,18 @@
   "description": "Official n8n community nodes for integrating workflows and AI agents with LifeSpace.",
   "license": "MIT",
   "homepage": "https://github.com/huangshirui/lifespace-n8n-nodes#readme",
-  "bugs": {
-    "url": "https://github.com/huangshirui/lifespace-n8n-nodes/issues"
-  },
-  "keywords": [
-    "n8n-community-node-package",
-    "n8n",
-    "lifespace",
-    "automation",
-    "workflow"
-  ],
-  "author": {
-    "name": "Shirui Huang",
-    "email": "3366046+huangshirui@users.noreply.github.com"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/huangshirui/lifespace-n8n-nodes.git"
-  },
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
-  },
+  "bugs": {"url": "https://github.com/huangshirui/lifespace-n8n-nodes/issues"},
+  "keywords": ["n8n-community-node-package", "n8n", "lifespace", "automation", "workflow"],
+  "author": {"name": "Shirui Huang", "email": "3366046+huangshirui@users.noreply.github.com"},
+  "repository": {"type": "git", "url": "git+https://github.com/huangshirui/lifespace-n8n-nodes.git"},
+  "publishConfig": {"access": "public", "provenance": true},
   "scripts": {
     "build": "n8n-node build",
     "dev": "n8n-node dev",
     "lint": "n8n-node lint",
     "lint:fix": "n8n-node lint --fix",
     "test": "npm run build && node --test test/*.test.mjs",
+    "agent-contract": "node scripts/agent-tool-contract.mjs",
     "agent-contract:openai": "node scripts/agent-tool-contract-openai.mjs",
     "agent-contract:diff": "node scripts/agent-tool-contract-diff.mjs",
     "agent-contract:guard": "node scripts/agent-tool-contract-guard.mjs",
@@ -42,26 +26,10 @@
   "n8n": {
     "n8nNodesApiVersion": 1,
     "strict": true,
-    "credentials": [
-      "dist/credentials/LifeSpaceApi.credentials.js",
-      "dist/credentials/LifeSpaceWebhookApi.credentials.js"
-    ],
-    "nodes": [
-      "dist/nodes/LifeSpaceWorkflow/LifeSpaceWorkflow.node.js",
-      "dist/nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.js",
-      "dist/nodes/LifeSpaceAgentTool/LifeSpaceAgentTool.node.js"
-    ]
+    "credentials": ["dist/credentials/LifeSpaceApi.credentials.js", "dist/credentials/LifeSpaceWebhookApi.credentials.js"],
+    "nodes": ["dist/nodes/LifeSpaceWorkflow/LifeSpaceWorkflow.node.js", "dist/nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.js", "dist/nodes/LifeSpaceAgentTool/LifeSpaceAgentTool.node.js"]
   },
-  "devDependencies": {
-    "@n8n/node-cli": "0.46.4",
-    "eslint": "9.39.4",
-    "prettier": "3.9.6",
-    "typescript": "5.9.3"
-  },
-  "peerDependencies": {
-    "n8n-workflow": "*"
-  },
-  "engines": {
-    "node": ">=22.22.0"
-  }
+  "devDependencies": {"@n8n/node-cli": "0.46.4", "eslint": "9.39.4", "prettier": "3.9.6", "typescript": "5.9.3"},
+  "peerDependencies": {"n8n-workflow": "*"},
+  "engines": {"node": ">=22.22.0"}
 }
