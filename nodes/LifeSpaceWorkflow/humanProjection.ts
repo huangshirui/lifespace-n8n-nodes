@@ -516,10 +516,105 @@ function absoluteHumanInstant(raw: string): string | null {
   return Number.isFinite(time) ? new Date(time).toISOString() : null;
 }
 
-function humanDateInput(value: unknown): string | null {
-  const raw = String(value ?? '').trim();
-  const match = /^(\d{4}-\d{2}-\d{2})(?:$|T)/u.exec(raw);
-  return match ? exactHumanDate(match[1]) : null;
+function dateLikeObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function callDateLikeStringMethod(value: unknown, method: 'toISO' | 'toISODate' | 'toISOString'): string | null {
+  const object = dateLikeObject(value);
+  const candidate = object?.[method];
+  if (typeof candidate !== 'function') return null;
+  try {
+    const result = candidate.call(value);
+    return typeof result === 'string' ? result : null;
+  } catch {
+    return null;
+  }
+}
+
+function callDateLikeJsDate(value: unknown): Date | null {
+  const object = dateLikeObject(value);
+  const candidate = object?.toJSDate;
+  if (typeof candidate !== 'function') return null;
+  try {
+    const result = candidate.call(value);
+    return result instanceof Date && Number.isFinite(result.getTime()) ? result : null;
+  } catch {
+    return null;
+  }
+}
+
+function dateInTimezone(value: Date, timezone: string): string | null {
+  if (!Number.isFinite(value.getTime())) return null;
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(value);
+    const part = (type: string) => parts.find((entry) => entry.type === type)?.value;
+    const year = part('year');
+    const month = part('month');
+    const day = part('day');
+    return year && month && day ? exactHumanDate(`${year}-${month}-${day}`) : null;
+  } catch {
+    return null;
+  }
+}
+
+function humanDateInput(value: unknown, timezone = 'UTC'): string | null {
+  if (typeof value === 'string') {
+    const raw = value.trim();
+    const match = /^(\d{4}-\d{2}-\d{2})(?:$|T)/u.exec(raw);
+    return match ? exactHumanDate(match[1]) : null;
+  }
+
+  if (value instanceof Date) return dateInTimezone(value, timezone);
+
+  const isoDate = callDateLikeStringMethod(value, 'toISODate');
+  if (isoDate) return exactHumanDate(isoDate);
+
+  const jsDate = callDateLikeJsDate(value);
+  if (jsDate) return dateInTimezone(jsDate, timezone);
+
+  const iso = callDateLikeStringMethod(value, 'toISO') ?? callDateLikeStringMethod(value, 'toISOString');
+  if (iso) {
+    const match = /^(\d{4}-\d{2}-\d{2})(?:$|T)/u.exec(iso.trim());
+    return match ? exactHumanDate(match[1]) : null;
+  }
+  return null;
+}
+
+function humanInstantInput(value: unknown): string | null {
+  if (typeof value === 'string') return absoluteHumanInstant(value.trim());
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toISOString() : null;
+
+  const iso = callDateLikeStringMethod(value, 'toISO') ?? callDateLikeStringMethod(value, 'toISOString');
+  if (iso) return absoluteHumanInstant(iso.trim());
+
+  const jsDate = callDateLikeJsDate(value);
+  return jsDate ? jsDate.toISOString() : null;
+}
+
+function ianaTimezone(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const timezone = value.trim();
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(new Date(0));
+    return timezone;
+  } catch {
+    return null;
+  }
+}
+
+function relationId(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  const object = dateLikeObject(value);
+  const id = object?.id;
+  return typeof id === 'string' && id.trim() ? id.trim() : null;
 }
 
 type HumanTemporalMutationParts = {
@@ -682,10 +777,8 @@ function overlapWindowValue(
   endValue: unknown,
   timezone: string,
 ): IDataObject {
-  const startRaw = String(startValue ?? '').trim();
-  const endRaw = String(endValue ?? '').trim();
-  const startDate = exactHumanDate(startRaw);
-  const endDate = exactHumanDate(endRaw);
+  const startDate = typeof startValue === 'string' ? exactHumanDate(startValue.trim()) : null;
+  const endDate = typeof endValue === 'string' ? exactHumanDate(endValue.trim()) : null;
 
   if (startDate && endDate) {
     if (endDate < startDate) {
@@ -699,8 +792,8 @@ function overlapWindowValue(
     };
   }
 
-  const startInstant = absoluteHumanInstant(startRaw);
-  const endInstant = absoluteHumanInstant(endRaw);
+  const startInstant = humanInstantInput(startValue);
+  const endInstant = humanInstantInput(endValue);
   if (startInstant && endInstant) {
     if (Date.parse(endInstant) <= Date.parse(startInstant)) {
       throw new NodeOperationError(context.getNode(), `Filter ${field} Overlaps End must be later than Overlaps Start`);
@@ -720,8 +813,7 @@ function singleRangeBoundaryValue(
   value: unknown,
   timezone: string,
 ): IDataObject {
-  const raw = String(value ?? '').trim();
-  const date = exactHumanDate(raw);
+  const date = typeof value === 'string' ? exactHumanDate(value.trim()) : null;
   if (date) {
     return {
       kind: 'local_date_window',
@@ -731,7 +823,7 @@ function singleRangeBoundaryValue(
     };
   }
 
-  const instant = absoluteHumanInstant(raw);
+  const instant = humanInstantInput(value);
   if (instant) {
     const time = Date.parse(instant);
     if (predicate.operator === 'before') {
@@ -756,14 +848,84 @@ function singleRangeBoundaryValue(
   );
 }
 
+function missingFilterValue(value: unknown): boolean {
+  return value === undefined
+    || value === null
+    || (typeof value === 'string' && value.trim() === '');
+}
+
+function enumFilterValue(
+  context: Pick<IExecuteFunctions, 'getNode'>,
+  predicate: QueryPredicate,
+  value: unknown,
+): string {
+  if (typeof value !== 'string') {
+    throw new NodeOperationError(context.getNode(), `Filter ${predicate.field} requires a string enum value`);
+  }
+  const result = value.trim();
+  if (!result || (predicate.enumValues?.length && !predicate.enumValues.includes(result))) {
+    throw new NodeOperationError(context.getNode(), `Filter ${predicate.field} requires a declared enum value`);
+  }
+  return result;
+}
+
+function numericFilterValue(
+  context: Pick<IExecuteFunctions, 'getNode'>,
+  predicate: QueryPredicate,
+  value: unknown,
+  integer: boolean,
+): number {
+  const parsed = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && value.trim() !== ''
+      ? Number(value.trim())
+      : Number.NaN;
+  const valid = integer ? Number.isInteger(parsed) : Number.isFinite(parsed);
+  if (!valid) {
+    throw new NodeOperationError(
+      context.getNode(),
+      integer
+        ? `Filter ${predicate.field} requires an integer value`
+        : `Filter ${predicate.field} requires a numeric value`,
+    );
+  }
+  return parsed;
+}
+
+function booleanFilterValue(
+  context: Pick<IExecuteFunctions, 'getNode'>,
+  predicate: QueryPredicate,
+  value: unknown,
+): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+  }
+  throw new NodeOperationError(context.getNode(), `Filter ${predicate.field} requires true or false`);
+}
+
+function relationFilterValue(
+  context: Pick<IExecuteFunctions, 'getNode'>,
+  predicate: QueryPredicate,
+  value: unknown,
+): string {
+  const id = relationId(value);
+  if (id) return id;
+  throw new NodeOperationError(
+    context.getNode(),
+    `Filter ${predicate.field} requires one relation ID string or an object with an id string`,
+  );
+}
+
 function parseHumanFilterValue(
   context: Pick<IExecuteFunctions, 'getNode'>,
   predicate: QueryPredicate,
   value: unknown,
   timezone: string,
 ): unknown {
-  const raw = String(value ?? '').trim();
-  if (!raw) {
+  if (missingFilterValue(value)) {
     throw new NodeOperationError(
       context.getNode(),
       `Filter ${predicate.field} — ${predicate.operatorLabel} requires a value`,
@@ -771,18 +933,20 @@ function parseHumanFilterValue(
   }
 
   if (rangeLikeValueType(predicate.valueType) && ['before', 'after'].includes(predicate.operator)) {
-    return singleRangeBoundaryValue(context, predicate, raw, timezone);
+    return singleRangeBoundaryValue(context, predicate, value, timezone);
   }
 
   if (structuredQueryValue(predicate)) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      throw new NodeOperationError(
-        context.getNode(),
-        `Filter ${predicate.field} — ${predicate.operatorLabel} requires a JSON object value`,
-      );
+    let parsed: unknown = value;
+    if (typeof value === 'string') {
+      try {
+        parsed = JSON.parse(value.trim());
+      } catch {
+        throw new NodeOperationError(
+          context.getNode(),
+          `Filter ${predicate.field} — ${predicate.operatorLabel} requires a JSON object value`,
+        );
+      }
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       throw new NodeOperationError(
@@ -793,30 +957,55 @@ function parseHumanFilterValue(
     return normalizeQueryRangeValue(predicate.valueType, parsed as IDataObject[string]);
   }
 
-  if (predicate.valueType === 'integer') {
-    const parsed = Number(raw);
-    if (!Number.isInteger(parsed)) {
-      throw new NodeOperationError(context.getNode(), `Filter ${predicate.field} requires an integer value`);
+  if (predicate.operator === 'kindIs') {
+    const kind = typeof value === 'string' ? value.trim() : '';
+    if (kind === 'date' || kind === 'instant') return kind;
+    throw new NodeOperationError(context.getNode(), `Filter ${predicate.field} Range Kind must be date or instant`);
+  }
+
+  switch (String(predicate.valueType)) {
+    case 'integer':
+      return numericFilterValue(context, predicate, value, true);
+    case 'number':
+      return numericFilterValue(context, predicate, value, false);
+    case 'boolean':
+      return booleanFilterValue(context, predicate, value);
+    case 'date': {
+      const date = humanDateInput(value, timezone);
+      if (!date) throw new NodeOperationError(context.getNode(), `Filter ${predicate.field} requires a valid date`);
+      return date;
     }
-    return parsed;
-  }
-
-  if (predicate.valueType === 'number') {
-    const parsed = Number(raw);
-    if (!Number.isFinite(parsed)) {
-      throw new NodeOperationError(context.getNode(), `Filter ${predicate.field} requires a numeric value`);
+    case 'instant':
+    case 'datetime': {
+      const instant = humanInstantInput(value);
+      if (!instant) {
+        throw new NodeOperationError(
+          context.getNode(),
+          `Filter ${predicate.field} requires an absolute RFC3339 date-time or an n8n date-time value`,
+        );
+      }
+      return instant;
     }
-    return parsed;
+    case 'timezone': {
+      const normalized = ianaTimezone(value);
+      if (!normalized) throw new NodeOperationError(context.getNode(), `Filter ${predicate.field} requires an IANA timezone`);
+      return normalized;
+    }
+    case 'enum':
+      return enumFilterValue(context, predicate, value);
+    case 'person':
+    case 'person_list':
+    case 'record':
+    case 'record_list':
+      return relationFilterValue(context, predicate, value);
+    case 'string':
+    case 'text':
+      if (typeof value === 'string') return value;
+      throw new NodeOperationError(context.getNode(), `Filter ${predicate.field} requires a string value`);
+    default:
+      if (typeof value === 'string') return value.trim();
+      throw new NodeOperationError(context.getNode(), `Filter ${predicate.field} received an unsupported value type`);
   }
-
-  if (predicate.valueType === 'boolean') {
-    if (raw.toLowerCase() === 'true') return true;
-    if (raw.toLowerCase() === 'false') return false;
-    throw new NodeOperationError(context.getNode(), `Filter ${predicate.field} requires true or false`);
-  }
-
-  if (predicate.valueType === 'date') return dateOnly(raw);
-  return raw;
 }
 
 function validateConditionField(
@@ -846,20 +1035,24 @@ function projectHumanFilterCondition(
   }
 
   if (predicate.operator === 'in') {
-    const values = String(row.value ?? '')
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean);
-    if (!values.length) {
+    const source = Array.isArray(row.value)
+      ? row.value
+      : typeof row.value === 'string'
+        ? row.value.split(',').map((value) => value.trim()).filter(Boolean)
+        : [row.value];
+    if (!source.length) {
       throw new NodeOperationError(
         context.getNode(),
         `Filter ${predicate.field} — ${predicate.operatorLabel} requires a value`,
       );
     }
-    const children = values.map((value) => ({
+    const eqPredicate = { ...predicate, operator: 'eq', operatorLabel: 'Equals' };
+    const values = source.map((entry) => parseHumanFilterValue(context, eqPredicate, entry, timezone));
+    const unique = [...new Map(values.map((entry) => [JSON.stringify(entry), entry])).values()];
+    const children = unique.map((entry) => ({
       field: predicate.field,
       op: 'eq',
-      value,
+      value: entry,
     }));
     return children.length === 1 ? children[0] : { or: children };
   }
