@@ -163,7 +163,7 @@ function canonicalEventDetail() {
       declaredAccess: ['read', 'write'],
       fields: [
         { key: 'summary', type: 'string', title: 'Summary', required: true },
-        { key: 'when', type: 'temporal_range', title: 'When', required: true },
+        { key: 'when', type: 'temporal_range', title: 'When', description: 'When the occurrence happens.', required: true },
         {
           key: 'attendeePersonIds',
           type: 'person_list',
@@ -548,18 +548,24 @@ test('Agent Tool Canonical Query resolves relation names, inclusive date windows
 
   const tool = (await new LifeSpaceTool().supplyData.call(context, 0)).response;
   assert.deepEqual(tool.schema.properties.match.enum, ['all', 'any']);
+  assert.deepEqual(tool.schema.properties.timeWindow.required, ['startDate', 'endDate']);
+  assert.match(tool.schema.properties.timeWindow.description, /today, tomorrow, this week/u);
+  assert.match(tool.description, /use timeWindow; do not synthesize start\/end timestamp comparisons/u);
+
+  const filterBranches = tool.schema.properties.filters.items.oneOf;
+  const whenOverlap = filterBranches.find((branch) =>
+    branch.properties?.field?.enum?.[0] === 'when'
+    && branch.properties?.operator?.enum?.[0] === 'overlaps');
+  assert.ok(whenOverlap);
+  assert.match(whenOverlap.properties.field.description, /When the occurrence happens/u);
+  assert.match(whenOverlap.properties.operator.description, /intersects any part/u);
 
   await tool.invoke({
+    timeWindow: {
+      startDate: '2026-09-20',
+      endDate: '2026-09-20',
+    },
     filters: [
-      {
-        field: 'when',
-        operator: 'overlaps',
-        value: {
-          kind: 'local_date_window',
-          startDate: '2026-09-20',
-          endDate: '2026-09-20',
-        },
-      },
       {
         field: 'attendeePersonIds',
         operator: 'contains',
