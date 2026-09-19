@@ -101,7 +101,7 @@ export async function getHumanRecordFields(this: ILoadOptionsFunctions): Promise
   const result: ResourceMapperField[] = [];
 
   for (const field of writableMutationFields(selected.model, operation)) {
-    if (field.type === 'temporal_range') continue;
+    if (String(field.type) === 'temporal_range') continue;
     if (field.relation?.lookup.supported && field.relation.cardinality === 'many') continue;
     let options: INodePropertyOptions[] | undefined;
     if (field.relation?.lookup.supported && field.relation.cardinality === 'one') {
@@ -132,7 +132,7 @@ export async function getHumanTemporalRangeFields(this: ILoadOptionsFunctions): 
   const operation = (loadOptionParameter(this, 'operation') || 'create') as 'create' | 'update';
 
   return writableMutationFields(selected.model, operation)
-    .filter((field) => field.type === 'temporal_range')
+    .filter((field) => String(field.type) === 'temporal_range')
     .map((field) => ({
       name: `${field.title?.trim() || field.key}${operation === 'create' && field.required === true ? ' (Required)' : ''}`,
       value: field.key,
@@ -446,6 +446,12 @@ function absoluteHumanInstant(raw: string): string | null {
   return Number.isFinite(time) ? new Date(time).toISOString() : null;
 }
 
+function humanDateInput(value: unknown): string | null {
+  const raw = String(value ?? '').trim();
+  const match = /^(\d{4}-\d{2}-\d{2})(?:$|T)/u.exec(raw);
+  return match ? exactHumanDate(match[1]) : null;
+}
+
 type HumanTemporalRangeRow = {
   field?: unknown;
   kind?: unknown;
@@ -477,8 +483,8 @@ export function projectHumanTemporalRanges(
 
     const kind = String(row.kind ?? '').trim();
     if (kind === 'date') {
-      const start = exactHumanDate(String(dateOnly(row.dateStart) ?? '').trim());
-      const end = exactHumanDate(String(dateOnly(row.dateEnd) ?? '').trim());
+      const start = humanDateInput(row.dateStart);
+      const end = humanDateInput(row.dateEnd);
       if (!start || !end) {
         throw new NodeOperationError(context.getNode(), `Temporal range ${field} requires valid Start and End dates`);
       }
