@@ -16,6 +16,7 @@
     "lint:fix": "n8n-node lint --fix",
     "test": "npm run build && node --test test/*.test.mjs",
     "agent-contract": "node scripts/agent-tool-contract.mjs",
+    "agent-contract:build": "node scripts/agent-tool-contract-build.mjs",
     "agent-contract:openai": "node scripts/agent-tool-contract-openai.mjs",
     "agent-contract:diff": "node scripts/agent-tool-contract-diff.mjs",
     "agent-contract:guard": "node scripts/agent-tool-contract-guard.mjs",
