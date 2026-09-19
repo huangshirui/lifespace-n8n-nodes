@@ -261,6 +261,7 @@ export class LifeSpaceWorkflow extends LifeSpace {
         ...(node.methods?.resourceMapping ?? {}),
         getHumanRecordFields,
         getHumanQueryFilterFields,
+        getHumanTemporalRangeMutationFields,
         getActionInputFields: getHumanActionInputFields,
       },
     };
