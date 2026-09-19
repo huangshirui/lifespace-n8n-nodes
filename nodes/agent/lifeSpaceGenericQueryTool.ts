@@ -41,6 +41,20 @@ function descriptor(model: DiscoveryModel) {
   return model.query.canonical;
 }
 
+function calendarTimeWindowTarget(
+  model: DiscoveryModel,
+): { field: DiscoveryField; target: DiscoveryCanonicalFilterTarget } | null {
+  const binding = model.capabilityBindings?.calendar;
+  if (!binding || !('rangeField' in binding)) return null;
+
+  const field = model.fields.find((entry) => entry.key === binding.rangeField);
+  const target = descriptor(model).filter.targets.find(
+    (entry) => entry.field === binding.rangeField && entry.operators.includes('overlaps'),
+  );
+  if (!field || field.type !== 'temporal_range' || !target) return null;
+  return { field, target };
+}
+
 function referenceValueSchema(field: DiscoveryField, target: DiscoveryCanonicalFilterTarget): JsonSchema {
   const reference: JsonSchema = {
     oneOf: [
@@ -79,6 +93,44 @@ function scalarValueSchema(field: DiscoveryField | undefined, target: DiscoveryC
   if (type === 'date') return { type: 'string', format: 'date' };
   if (type === 'instant' || type === 'datetime') return { type: 'string', format: 'date-time' };
   return { type: 'string', minLength: 1 };
+}
+
+function filterFieldDescription(field: DiscoveryField | undefined, target: DiscoveryCanonicalFilterTarget): string {
+  const semantic = field?.description?.trim() || field?.title?.trim() || target.field;
+  return `${semantic} Canonical LifeSpace filter field "${target.field}".`;
+}
+
+function filterOperatorDescription(operator: string): string {
+  if (operator === 'overlaps') {
+    return 'Select records whose range intersects any part of the supplied range or local date window.';
+  }
+  if (operator === 'contains') return 'Select records whose field/range contains the supplied value or range.';
+  if (operator === 'before') return 'Select ranges that occur before the supplied range/window.';
+  if (operator === 'after') return 'Select ranges that occur after the supplied range/window.';
+  if (operator === 'kindIs') return 'Select TemporalRange values by kind: date for all-day/date-only, instant for timed.';
+  return `LifeSpace canonical filter operator "${operator}".`;
+}
+
+function calendarTimeWindowSchema(field: DiscoveryField): JsonSchema {
+  const semantic = field.description?.trim() || field.title?.trim() || field.key;
+  return {
+    type: 'object',
+    description: `Calendar date window for ${semantic}. Use this for requests such as today, tomorrow, this week, or a date range. It matches records whose time range overlaps any part of the window. Dates are inclusive; timezone is taken from the n8n workflow.`,
+    properties: {
+      startDate: {
+        type: 'string',
+        format: 'date',
+        description: 'First local calendar date to include (YYYY-MM-DD).',
+      },
+      endDate: {
+        type: 'string',
+        format: 'date',
+        description: 'Last local calendar date to include, inclusive (YYYY-MM-DD).',
+      },
+    },
+    required: ['startDate', 'endDate'],
+    additionalProperties: false,
+  };
 }
 
 function localDateWindowSchemas(): JsonSchema[] {
@@ -211,8 +263,16 @@ function normalizeRangeValue(
 function filterBranch(model: DiscoveryModel, target: DiscoveryCanonicalFilterTarget, operator: string): JsonSchema {
   const field = model.fields.find((entry) => entry.key === target.field);
   const properties: Record<string, JsonSchema> = {
-    field: { type: 'string', enum: [target.field] },
-    operator: { type: 'string', enum: [operator] },
+    field: {
+      type: 'string',
+      enum: [target.field],
+      description: filterFieldDescription(field, target),
+    },
+    operator: {
+      type: 'string',
+      enum: [operator],
+      description: filterOperatorDescription(operator),
+    },
   };
   const required = ['field', 'operator'];
   if (operator !== 'isNull' && operator !== 'isNotNull') {
@@ -252,6 +312,11 @@ export function genericQuerySchema(model: DiscoveryModel): GenericQuerySchema {
       maxLength: canonical.search.maxLength,
       description: `Full-text search across ${canonical.search.fields.join(', ')}.`,
     };
+  }
+
+  const calendarWindow = calendarTimeWindowTarget(model);
+  if (calendarWindow) {
+    properties.timeWindow = calendarTimeWindowSchema(calendarWindow.field);
   }
 
   const branches = canonical.filter.targets.flatMap((target) =>
@@ -295,6 +360,30 @@ function asObject(input: unknown): Record<string, unknown> {
   return input as Record<string, unknown>;
 }
 
+function calendarTimeWindowPredicate(
+  model: DiscoveryModel,
+  raw: unknown,
+  viewingTimezone?: string,
+): CanonicalPredicate {
+  const calendarWindow = calendarTimeWindowTarget(model);
+  if (!calendarWindow) throw new Error('LifeSpace Calendar timeWindow is not available for this Record Type');
+
+  const input = asObject(raw);
+  const startDate = String(input.startDate ?? '');
+  const endDate = String(input.endDate ?? '');
+  if (!startDate || !endDate) throw new Error('LifeSpace timeWindow requires startDate and endDate');
+
+  return {
+    field: calendarWindow.target.field,
+    op: 'overlaps',
+    value: normalizeRangeValue(
+      calendarWindow.target,
+      { kind: 'local_date_window', startDate, endDate },
+      viewingTimezone,
+    ),
+  };
+}
+
 function predicate(model: DiscoveryModel, raw: unknown, viewingTimezone?: string): CanonicalPredicate {
   const input = asObject(raw);
   const field = String(input.field ?? '');
@@ -327,10 +416,20 @@ export function compileGenericQuery(model: DiscoveryModel, input: unknown, viewi
 
   const filters = (Array.isArray(value.filters) ? value.filters : [])
     .map((entry) => predicate(model, entry, viewingTimezone));
-  if (filters.length === 1) result.filter = filters[0];
-  if (filters.length > 1) {
-    result.filter = String(value.match ?? 'all') === 'any' ? { or: filters } : { and: filters };
+  const selectionFilters: unknown[] = [];
+
+  if (value.timeWindow !== undefined) {
+    selectionFilters.push(calendarTimeWindowPredicate(model, value.timeWindow, viewingTimezone));
   }
+
+  if (filters.length === 1) selectionFilters.push(filters[0]);
+  if (filters.length > 1) {
+    if (String(value.match ?? 'all') === 'any') selectionFilters.push({ or: filters });
+    else selectionFilters.push(...filters);
+  }
+
+  if (selectionFilters.length === 1) result.filter = selectionFilters[0];
+  if (selectionFilters.length > 1) result.filter = { and: selectionFilters };
 
   if (Array.isArray(value.sort) && value.sort.length) {
     const used = new Set<string>();
