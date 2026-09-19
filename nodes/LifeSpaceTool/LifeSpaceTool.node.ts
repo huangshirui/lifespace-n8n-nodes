@@ -94,6 +94,20 @@ function inputForLog(value: unknown): IDataObject {
     : { value: String(value ?? '') };
 }
 
+function semanticToolInput(schema: AgentToolSchema, value: IDataObject): IDataObject {
+  // n8n Tools Agent V3 executes connected Tool nodes with an envelope that merges
+  // the parent Agent input, the LLM-provided Tool arguments and a toolCallId.
+  // Only fields published by this Tool schema belong to the LifeSpace semantic
+  // input. Project the execution envelope back onto that schema before validation.
+  if (typeof value.toolCallId !== 'string') return value;
+
+  const input: IDataObject = {};
+  for (const key of Object.keys(schema.properties)) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) input[key] = value[key];
+  }
+  return input;
+}
+
 function currentRecordPath(request: AgentToolRequest): string {
   const actionIndex = request.path.indexOf('/actions/');
   return actionIndex >= 0 ? request.path.slice(0, actionIndex) : request.path;
@@ -683,7 +697,8 @@ export class LifeSpaceTool implements INodeType {
 
       try {
         const runtime = await LifeSpaceTool.prototype.agentRuntime.call(this, this, itemIndex);
-        const response = await LifeSpaceTool.prototype.invokeAgentTool.call(this, this, runtime, item.json);
+        const input = semanticToolInput(runtime.definition.schema, item.json);
+        const response = await LifeSpaceTool.prototype.invokeAgentTool.call(this, this, runtime, input);
         output.push({
           json: { response },
           pairedItem: { item: itemIndex },
