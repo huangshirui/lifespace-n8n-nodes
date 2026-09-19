@@ -239,6 +239,9 @@ function normalizeRangeValue(
       : nextDate(String(value.endDate ?? ''));
     const timezone = String(value.timezone ?? viewingTimezone ?? '').trim();
     if (!timezone) throw new Error(`${target.field} local_date_window requires a viewing timezone`);
+    if (endDateExclusive <= startDate) {
+      throw new Error(`${target.field} local date window end must be after start`);
+    }
     return { kind, startDate, endDateExclusive, timezone };
   }
 
