@@ -32,6 +32,8 @@
     "lint": "n8n-node lint",
     "lint:fix": "n8n-node lint --fix",
     "test": "npm run build && node --test test/*.test.mjs",
+    "agent-contract:openai": "node scripts/agent-tool-contract-openai.mjs",
+    "agent-contract:diff": "node scripts/agent-tool-contract-diff.mjs",
     "release": "n8n-node release",
     "prepublishOnly": "n8n-node prerelease"
   },
