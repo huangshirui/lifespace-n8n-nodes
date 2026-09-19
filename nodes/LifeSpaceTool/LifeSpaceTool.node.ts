@@ -571,7 +571,7 @@ export class LifeSpaceTool implements INodeType {
               method: 'GET',
               path: currentRecordPath(request),
             });
-            request = buildAgentToolRequest(model, config, query, currentRecordVersion(this, recordResponse));
+            request = buildAgentToolRequest(model, config, prepared, currentRecordVersion(this, recordResponse));
           }
           const response = await performRequest(this, baseUrl, request);
           output = stringifyToolOutput(response);
