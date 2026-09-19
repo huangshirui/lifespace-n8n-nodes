@@ -49,6 +49,11 @@ jobs:
             npm run agent-contract:guard -- "$file"
           done
 
+      - name: Summarize generated Agent Tool contracts
+        run: |
+          npm run agent-contract:summary -- .artifacts/agent-tool-contracts/openai | tee .artifacts/agent-tool-contracts/summary.md
+          cat .artifacts/agent-tool-contracts/summary.md >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload generated Agent Tool contracts
         if: always()
         uses: actions/upload-artifact@v4
