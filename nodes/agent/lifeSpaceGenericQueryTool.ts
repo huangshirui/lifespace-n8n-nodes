@@ -274,8 +274,11 @@ function filterBranches(model: DiscoveryModel, target: DiscoveryCanonicalFilterT
   const noValue = target.operators.filter((operator) => operator === 'isNull' || operator === 'isNotNull');
   const kind = target.operators.filter((operator) => operator === 'kindIs');
   const range = target.operators.filter((operator) => isRangeOperator(target, operator));
+  const noValueSet = new Set<string>(noValue);
+  const kindSet = new Set<string>(kind);
+  const rangeSet = new Set<string>(range);
   const scalar = target.operators.filter(
-    (operator) => !noValue.includes(operator) && !kind.includes(operator) && !range.includes(operator),
+    (operator) => !noValueSet.has(operator) && !kindSet.has(operator) && !rangeSet.has(operator),
   );
   const branches: JsonSchema[] = [];
   if (noValue.length) branches.push(filterBranch(model, target, noValue));
