@@ -169,8 +169,7 @@ test('registered Agent Tool exposes and executes Canonical Query', async () => {
         value: {
           kind: 'local_date_window',
           startDate: '2026-09-10',
-          endDateExclusive: '2026-09-11',
-          timezone: 'Asia/Shanghai',
+          endDate: '2026-09-10',
         },
       },
     ],
