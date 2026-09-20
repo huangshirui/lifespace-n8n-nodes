@@ -50,7 +50,9 @@ jobs:
           done
 
       - name: Summarize generated Agent Tool contracts
+        shell: bash
         run: |
+          set -o pipefail
           npm run agent-contract:summary -- .artifacts/agent-tool-contracts/openai | tee .artifacts/agent-tool-contracts/summary.md
           cat .artifacts/agent-tool-contracts/summary.md >> "$GITHUB_STEP_SUMMARY"
 
