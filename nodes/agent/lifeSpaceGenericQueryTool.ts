@@ -152,9 +152,21 @@ function calendarTimeWindowSchema(field: DiscoveryField): JsonSchema {
   };
 }
 
-function rangeValueSchema(target: DiscoveryCanonicalFilterTarget): JsonSchema {
+function rangeValueSchema(target: DiscoveryCanonicalFilterTarget, includeLocalDateWindow: boolean): JsonSchema {
   const branches: JsonSchema[] = [];
   const valueType = String(target.valueType);
+  if (includeLocalDateWindow) {
+    branches.push({
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['local_date_window'] },
+        startDate: { type: 'string', format: 'date' },
+        endDate: { type: 'string', format: 'date', description: 'Inclusive.' },
+      },
+      required: ['kind', 'startDate', 'endDate'],
+      additionalProperties: false,
+    });
+  }
   if (['date', 'date-range', 'range<date>', 'temporal-range', 'temporal_range'].includes(valueType)) {
     branches.push({
       type: 'object',
@@ -282,7 +294,15 @@ function filterBranches(model: DiscoveryModel, target: DiscoveryCanonicalFilterT
   );
   const branches: JsonSchema[] = [];
   if (noValue.length) branches.push(filterBranch(model, target, noValue));
-  if (range.length) branches.push(filterBranch(model, target, range, rangeValueSchema(target)));
+  if (range.length) {
+    const calendarRangeField = calendarTimeWindowTarget(model)?.target.field;
+    branches.push(filterBranch(
+      model,
+      target,
+      range,
+      rangeValueSchema(target, target.field !== calendarRangeField),
+    ));
+  }
   if (kind.length) branches.push(filterBranch(model, target, kind, { type: 'string', enum: ['date', 'instant'] }));
   if (scalar.length) branches.push(filterBranch(model, target, scalar, scalarValueSchema(field, target)));
   return branches;
