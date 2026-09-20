@@ -11,8 +11,10 @@
 
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { getEncoding } from 'js-tiktoken';
 
 const [directory] = process.argv.slice(2);
+const tokenEncoding = getEncoding('cl100k_base');
 
 if (!directory) {
   throw new Error('Usage: node scripts/agent-tool-contract-summary.mjs <openai-contract-dir>');
@@ -60,7 +62,9 @@ for (const file of await readdir(directory)) {
   if (!fn?.name || !parameters) {
     throw new Error(`Invalid provider-facing Agent Tool contract: ${file}`);
   }
-  contracts.push({ file, fn, parameters });
+  const compactJson = JSON.stringify(contract);
+  const referenceTokens = tokenEncoding.encode(compactJson).length;
+  contracts.push({ file, fn, parameters, referenceTokens, compactChars: compactJson.length });
 }
 
 contracts.sort((left, right) => left.file.localeCompare(right.file));
@@ -68,9 +72,23 @@ contracts.sort((left, right) => left.file.localeCompare(right.file));
 console.log('# Agent Tool Contract Summary');
 console.log('');
 console.log('This summary is generated from provider-facing OpenAI/Groq function contracts.');
+console.log('Token counts use cl100k_base as a stable reference metric; provider/model-specific tokenizers may differ.');
 console.log('');
 
-for (const { file, fn, parameters } of contracts) {
+const eventContracts = contracts.filter(({ file }) => file.startsWith('event-'));
+if (eventContracts.length) {
+  console.log('## Event Tool Token Budget');
+  console.log('');
+  let eventTotal = 0;
+  for (const { file, referenceTokens, compactChars } of eventContracts) {
+    eventTotal += referenceTokens;
+    console.log(`- ${file}: **${referenceTokens} tokens** (cl100k_base reference; ${compactChars} compact JSON chars)`);
+  }
+  console.log(`- Event contracts total: **${eventTotal} tokens**`);
+  console.log('');
+}
+
+for (const { file, fn, parameters, referenceTokens, compactChars } of contracts) {
   const properties = parameters.properties ?? {};
   const propertyNames = Object.keys(properties).sort();
   const filterBranches = filterBranchSummary(parameters);
@@ -79,6 +97,7 @@ for (const { file, fn, parameters } of contracts) {
   console.log(`## ${file}`);
   console.log('');
   console.log(`- Function: \`${fn.name}\``);
+  console.log(`- Contract tokens: **${referenceTokens}** (cl100k_base reference; ${compactChars} compact JSON chars)`);
   console.log(`- Required: ${formatList(parameters.required ?? [])}`);
   console.log(`- Top-level properties: ${formatList(propertyNames)}`);
   console.log(`- Runtime envelope leaks: ${runtimeLeaks.length ? runtimeLeaks.map((entry) => `\`${entry}\``).join(', ') : '_none_'}`);
