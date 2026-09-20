@@ -55,6 +55,32 @@ function calendarTimeWindowTarget(
   return { field, target };
 }
 
+function calendarAttendeeTarget(
+  model: DiscoveryModel,
+): { field: DiscoveryField; target: DiscoveryCanonicalFilterTarget } | null {
+  const binding = model.capabilityBindings?.calendar;
+  if (!binding || !('attendeePersonField' in binding) || !binding.attendeePersonField) return null;
+
+  const field = model.fields.find((entry) => entry.key === binding.attendeePersonField);
+  const target = descriptor(model).filter.targets.find(
+    (entry) => entry.field === binding.attendeePersonField && entry.operators.includes('contains'),
+  );
+  if (!field || !['person', 'person_list'].includes(field.type) || !target) return null;
+  return { field, target };
+}
+
+function searchDescription(model: DiscoveryModel): string {
+  const canonical = descriptor(model);
+  if (!canonical.search) return '';
+  const fields = canonical.search.fields;
+  let description = `Full-text search of ${fields.join(', ')} only. Use search only for text intended to match those fields.`;
+  const attendee = calendarAttendeeTarget(model);
+  if (attendee && !fields.includes(attendee.field.key)) {
+    description += ` Do not use search for attendee/person names; use filters with field "${attendee.field.key}", operator "contains", and value {"name":"..."}.`;
+  }
+  return description;
+}
+
 function referenceValueSchema(field: DiscoveryField, target: DiscoveryCanonicalFilterTarget): JsonSchema {
   const reference: JsonSchema = {
     oneOf: [
@@ -292,17 +318,30 @@ function filterBranch(model: DiscoveryModel, target: DiscoveryCanonicalFilterTar
   return { type: 'object', properties, required, additionalProperties: false };
 }
 
-function sortBranches(model: DiscoveryModel): JsonSchema[] {
+function sortItemSchema(model: DiscoveryModel): JsonSchema {
   const canonical = descriptor(model);
-  return canonical.sort.fields.flatMap((field) => canonical.sort.directions.map((direction) => ({
+  const calendar = calendarTimeWindowTarget(model);
+  const exactFields = canonical.sort.fields.map((field) => `"${field}"`).join(', ');
+  const temporalHint = calendar && canonical.sort.fields.includes(calendar.field.key)
+    ? ` For chronological calendar ordering, use field "${calendar.field.key}" directly. Never construct nested paths such as "${calendar.field.key}.start" or "${calendar.field.key}.start.instant".`
+    : '';
+  return {
     type: 'object',
     properties: {
-      field: { type: 'string', enum: [field] },
-      direction: { type: 'string', enum: [direction] },
+      field: {
+        type: 'string',
+        enum: [...canonical.sort.fields],
+        description: `Use exactly one published sort field: ${exactFields}.${temporalHint}`,
+      },
+      direction: {
+        type: 'string',
+        enum: [...canonical.sort.directions],
+        description: 'Sort direction for the selected published field.',
+      },
     },
     required: ['field', 'direction'],
     additionalProperties: false,
-  })));
+  };
 }
 
 export function genericQuerySchema(model: DiscoveryModel): GenericQuerySchema {
@@ -313,7 +352,7 @@ export function genericQuerySchema(model: DiscoveryModel): GenericQuerySchema {
       type: 'string',
       minLength: canonical.search.minLength,
       maxLength: canonical.search.maxLength,
-      description: `Full-text search across ${canonical.search.fields.join(', ')}.`,
+      description: searchDescription(model),
     };
   }
 
@@ -338,13 +377,12 @@ export function genericQuerySchema(model: DiscoveryModel): GenericQuerySchema {
     };
   }
 
-  const sorts = sortBranches(model);
-  if (sorts.length) {
+  if (canonical.sort.fields.length && canonical.sort.directions.length) {
     properties.sort = {
       type: 'array',
-      items: { oneOf: sorts },
+      items: sortItemSchema(model),
       maxItems: canonical.sort.maxCriteria,
-      description: 'Ordered canonical sort criteria.',
+      description: 'Ordered canonical sort criteria. Use only the exact published field names; do not invent nested field paths.',
     };
   }
 
