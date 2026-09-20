@@ -589,7 +589,7 @@ test('Agent Tool Canonical Query resolves relation names, inclusive date windows
     && branch.properties?.operator?.enum?.[0] === 'overlaps');
   assert.ok(whenOverlap);
   assert.match(whenOverlap.properties.field.description, /When the occurrence happens/u);
-  assert.match(whenOverlap.properties.operator.description, /intersects any part/u);
+  assert.match(whenOverlap.properties.operator.description, /Allowed range operators/u);
 
   await tool.invoke({
     timeWindow: {
