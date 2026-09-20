@@ -169,8 +169,7 @@ test('registered Agent Tool exposes and executes Canonical Query', async () => {
         value: {
           kind: 'local_date_window',
           startDate: '2026-09-10',
-          endDateExclusive: '2026-09-11',
-          timezone: 'Asia/Shanghai',
+          endDate: '2026-09-10',
         },
       },
     ],
@@ -257,10 +256,12 @@ test('registered Agent Tool execute path still validates semantic arguments afte
   );
 
   const node = new LifeSpaceAgentTool();
-  await assert.rejects(
-    () => node.execute.call(execution),
-    /must match exactly one published shape|does not allow/u,
-  );
+  const result = await node.execute.call(execution);
+  const failure = JSON.parse(result[0][0].json.response);
+  assert.equal(failure.ok, false);
+  assert.equal(failure.error.code, 'INVALID_QUERY_FILTER_FIELD');
+  assert.equal(failure.error.field, 'unknownField');
+  assert.ok(Array.isArray(failure.error.allowedFields));
 });
 
 test('registered Agent Tool delegates Create while preserving omission semantics', async () => {

@@ -11,8 +11,12 @@
 
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { getEncoding } from 'js-tiktoken';
 
 const [directory] = process.argv.slice(2);
+const tokenEncoding = getEncoding('cl100k_base');
+const EVENT_QUERY_TOKEN_BUDGET = 1200;
+const EVENT_TOTAL_TOKEN_BUDGET = 1800;
 
 if (!directory) {
   throw new Error('Usage: node scripts/agent-tool-contract-summary.mjs <openai-contract-dir>');
@@ -28,11 +32,11 @@ function filterBranchSummary(parameters) {
   if (!Array.isArray(oneOf)) return '_none_';
 
   return oneOf
-    .map((branch) => {
+    .flatMap((branch) => {
       const field = branch?.properties?.field?.enum?.[0];
-      const operator = branch?.properties?.operator?.enum?.[0];
-      if (!field || !operator) return null;
-      return `${field} ${operator}`;
+      const operators = branch?.properties?.operator?.enum;
+      if (!field || !Array.isArray(operators)) return [];
+      return operators.map((operator) => `${field} ${operator}`);
     })
     .filter(Boolean)
     .sort();
@@ -60,7 +64,9 @@ for (const file of await readdir(directory)) {
   if (!fn?.name || !parameters) {
     throw new Error(`Invalid provider-facing Agent Tool contract: ${file}`);
   }
-  contracts.push({ file, fn, parameters });
+  const compactJson = JSON.stringify(contract);
+  const referenceTokens = tokenEncoding.encode(compactJson).length;
+  contracts.push({ file, fn, parameters, referenceTokens, compactChars: compactJson.length });
 }
 
 contracts.sort((left, right) => left.file.localeCompare(right.file));
@@ -68,9 +74,32 @@ contracts.sort((left, right) => left.file.localeCompare(right.file));
 console.log('# Agent Tool Contract Summary');
 console.log('');
 console.log('This summary is generated from provider-facing OpenAI/Groq function contracts.');
+console.log('Token counts use cl100k_base as a stable reference metric; provider/model-specific tokenizers may differ.');
 console.log('');
 
-for (const { file, fn, parameters } of contracts) {
+const eventContracts = contracts.filter(({ file }) => file.startsWith('event-'));
+const budgetViolations = [];
+if (eventContracts.length) {
+  console.log('## Event Tool Token Budget');
+  console.log('');
+  let eventTotal = 0;
+  for (const { file, referenceTokens, compactChars } of eventContracts) {
+    eventTotal += referenceTokens;
+    console.log(`- ${file}: **${referenceTokens} tokens** (cl100k_base reference; ${compactChars} compact JSON chars)`);
+    if (file === 'event-query.openai.json' && referenceTokens > EVENT_QUERY_TOKEN_BUDGET) {
+      budgetViolations.push(`${file} uses ${referenceTokens} tokens; budget is ${EVENT_QUERY_TOKEN_BUDGET}`);
+    }
+  }
+  console.log(`- Event contracts total: **${eventTotal} tokens**`);
+  console.log(`- Hard budgets: event-query ≤ **${EVENT_QUERY_TOKEN_BUDGET}**, Event total ≤ **${EVENT_TOTAL_TOKEN_BUDGET}** tokens`);
+  if (eventTotal > EVENT_TOTAL_TOKEN_BUDGET) {
+    budgetViolations.push(`Event contracts use ${eventTotal} tokens total; budget is ${EVENT_TOTAL_TOKEN_BUDGET}`);
+  }
+  console.log(`- Budget status: ${budgetViolations.length ? '**FAILED**' : '**PASS**'}`);
+  console.log('');
+}
+
+for (const { file, fn, parameters, referenceTokens, compactChars } of contracts) {
   const properties = parameters.properties ?? {};
   const propertyNames = Object.keys(properties).sort();
   const filterBranches = filterBranchSummary(parameters);
@@ -79,6 +108,7 @@ for (const { file, fn, parameters } of contracts) {
   console.log(`## ${file}`);
   console.log('');
   console.log(`- Function: \`${fn.name}\``);
+  console.log(`- Contract tokens: **${referenceTokens}** (cl100k_base reference; ${compactChars} compact JSON chars)`);
   console.log(`- Required: ${formatList(parameters.required ?? [])}`);
   console.log(`- Top-level properties: ${formatList(propertyNames)}`);
   console.log(`- Runtime envelope leaks: ${runtimeLeaks.length ? runtimeLeaks.map((entry) => `\`${entry}\``).join(', ') : '_none_'}`);
@@ -92,4 +122,10 @@ for (const { file, fn, parameters } of contracts) {
   }
 
   console.log('');
+}
+
+if (budgetViolations.length) {
+  console.error('Agent Tool token budget exceeded:');
+  for (const violation of budgetViolations) console.error(`- ${violation}`);
+  process.exitCode = 1;
 }

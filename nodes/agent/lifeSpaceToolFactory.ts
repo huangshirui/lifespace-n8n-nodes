@@ -72,8 +72,42 @@ export type AgentToolRequest = {
   versionParameter?: string;
 };
 
+export type AgentQueryFailure = {
+  code: 'INVALID_QUERY_SORT' | 'INVALID_QUERY_SORT_DIRECTION' | 'INVALID_QUERY_FILTER_FIELD' | 'INVALID_QUERY_FILTER_OPERATOR';
+  message: string;
+  field?: string;
+  operator?: string;
+  allowedFields?: string[];
+  allowedOperators?: string[];
+  hint: string;
+};
+
 const RECORD_ID = 'recordId';
 const TOOL_NAME_MAX_LENGTH = 64;
+const QUERY_ERROR_PREFIX = 'LIFESPACE_AGENT_QUERY:';
+
+function queryFailure(failure: AgentQueryFailure): never {
+  throw new Error(QUERY_ERROR_PREFIX + JSON.stringify(failure));
+}
+
+export function parseAgentQueryFailure(error: unknown): AgentQueryFailure | null {
+  if (!(error instanceof Error)) return null;
+  const index = error.message.indexOf(QUERY_ERROR_PREFIX);
+  if (index < 0) return null;
+  try {
+    const value = JSON.parse(error.message.slice(index + QUERY_ERROR_PREFIX.length)) as unknown;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const failure = value as Record<string, unknown>;
+    if (
+      !['INVALID_QUERY_SORT', 'INVALID_QUERY_SORT_DIRECTION', 'INVALID_QUERY_FILTER_FIELD', 'INVALID_QUERY_FILTER_OPERATOR'].includes(String(failure.code))
+      || typeof failure.message !== 'string'
+      || typeof failure.hint !== 'string'
+    ) return null;
+    return value as AgentQueryFailure;
+  } catch {
+    return null;
+  }
+}
 
 function hasOwn(value: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
@@ -576,17 +610,32 @@ function defaultDescription(model: DiscoveryModel, config: AgentToolConfig): str
   const calendarRangeField = calendarBinding && 'rangeField' in calendarBinding
     ? calendarBinding.rangeField
     : null;
-  const calendarTimeWindowHint = (
+  const calendarAttendeeField = calendarBinding && 'attendeePersonField' in calendarBinding
+    ? calendarBinding.attendeePersonField
+    : null;
+  const canonical = model.query.canonical;
+  const hasCalendarWindow = Boolean(
     config.operation === 'query'
     && config.queryMode !== 'capability'
     && calendarRangeField
-    && model.query.canonical?.filter.targets.some(
+    && canonical?.filter.targets.some(
       (target) => target.field === calendarRangeField && target.operators.includes('overlaps'),
-    )
-  )
-    ? ' For calendar date questions such as today, tomorrow, this week, or a date range, use timeWindow; do not synthesize start/end timestamp comparisons.'
+    ),
+  );
+  const searchFields = canonical?.search?.fields ?? [];
+  const attendeeFilterAvailable = Boolean(
+    calendarAttendeeField
+    && canonical?.filter.targets.some(
+      (target) => target.field === calendarAttendeeField && target.operators.includes('contains'),
+    ),
+  );
+  const calendarExample = hasCalendarWindow && attendeeFilterAvailable
+    ? ` Example date+attendee+chronological query: {"timeWindow":{"startDate":"YYYY-MM-DD","endDate":"YYYY-MM-DD"},"filters":[{"field":"${calendarAttendeeField}","operator":"contains","value":{"name":"Person"}}],"sort":[{"field":"${calendarRangeField}","direction":"asc"}]}.`
     : '';
-  return `${purpose} in Space "${space}".${modelDescription ? ` ${modelDescription}` : ''} Use only when this configured operation and Space match the user's intent.${recordLookupHint}${timezoneHint}${calendarTimeWindowHint}`;
+  const calendarQueryHint = hasCalendarWindow
+    ? ` Calendar query guidance: use timeWindow for today/tomorrow/this week/date ranges; ${attendeeFilterAvailable ? `for a named attendee use filters with field "${calendarAttendeeField}", operator "contains", value {"name":"..."}; ` : ''}for chronological order sort by "${calendarRangeField}" directly. ${searchFields.length ? `Search matches only ${searchFields.join(', ')}${attendeeFilterAvailable ? ' and must not be used for attendee names' : ''}. ` : ''}Never invent nested sort paths such as "${calendarRangeField}.start" or "${calendarRangeField}.start.instant".${calendarExample}`
+    : '';
+  return `${purpose} in Space "${space}".${modelDescription ? ` ${modelDescription}` : ''} Use only when this configured operation and Space match the user's intent.${recordLookupHint}${timezoneHint}${calendarQueryHint}`;
 }
 
 export function buildAgentToolDefinition(model: DiscoveryModel, config: AgentToolConfig): LifeSpaceAgentToolDefinition {
@@ -773,12 +822,83 @@ function semanticBody(
   return result;
 }
 
+function preflightCanonicalQueryInput(model: DiscoveryModel, input: unknown): void {
+  const canonical = model.query.canonical;
+  if (!canonical || !input || typeof input !== 'object' || Array.isArray(input)) return;
+  const value = input as Record<string, unknown>;
+  const calendarBinding = model.capabilityBindings?.calendar;
+  const calendarRangeField = calendarBinding && 'rangeField' in calendarBinding ? calendarBinding.rangeField : null;
+
+  if (Array.isArray(value.sort)) {
+    for (const rawSort of value.sort) {
+      if (!rawSort || typeof rawSort !== 'object' || Array.isArray(rawSort)) continue;
+      const sort = rawSort as Record<string, unknown>;
+      const field = String(sort.field ?? '');
+      const direction = String(sort.direction ?? '');
+      if (field && !canonical.sort.fields.includes(field)) {
+        const hint = calendarRangeField && canonical.sort.fields.includes(calendarRangeField)
+          ? `For chronological calendar ordering, use field "${calendarRangeField}" directly with direction "asc" or "desc". Do not construct nested paths.`
+          : `Use one of the published sort fields: ${canonical.sort.fields.join(', ')}.`;
+        queryFailure({
+          code: 'INVALID_QUERY_SORT',
+          message: `LifeSpace query does not allow sort field "${field}".`,
+          field,
+          allowedFields: [...canonical.sort.fields],
+          hint,
+        });
+      }
+      if (direction && !canonical.sort.directions.includes(direction as 'asc' | 'desc')) {
+        queryFailure({
+          code: 'INVALID_QUERY_SORT_DIRECTION',
+          message: `LifeSpace query does not allow sort direction "${direction}".`,
+          field: field || undefined,
+          allowedFields: [...canonical.sort.directions],
+          hint: `Use one of the published sort directions: ${canonical.sort.directions.join(', ')}.`,
+        });
+      }
+    }
+  }
+
+  if (Array.isArray(value.filters)) {
+    for (const rawFilter of value.filters) {
+      if (!rawFilter || typeof rawFilter !== 'object' || Array.isArray(rawFilter)) continue;
+      const filter = rawFilter as Record<string, unknown>;
+      const field = String(filter.field ?? '');
+      const operator = String(filter.operator ?? filter.op ?? '');
+      const target = canonical.filter.targets.find((entry) => entry.field === field);
+      if (field && !target) {
+        const allowedFields = canonical.filter.targets.map((entry) => entry.field);
+        queryFailure({
+          code: 'INVALID_QUERY_FILTER_FIELD',
+          message: `LifeSpace query does not allow filter field "${field}".`,
+          field,
+          allowedFields,
+          hint: `Use one of the published filter fields: ${allowedFields.join(', ')}.`,
+        });
+      }
+      if (target && operator && !target.operators.includes(operator)) {
+        queryFailure({
+          code: 'INVALID_QUERY_FILTER_OPERATOR',
+          message: `LifeSpace query does not allow operator "${operator}" for field "${field}".`,
+          field,
+          operator,
+          allowedOperators: [...target.operators],
+          hint: `Use one of the published operators for "${field}": ${target.operators.join(', ')}.`,
+        });
+      }
+    }
+  }
+}
+
 export function buildAgentToolRequest(
   model: DiscoveryModel,
   config: AgentToolConfig,
   input: unknown,
   currentVersion?: number,
 ): AgentToolRequest {
+  if (config.operation === 'query' && model.query.canonical && config.queryMode !== 'capability') {
+    preflightCanonicalQueryInput(model, input);
+  }
   const schema = toolSchema(model, config);
   const validated = validateAgentToolInput(schema, input);
 
