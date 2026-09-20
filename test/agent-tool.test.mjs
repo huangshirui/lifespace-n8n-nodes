@@ -643,7 +643,7 @@ test('Calendar Agent Query makes search/person/sort semantics explicit and retur
 
   const tool = (await new LifeSpaceTool().supplyData.call(context, 0)).response;
   assert.match(tool.schema.properties.search.description, /summary only/u);
-  assert.match(tool.schema.properties.search.description, /Do not use search for attendee\/person names/u);
+  assert.match(tool.schema.properties.search.description, /Never attendee names/u);
   assert.match(tool.description, /named attendee.*attendeePersonIds/u);
   assert.match(tool.description, /chronological order sort by "when" directly/u);
   assert.match(tool.description, /Search matches only summary/u);
@@ -651,8 +651,19 @@ test('Calendar Agent Query makes search/person/sort semantics explicit and retur
 
   const sortItem = tool.schema.properties.sort.items;
   assert.deepEqual(sortItem.properties.field.enum, ['createdAt', 'summary', 'updatedAt', 'when']);
-  assert.match(sortItem.properties.field.description, /use field "when" directly/iu);
-  assert.match(sortItem.properties.field.description, /"when\.start\.instant"/u);
+  assert.match(sortItem.properties.field.description, /Chronological calendar order = "when"/u);
+  assert.match(tool.description, /"when\.start\.instant"/u);
+
+  const compactFilters = JSON.stringify(tool.schema.properties.filters);
+  assert.doesNotMatch(compactFilters, /local_date_window|endExclusive/u);
+  const compactBranches = tool.schema.properties.filters.items.oneOf;
+  assert.equal(compactBranches.length, 3);
+  const whenRangeBranch = compactBranches.find((branch) =>
+    branch.properties?.field?.enum?.[0] === 'when'
+    && branch.properties?.operator?.enum?.includes('overlaps'));
+  assert.ok(whenRangeBranch);
+  assert.deepEqual(whenRangeBranch.properties.operator.enum, ['overlaps', 'contains', 'before', 'after']);
+  assert.equal(whenRangeBranch.properties.value.oneOf.length, 2);
 
   const invalidSort = JSON.parse(await tool.invoke({
     timeWindow: { startDate: '2026-09-20', endDate: '2026-09-20' },
