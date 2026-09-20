@@ -629,8 +629,11 @@ function defaultDescription(model: DiscoveryModel, config: AgentToolConfig): str
       (target) => target.field === calendarAttendeeField && target.operators.includes('contains'),
     ),
   );
+  const calendarExample = hasCalendarWindow && attendeeFilterAvailable
+    ? ` Example date+attendee+chronological query: {"timeWindow":{"startDate":"YYYY-MM-DD","endDate":"YYYY-MM-DD"},"filters":[{"field":"${calendarAttendeeField}","operator":"contains","value":{"name":"Person"}}],"sort":[{"field":"${calendarRangeField}","direction":"asc"}]}.`
+    : '';
   const calendarQueryHint = hasCalendarWindow
-    ? ` Calendar query guidance: use timeWindow for today/tomorrow/this week/date ranges; ${attendeeFilterAvailable ? `for a named attendee use filters with field "${calendarAttendeeField}", operator "contains", value {"name":"..."}; ` : ''}for chronological order sort by "${calendarRangeField}" directly. ${searchFields.length ? `Search matches only ${searchFields.join(', ')}${attendeeFilterAvailable ? ' and must not be used for attendee names' : ''}. ` : ''}Never invent nested sort paths such as "${calendarRangeField}.start" or "${calendarRangeField}.start.instant".`
+    ? ` Calendar query guidance: use timeWindow for today/tomorrow/this week/date ranges; ${attendeeFilterAvailable ? `for a named attendee use filters with field "${calendarAttendeeField}", operator "contains", value {"name":"..."}; ` : ''}for chronological order sort by "${calendarRangeField}" directly. ${searchFields.length ? `Search matches only ${searchFields.join(', ')}${attendeeFilterAvailable ? ' and must not be used for attendee names' : ''}. ` : ''}Never invent nested sort paths such as "${calendarRangeField}.start" or "${calendarRangeField}.start.instant".${calendarExample}`
     : '';
   return `${purpose} in Space "${space}".${modelDescription ? ` ${modelDescription}` : ''} Use only when this configured operation and Space match the user's intent.${recordLookupHint}${timezoneHint}${calendarQueryHint}`;
 }
