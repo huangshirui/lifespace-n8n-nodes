@@ -650,6 +650,8 @@ test('Calendar Agent Query makes search/person/sort semantics explicit and retur
   assert.match(tool.description, /Never invent nested sort paths/u);
   assert.match(tool.description, /Example date\+attendee\+chronological query/u);
   assert.match(tool.description, /"field":"attendeePersonIds".*"field":"when","direction":"asc"/u);
+  assert.match(tool.description, /error\.retryable=true/u);
+  assert.match(tool.description, /error\.retryable=false/u);
 
   const sortItem = tool.schema.properties.sort.items;
   assert.deepEqual(sortItem.properties.field.enum, ['createdAt', 'summary', 'updatedAt', 'when']);
@@ -673,6 +675,8 @@ test('Calendar Agent Query makes search/person/sort semantics explicit and retur
   }));
   assert.equal(invalidSort.ok, false);
   assert.equal(invalidSort.error.code, 'INVALID_QUERY_SORT');
+  assert.equal(invalidSort.error.retryable, true);
+  assert.equal(invalidSort.error.nextAction, 'retry_with_corrected_arguments');
   assert.equal(invalidSort.error.field, 'when.start.instant');
   assert.deepEqual(invalidSort.error.allowedFields, ['createdAt', 'summary', 'updatedAt', 'when']);
   assert.match(invalidSort.error.hint, /use field "when" directly/iu);
@@ -720,8 +724,50 @@ test('Agent Tool returns structured ambiguity instead of guessing relation IDs',
 
   assert.equal(output.ok, false);
   assert.equal(output.error.code, 'AMBIGUOUS_REFERENCE');
+  assert.equal(output.error.retryable, false);
+  assert.equal(output.error.nextAction, 'ask_user');
+  assert.match(output.error.instruction, /Do not guess/u);
   assert.equal(output.error.field, 'attendeePersonIds');
   assert.equal(output.error.candidates.length, 2);
+});
+
+test('Agent Tool treats missing relation names as terminal user-clarification outcomes', async () => {
+  let lookupCalls = 0;
+  const context = supplyContext(
+    { ...baseToolParameters, recordType: 'event', operation: 'query' },
+    {
+      model: eventIdentity,
+      detail: canonicalEventDetail(),
+      business(options) {
+        if (options.method === 'GET' && options.url.includes('/_relation-targets/event/attendeePersonIds')) {
+          lookupCalls += 1;
+          assert.equal(options.qs.q, '小天');
+          return { data: { items: [], nextCursor: null } };
+        }
+        throw new Error('event query must not run after an unresolved Person reference');
+      },
+    },
+  );
+  const tool = (await new LifeSpaceTool().supplyData.call(context, 0)).response;
+  const output = JSON.parse(await tool.invoke({
+    filters: [{
+      field: 'attendeePersonIds',
+      operator: 'contains',
+      value: { name: '小天' },
+    }],
+    timeWindow: { startDate: '2026-09-20', endDate: '2026-09-20' },
+    sort: [{ field: 'when', direction: 'asc' }],
+  }));
+
+  assert.equal(lookupCalls, 1);
+  assert.equal(output.ok, false);
+  assert.equal(output.error.code, 'REFERENCE_NOT_FOUND');
+  assert.equal(output.error.retryable, false);
+  assert.equal(output.error.nextAction, 'ask_user');
+  assert.equal(output.error.field, 'attendeePersonIds');
+  assert.equal(output.error.input, '小天');
+  assert.match(output.error.instruction, /Do not retry this Tool/u);
+  assert.match(output.error.instruction, /ask them to provide or choose an existing reference/u);
 });
 
 test('Agent Tool supports Any/OR filter composition and rejects empty updates', () => {

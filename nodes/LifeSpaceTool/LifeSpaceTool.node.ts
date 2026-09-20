@@ -357,19 +357,38 @@ async function prepareAgentInput(
   return input;
 }
 
+function referenceFailureInstruction(reference: AgentReferenceFailure): string {
+  if (reference.code === 'REFERENCE_NOT_FOUND') {
+    return 'Do not retry this Tool with the same or a guessed name/ID. Tell the user no matching LifeSpace reference exists in this Space and ask them to provide or choose an existing reference.';
+  }
+  if (reference.code === 'AMBIGUOUS_REFERENCE') {
+    return 'Do not guess among candidates or retry unchanged. Ask the user to choose the intended reference from the returned candidates.';
+  }
+  return 'Do not retry name lookup unchanged. Ask the user for clarification or a stable reference ID if they have one.';
+}
+
 function toolFailureOutput(error: unknown, executionError: NodeOperationError): string {
   const reference = parseReferenceFailure(error);
   if (reference) {
     return JSON.stringify({
       ok: false,
-      error: reference,
+      error: {
+        ...reference,
+        retryable: false,
+        nextAction: 'ask_user',
+        instruction: referenceFailureInstruction(reference),
+      },
     });
   }
   const queryFailure = parseAgentQueryFailure(error);
   if (queryFailure) {
     return JSON.stringify({
       ok: false,
-      error: queryFailure,
+      error: {
+        ...queryFailure,
+        retryable: true,
+        nextAction: 'retry_with_corrected_arguments',
+      },
     });
   }
   return JSON.stringify({
@@ -377,6 +396,8 @@ function toolFailureOutput(error: unknown, executionError: NodeOperationError): 
     error: {
       code: 'LIFESPACE_TOOL_CALL_FAILED',
       message: executionError.message,
+      retryable: false,
+      nextAction: 'report_failure',
     },
   });
 }
