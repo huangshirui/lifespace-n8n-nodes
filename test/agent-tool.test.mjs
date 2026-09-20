@@ -580,7 +580,7 @@ test('Agent Tool Canonical Query resolves relation names, inclusive date windows
   await emitAgentToolContract('event-query.json', tool);
   assert.deepEqual(tool.schema.properties.match.enum, ['all', 'any']);
   assert.deepEqual(tool.schema.properties.timeWindow.required, ['startDate', 'endDate']);
-  assert.match(tool.schema.properties.timeWindow.description, /today, tomorrow, this week/u);
+  assert.match(tool.schema.properties.timeWindow.description, /today\/tomorrow\/this week/u);
   assert.match(tool.description, /Calendar query guidance: use timeWindow/u);
 
   const filterBranches = tool.schema.properties.filters.items.oneOf;
