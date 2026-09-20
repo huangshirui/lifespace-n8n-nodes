@@ -629,6 +629,49 @@ test('Agent Tool Canonical Query resolves relation names, inclusive date windows
   });
 });
 
+test('Calendar Agent Query makes search/person/sort semantics explicit and returns retryable query errors', async () => {
+  const context = supplyContext(
+    { ...baseToolParameters, recordType: 'event', operation: 'query' },
+    {
+      model: eventIdentity,
+      detail: canonicalEventDetail(),
+      business() {
+        return { data: { items: [], nextCursor: null } };
+      },
+    },
+  );
+
+  const tool = (await new LifeSpaceTool().supplyData.call(context, 0)).response;
+  assert.match(tool.schema.properties.search.description, /summary only/u);
+  assert.match(tool.schema.properties.search.description, /Do not use search for attendee\/person names/u);
+  assert.match(tool.description, /named attendee.*attendeePersonIds/u);
+  assert.match(tool.description, /chronological order sort by "when" directly/u);
+  assert.match(tool.description, /Search matches only summary/u);
+  assert.match(tool.description, /Never invent nested sort paths/u);
+
+  const sortItem = tool.schema.properties.sort.items;
+  assert.deepEqual(sortItem.properties.field.enum, ['createdAt', 'summary', 'updatedAt', 'when']);
+  assert.match(sortItem.properties.field.description, /use field "when" directly/iu);
+  assert.match(sortItem.properties.field.description, /"when\.start\.instant"/u);
+
+  const invalidSort = JSON.parse(await tool.invoke({
+    timeWindow: { startDate: '2026-09-20', endDate: '2026-09-20' },
+    sort: [{ field: 'when.start.instant', direction: 'asc' }],
+  }));
+  assert.equal(invalidSort.ok, false);
+  assert.equal(invalidSort.error.code, 'INVALID_QUERY_SORT');
+  assert.equal(invalidSort.error.field, 'when.start.instant');
+  assert.deepEqual(invalidSort.error.allowedFields, ['createdAt', 'summary', 'updatedAt', 'when']);
+  assert.match(invalidSort.error.hint, /use field "when" directly/iu);
+
+  const invalidFilter = JSON.parse(await tool.invoke({
+    filters: [{ field: 'attendee.name', operator: 'contains', value: '小天' }],
+  }));
+  assert.equal(invalidFilter.ok, false);
+  assert.equal(invalidFilter.error.code, 'INVALID_QUERY_FILTER_FIELD');
+  assert.deepEqual(invalidFilter.error.allowedFields, ['attendeePersonIds', 'when']);
+});
+
 test('Agent Tool returns structured ambiguity instead of guessing relation IDs', async () => {
   const context = supplyContext(
     { ...baseToolParameters, recordType: 'event', operation: 'create' },
