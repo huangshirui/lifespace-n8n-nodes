@@ -73,10 +73,10 @@ function searchDescription(model: DiscoveryModel): string {
   const canonical = descriptor(model);
   if (!canonical.search) return '';
   const fields = canonical.search.fields;
-  let description = `Full-text search of ${fields.join(', ')} only. Use search only for text intended to match those fields.`;
+  let description = `Searches ${fields.join(', ')} only.`;
   const attendee = calendarAttendeeTarget(model);
   if (attendee && !fields.includes(attendee.field.key)) {
-    description += ` Do not use search for attendee/person names; use filters with field "${attendee.field.key}", operator "contains", and value {"name":"..."}.`;
+    description += ` Never attendee names; use ${attendee.field.key} contains {"name":"..."}.`;
   }
   return description;
 }
@@ -122,121 +122,65 @@ function scalarValueSchema(field: DiscoveryField | undefined, target: DiscoveryC
 }
 
 function filterFieldDescription(field: DiscoveryField | undefined, target: DiscoveryCanonicalFilterTarget): string {
-  const semantic = field?.description?.trim() || field?.title?.trim() || target.field;
-  return `${semantic} Canonical LifeSpace filter field "${target.field}".`;
+  return field?.description?.trim() || field?.title?.trim() || target.field;
 }
 
-function filterOperatorDescription(operator: string): string {
-  if (operator === 'overlaps') {
-    return 'Select records whose range intersects any part of the supplied range or local date window.';
+function filterOperatorDescription(operators: string[]): string {
+  if (operators.length === 1) {
+    const [operator] = operators;
+    if (operator === 'overlaps') return 'Range intersects the supplied range.';
+    if (operator === 'contains') return 'Field/range contains the supplied value.';
+    if (operator === 'before') return 'Range occurs before the supplied range.';
+    if (operator === 'after') return 'Range occurs after the supplied range.';
+    if (operator === 'kindIs') return 'TemporalRange kind: date (all-day) or instant (timed).';
+    return `LifeSpace operator "${operator}".`;
   }
-  if (operator === 'contains') return 'Select records whose field/range contains the supplied value or range.';
-  if (operator === 'before') return 'Select ranges that occur before the supplied range/window.';
-  if (operator === 'after') return 'Select ranges that occur after the supplied range/window.';
-  if (operator === 'kindIs') return 'Select TemporalRange values by kind: date for all-day/date-only, instant for timed.';
-  return `LifeSpace canonical filter operator "${operator}".`;
+  return `Allowed range operators: ${operators.join(', ')}.`;
 }
 
 function calendarTimeWindowSchema(field: DiscoveryField): JsonSchema {
-  const semantic = field.description?.trim() || field.title?.trim() || field.key;
+  const semantic = field.title?.trim() || field.key;
   return {
     type: 'object',
-    description: `Calendar date window for ${semantic}. Use this for requests such as today, tomorrow, this week, or a date range. It matches records whose time range overlaps any part of the window. Dates are inclusive; timezone is taken from the n8n workflow.`,
+    description: `${semantic} calendar window for today/tomorrow/this week/date ranges. Inclusive local dates; workflow timezone; matches overlaps.`,
     properties: {
-      startDate: {
-        type: 'string',
-        format: 'date',
-        description: 'First local calendar date to include (YYYY-MM-DD).',
-      },
-      endDate: {
-        type: 'string',
-        format: 'date',
-        description: 'Last local calendar date to include, inclusive (YYYY-MM-DD).',
-      },
+      startDate: { type: 'string', format: 'date' },
+      endDate: { type: 'string', format: 'date', description: 'Inclusive.' },
     },
     required: ['startDate', 'endDate'],
     additionalProperties: false,
   };
 }
 
-function localDateWindowSchemas(): JsonSchema[] {
-  return [
-    {
-      type: 'object',
-      properties: {
-        kind: { type: 'string', enum: ['local_date_window'] },
-        startDate: { type: 'string', format: 'date' },
-        endDate: { type: 'string', format: 'date', description: 'Inclusive human end date.' },
-      },
-      required: ['kind', 'startDate', 'endDate'],
-      additionalProperties: false,
-    },
-    {
-      type: 'object',
-      properties: {
-        kind: { type: 'string', enum: ['local_date_window'] },
-        startDate: { type: 'string', format: 'date' },
-        endDateExclusive: { type: 'string', format: 'date' },
-        timezone: { type: 'string', minLength: 1, description: 'IANA timezone' },
-      },
-      required: ['kind', 'startDate', 'endDateExclusive', 'timezone'],
-      additionalProperties: false,
-    },
-  ];
-}
-
 function rangeValueSchema(target: DiscoveryCanonicalFilterTarget): JsonSchema {
-  const branches: JsonSchema[] = localDateWindowSchemas();
+  const branches: JsonSchema[] = [];
   const valueType = String(target.valueType);
   if (['date', 'date-range', 'range<date>', 'temporal-range', 'temporal_range'].includes(valueType)) {
-    branches.push(
-      {
-        type: 'object',
-        properties: {
-          kind: { type: 'string', enum: ['date'] },
-          start: { type: 'string', format: 'date' },
-          end: { type: 'string', format: 'date', description: 'Inclusive human end date.' },
-        },
-        required: ['kind', 'start', 'end'],
-        additionalProperties: false,
+    branches.push({
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['date'] },
+        start: { type: 'string', format: 'date' },
+        end: { type: 'string', format: 'date', description: 'Inclusive.' },
       },
-      {
-        type: 'object',
-        properties: {
-          kind: { type: 'string', enum: ['date'] },
-          start: { type: 'string', format: 'date' },
-          endExclusive: { type: 'string', format: 'date' },
-        },
-        required: ['kind', 'start', 'endExclusive'],
-        additionalProperties: false,
-      },
-    );
+      required: ['kind', 'start', 'end'],
+      additionalProperties: false,
+    });
   }
   if (['instant', 'datetime', 'instant-range', 'range<instant>', 'temporal-range', 'temporal_range'].includes(valueType)) {
-    branches.push(
-      {
-        type: 'object',
-        properties: {
-          kind: { type: 'string', enum: ['instant'] },
-          start: { type: 'string', format: 'date-time' },
-          end: { type: 'string', format: 'date-time' },
-        },
-        required: ['kind', 'start', 'end'],
-        additionalProperties: false,
+    branches.push({
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['instant'] },
+        start: { type: 'string', format: 'date-time' },
+        end: { type: 'string', format: 'date-time' },
       },
-      {
-        type: 'object',
-        properties: {
-          kind: { type: 'string', enum: ['instant'] },
-          start: { type: 'string', format: 'date-time' },
-          endExclusive: { type: 'string', format: 'date-time' },
-        },
-        required: ['kind', 'start', 'endExclusive'],
-        additionalProperties: false,
-      },
-    );
+      required: ['kind', 'start', 'end'],
+      additionalProperties: false,
+    });
   }
-  return { oneOf: branches };
+  if (!branches.length) throw new Error(`LifeSpace range filter ${target.field} has unsupported value type ${valueType}`);
+  return branches.length === 1 ? branches[0]! : { oneOf: branches };
 }
 
 function nextDate(date: string): string {
@@ -289,7 +233,21 @@ function normalizeRangeValue(
   throw new Error(`${target.field} range kind is invalid`);
 }
 
-function filterBranch(model: DiscoveryModel, target: DiscoveryCanonicalFilterTarget, operator: string): JsonSchema {
+function isRangeOperator(target: DiscoveryCanonicalFilterTarget, operator: string): boolean {
+  const valueType = String(target.valueType);
+  return ['within', 'overlaps', 'before', 'after'].includes(operator)
+    || (
+      operator === 'contains'
+      && ['date-range', 'instant-range', 'range<date>', 'range<instant>', 'temporal-range', 'temporal_range'].includes(valueType)
+    );
+}
+
+function filterBranch(
+  model: DiscoveryModel,
+  target: DiscoveryCanonicalFilterTarget,
+  operators: string[],
+  valueSchema?: JsonSchema,
+): JsonSchema {
   const field = model.fields.find((entry) => entry.key === target.field);
   const properties: Record<string, JsonSchema> = {
     field: {
@@ -299,31 +257,39 @@ function filterBranch(model: DiscoveryModel, target: DiscoveryCanonicalFilterTar
     },
     operator: {
       type: 'string',
-      enum: [operator],
-      description: filterOperatorDescription(operator),
+      enum: operators,
+      description: filterOperatorDescription(operators),
     },
   };
   const required = ['field', 'operator'];
-  if (operator !== 'isNull' && operator !== 'isNotNull') {
-    const valueType = String(target.valueType);
-    const rangeOperator = ['within', 'overlaps', 'before', 'after'].includes(operator)
-      || (operator === 'contains' && ['date-range', 'instant-range', 'range<date>', 'range<instant>', 'temporal-range', 'temporal_range'].includes(valueType));
-    properties.value = rangeOperator
-      ? rangeValueSchema(target)
-      : operator === 'kindIs'
-        ? { type: 'string', enum: ['date', 'instant'] }
-        : scalarValueSchema(field, target);
+  if (valueSchema) {
+    properties.value = valueSchema;
     required.push('value');
   }
   return { type: 'object', properties, required, additionalProperties: false };
 }
 
+function filterBranches(model: DiscoveryModel, target: DiscoveryCanonicalFilterTarget): JsonSchema[] {
+  const field = model.fields.find((entry) => entry.key === target.field);
+  const noValue = target.operators.filter((operator) => operator === 'isNull' || operator === 'isNotNull');
+  const kind = target.operators.filter((operator) => operator === 'kindIs');
+  const range = target.operators.filter((operator) => isRangeOperator(target, operator));
+  const scalar = target.operators.filter(
+    (operator) => !noValue.includes(operator) && !kind.includes(operator) && !range.includes(operator),
+  );
+  const branches: JsonSchema[] = [];
+  if (noValue.length) branches.push(filterBranch(model, target, noValue));
+  if (range.length) branches.push(filterBranch(model, target, range, rangeValueSchema(target)));
+  if (kind.length) branches.push(filterBranch(model, target, kind, { type: 'string', enum: ['date', 'instant'] }));
+  if (scalar.length) branches.push(filterBranch(model, target, scalar, scalarValueSchema(field, target)));
+  return branches;
+}
+
 function sortItemSchema(model: DiscoveryModel): JsonSchema {
   const canonical = descriptor(model);
   const calendar = calendarTimeWindowTarget(model);
-  const exactFields = canonical.sort.fields.map((field) => `"${field}"`).join(', ');
   const temporalHint = calendar && canonical.sort.fields.includes(calendar.field.key)
-    ? ` For chronological calendar ordering, use field "${calendar.field.key}" directly. Never construct nested paths such as "${calendar.field.key}.start" or "${calendar.field.key}.start.instant".`
+    ? ` Chronological calendar order = "${calendar.field.key}". Never use nested paths.`
     : '';
   return {
     type: 'object',
@@ -331,7 +297,7 @@ function sortItemSchema(model: DiscoveryModel): JsonSchema {
       field: {
         type: 'string',
         enum: [...canonical.sort.fields],
-        description: `Use exactly one published sort field: ${exactFields}.${temporalHint}`,
+        description: `Published sort field.${temporalHint}`,
       },
       direction: {
         type: 'string',
@@ -361,19 +327,18 @@ export function genericQuerySchema(model: DiscoveryModel): GenericQuerySchema {
     properties.timeWindow = calendarTimeWindowSchema(calendarWindow.field);
   }
 
-  const branches = canonical.filter.targets.flatMap((target) =>
-    target.operators.map((operator) => filterBranch(model, target, operator)));
+  const branches = canonical.filter.targets.flatMap((target) => filterBranches(model, target));
   if (branches.length) {
     properties.filters = {
       type: 'array',
       items: { oneOf: branches },
       maxItems: canonical.filter.maxNodes,
-      description: 'LifeSpace predicates. Use match=all for AND or match=any for OR.',
+      description: 'Published predicates. match=all means AND; match=any means OR.',
     };
     properties.match = {
       type: 'string',
       enum: ['all', 'any'],
-      description: 'How multiple filters combine. Defaults to all (AND).',
+      description: 'Combine filters: all=AND (default), any=OR.',
     };
   }
 
@@ -382,7 +347,7 @@ export function genericQuerySchema(model: DiscoveryModel): GenericQuerySchema {
       type: 'array',
       items: sortItemSchema(model),
       maxItems: canonical.sort.maxCriteria,
-      description: 'Ordered canonical sort criteria. Use only the exact published field names; do not invent nested field paths.',
+      description: 'Ordered sort. Use exact published field names only.',
     };
   }
 
