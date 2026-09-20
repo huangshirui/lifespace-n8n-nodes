@@ -40,3 +40,23 @@ For behavior changes:
 4. run build and lint;
 5. document compatibility and any pinned LifeSpace contract assumptions;
 6. record important architecture decisions in the ALOHA & HomeMew engineering log when applicable.
+
+## Release workflow
+
+Release ordering is a mandatory invariant. This repository has repeatedly failed publishes because a release tag was pushed before the package version metadata was bumped.
+
+For every npm release:
+
+1. update `package.json` and `package-lock.json` to the target version first; prefer `npm version <version> --no-git-tag-version` so both files move together;
+2. verify these three values are identical before opening/merging the release change:
+   - `package.json.version`
+   - top-level `package-lock.json.version`
+   - `package-lock.json.packages[""].version`;
+3. merge the version bump to `main` and wait for the `main` CI run to pass;
+4. only after that, create/push the matching release tag on the exact verified `main` commit;
+5. the release tag and package version must be identical (for example, tag `0.1.19` requires package version `0.1.19`).
+
+Never create or move a release tag as a substitute for the version bump. Re-running a failed Publish workflow cannot fix a tag whose commit still contains an older package version; fix and merge the package metadata first, then recreate/move the tag.
+
+Before assisting with any publish/release request, re-read the current `main` package version and the target tag state instead of assuming the next version.
+
