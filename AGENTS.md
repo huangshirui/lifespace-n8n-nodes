@@ -58,5 +58,17 @@ For every npm release:
 
 Never create or move a release tag as a substitute for the version bump. Re-running a failed Publish workflow cannot fix a tag whose commit still contains an older package version; fix and merge the package metadata first, then recreate/move the tag.
 
-Before assisting with any publish/release request, re-read the current `main` package version and the target tag state instead of assuming the next version.
+When creating or repairing a release tag manually, never tag the local current HEAD implicitly. Fetch the remote main branch and tag the verified remote commit explicitly:
+
+```bash
+git fetch origin main
+git rev-parse origin/main
+git show origin/main:package.json | grep '"version"'
+git tag -f <version> origin/main
+git rev-parse <version>
+```
+
+Before pushing the tag, verify that `git rev-parse <version>` equals the exact verified `origin/main` SHA and that `package.json.version` at that commit equals the tag name. If either check differs, do not push the tag.
+
+Before assisting with any publish/release request, re-read the current `main` package version, the target tag state, and the tag target commit instead of assuming the next version or the local HEAD.
 
