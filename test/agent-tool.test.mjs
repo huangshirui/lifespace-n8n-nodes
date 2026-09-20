@@ -648,6 +648,8 @@ test('Calendar Agent Query makes search/person/sort semantics explicit and retur
   assert.match(tool.description, /chronological order sort by "when" directly/u);
   assert.match(tool.description, /Search matches only summary/u);
   assert.match(tool.description, /Never invent nested sort paths/u);
+  assert.match(tool.description, /Example date\+attendee\+chronological query/u);
+  assert.match(tool.description, /"field":"attendeePersonIds".*"field":"when","direction":"asc"/u);
 
   const sortItem = tool.schema.properties.sort.items;
   assert.deepEqual(sortItem.properties.field.enum, ['createdAt', 'summary', 'updatedAt', 'when']);
