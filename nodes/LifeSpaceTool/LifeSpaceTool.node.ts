@@ -32,6 +32,7 @@ import {
 import {
   buildAgentToolDefinition,
   buildAgentToolRequest,
+  parseAgentQueryFailure,
   type AgentToolConfig,
   type AgentToolOperation,
   type AgentToolQueryMode,
@@ -362,6 +363,13 @@ function toolFailureOutput(error: unknown, executionError: NodeOperationError): 
     return JSON.stringify({
       ok: false,
       error: reference,
+    });
+  }
+  const queryFailure = parseAgentQueryFailure(error);
+  if (queryFailure) {
+    return JSON.stringify({
+      ok: false,
+      error: queryFailure,
     });
   }
   return JSON.stringify({
@@ -705,8 +713,8 @@ export class LifeSpaceTool implements INodeType {
         });
       } catch (error) {
         const executionError = toolError(this, error);
-        const reference = parseReferenceFailure(error);
-        if (reference) {
+        const structuredFailure = parseReferenceFailure(error) ?? parseAgentQueryFailure(error);
+        if (structuredFailure) {
           output.push({
             json: { response: toolFailureOutput(error, executionError) },
             pairedItem: { item: itemIndex },
