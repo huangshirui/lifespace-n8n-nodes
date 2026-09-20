@@ -30,11 +30,11 @@ function filterBranchSummary(parameters) {
   if (!Array.isArray(oneOf)) return '_none_';
 
   return oneOf
-    .map((branch) => {
+    .flatMap((branch) => {
       const field = branch?.properties?.field?.enum?.[0];
-      const operator = branch?.properties?.operator?.enum?.[0];
-      if (!field || !operator) return null;
-      return `${field} ${operator}`;
+      const operators = branch?.properties?.operator?.enum;
+      if (!field || !Array.isArray(operators)) return [];
+      return operators.map((operator) => `${field} ${operator}`);
     })
     .filter(Boolean)
     .sort();
