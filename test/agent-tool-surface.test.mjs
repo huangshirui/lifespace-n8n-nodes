@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const require = createRequire(import.meta.url);
 const { LifeSpaceAgentTool } = require('../dist/nodes/LifeSpaceAgentTool/LifeSpaceAgentTool.node.js');
+const { encodeAgentToolSemanticSnapshot } = require('../dist/nodes/agent/lifeSpaceToolSnapshot.js');
 
 const BASE_URL = 'https://example.invalid/api/v1';
 const MODEL_KEY = 'work_item';
@@ -106,13 +107,43 @@ function detail() {
   };
 }
 
+function runtimeModel() {
+  const semantic = detail().data;
+  const { declaredAccess, ...model } = semantic;
+  const { genericDefault, ...sort } = semantic.query.sort;
+  return {
+    ...model,
+    access: declaredAccess,
+    query: {
+      ...semantic.query,
+      sort: {
+        ...sort,
+        default: genericDefault,
+      },
+    },
+  };
+}
+
+function runtimeRecordType() {
+  return encodeAgentToolSemanticSnapshot({
+    format: 1,
+    spaceId: 'spc_test',
+    spaceName: 'Test Space',
+    model: runtimeModel(),
+  });
+}
+
 function context(parameters, onBusiness, input = [{ json: {} }]) {
   const calls = [];
+  const effectiveParameters = {
+    ...parameters,
+    recordType: parameters.recordType === MODEL_KEY ? runtimeRecordType() : parameters.recordType,
+  };
   return {
     calls,
     getCredentials: async () => ({ baseUrl: BASE_URL }),
     getNodeParameter(name, _itemIndex, defaultValue) {
-      return Object.hasOwn(parameters, name) ? parameters[name] : defaultValue;
+      return Object.hasOwn(effectiveParameters, name) ? effectiveParameters[name] : defaultValue;
     },
     getNode: () => ({ name: 'LifeSpace AI Tool', typeVersion: 1 }),
     getTimezone: () => 'Asia/Shanghai',
@@ -181,6 +212,7 @@ test('registered Agent Tool exposes and executes Canonical Query', async () => {
 
   assert.equal(requested.method, 'POST');
   assert.equal(requested.url, `${BASE_URL}/spaces/spc_test/models/${MODEL_KEY}/records/query`);
+  assert.equal(execution.calls.some((call) => call.url.includes('/_discovery')), false);
   assert.deepEqual(requested.body, {
     search: { text: 'milk' },
     filter: {

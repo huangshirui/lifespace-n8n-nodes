@@ -5,6 +5,7 @@ import { test } from 'node:test';
 const require = createRequire(import.meta.url);
 const { LifeSpace } = require('../dist/nodes/LifeSpace/LifeSpace.node.js');
 const { decodeRecordTypeSelector, encodeRecordTypeSelector } = require('../dist/nodes/lifespaceDiscovery.js');
+const { encodeLifeSpaceActionSnapshot } = require('../dist/nodes/shared/lifeSpaceActionSnapshot.js');
 
 const TASK_RECORD_TYPE = encodeRecordTypeSelector('task');
 const NOTE_RECORD_TYPE = encodeRecordTypeSelector('note');
@@ -120,6 +121,12 @@ const taskDetail = {
     capabilityBindings: {},
   },
 };
+
+const TASK_COMPLETE_ACTION = encodeLifeSpaceActionSnapshot({
+  format: 1,
+  modelKey: 'task',
+  action: taskDetail.data.actions[0],
+});
 
 function progressiveContext(parameters = {}) {
   const calls = [];
@@ -282,7 +289,7 @@ test('Get decodes Record Type locally without a Discovery request', async () => 
   ]);
 });
 
-test('Action execution goes directly to selected semantic detail without inventory', async () => {
+test('Action execution uses pinned design-time semantics with zero Discovery', async () => {
   const node = new LifeSpace();
   const context = progressiveExecuteContext({
     resource: 'modelRecord',
@@ -290,20 +297,19 @@ test('Action execution goes directly to selected semantic detail without invento
     spaceId: 'spc_test',
     recordType: TASK_RECORD_TYPE,
     recordId: 'rec_one',
-    actionKey: 'complete',
+    actionKey: TASK_COMPLETE_ACTION,
     'actionInput.value': {},
   });
 
   await node.execute.call(context);
   assert.deepEqual(context.calls.map((call) => [call.method, call.url]), [
-    ['GET', `${BASE_URL}/spaces/spc_test/_discovery/models/task`],
     ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/rec_one`],
     ['POST', `${BASE_URL}/spaces/spc_test/models/task/records/rec_one/actions/complete`],
   ]);
-  assert.equal(context.calls.some((call) => call.url.endsWith('/me/_discovery/inventory')), false);
+  assert.equal(context.calls.some((call) => call.url.includes('/_discovery')), false);
 });
 
-test('Action semantic detail is reused once per node execution for multiple items of the same model', async () => {
+test('multi-item Action execution performs zero Discovery for every item', async () => {
   const node = new LifeSpace();
   const context = progressiveExecuteContext({
     resource: 'modelRecord',
@@ -311,18 +317,13 @@ test('Action semantic detail is reused once per node execution for multiple item
     spaceId: 'spc_test',
     recordType: TASK_RECORD_TYPE,
     recordId: (itemIndex) => `rec_${itemIndex + 1}`,
-    actionKey: 'complete',
+    actionKey: TASK_COMPLETE_ACTION,
     'actionInput.value': {},
   }, 2);
 
   await node.execute.call(context);
-  assert.equal(
-    context.calls.filter((call) => call.url === `${BASE_URL}/spaces/spc_test/_discovery/models/task`).length,
-    1,
-  );
-  assert.equal(context.calls.some((call) => call.url.endsWith('/me/_discovery/inventory')), false);
+  assert.equal(context.calls.some((call) => call.url.includes('/_discovery')), false);
   assert.deepEqual(context.calls.map((call) => [call.method, call.url]), [
-    ['GET', `${BASE_URL}/spaces/spc_test/_discovery/models/task`],
     ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/rec_1`],
     ['POST', `${BASE_URL}/spaces/spc_test/models/task/records/rec_1/actions/complete`],
     ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/rec_2`],

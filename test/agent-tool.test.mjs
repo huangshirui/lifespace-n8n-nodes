@@ -10,6 +10,9 @@ const {
   buildAgentToolDefinition,
   buildAgentToolRequest,
 } = require('../dist/nodes/agent/lifeSpaceToolFactory.js');
+const {
+  encodeAgentToolSemanticSnapshot,
+} = require('../dist/nodes/agent/lifeSpaceToolSnapshot.js');
 
 const BASE_URL = 'https://example.invalid/api/v1';
 const HASH_TASK = 'sha256:synthetic-task-v10';
@@ -301,15 +304,53 @@ function canonicalEventDetail() {
   };
 }
 
-function supplyContext(parameters, { model = taskIdentity, detail = taskDetail(), business } = {}) {
+function discoveredModel(detailResponse, access = ['read', 'write']) {
+  const detail = detailResponse.data;
+  const { declaredAccess: _declaredAccess, ...model } = detail;
+  const { genericDefault, ...sort } = detail.query.sort;
+  return {
+    ...model,
+    access,
+    query: {
+      ...detail.query,
+      sort: {
+        ...sort,
+        default: genericDefault,
+      },
+    },
+  };
+}
+
+function runtimeRecordType(parameters, detail) {
+  return encodeAgentToolSemanticSnapshot({
+    format: 1,
+    spaceId: String(parameters.spaceId ?? 'spc_test'),
+    spaceName: 'Test Space',
+    model: discoveredModel(detail),
+  });
+}
+
+function supplyContext(
+  parameters,
+  { model = taskIdentity, detail = taskDetail(), business, runtimeSnapshot = true } = {},
+) {
   const calls = [];
   const outputs = [];
+  const effectiveParameters = {
+    ...parameters,
+    ...(runtimeSnapshot ? { recordType: runtimeRecordType(parameters, detail) } : {}),
+  };
   return {
     calls,
     outputs,
     getCredentials: async () => ({ baseUrl: BASE_URL }),
+    getCurrentNodeParameter(name) {
+      return Object.prototype.hasOwnProperty.call(parameters, name) ? parameters[name] : undefined;
+    },
     getNodeParameter(name, _itemIndex, defaultValue) {
-      return Object.prototype.hasOwnProperty.call(parameters, name) ? parameters[name] : defaultValue;
+      return Object.prototype.hasOwnProperty.call(effectiveParameters, name)
+        ? effectiveParameters[name]
+        : defaultValue;
     },
     getNode: () => ({ name: 'LifeSpace Tool', typeVersion: 1 }),
     getTimezone: () => 'Asia/Shanghai',
@@ -345,6 +386,8 @@ test('native LifeSpace Tool uses n8n node identity while preserving semantic Too
   assert.equal(createTool.name, 'LifeSpace_Tool');
   assert.match(queryTool.metadata.lifeSpaceSemanticToolName, /^lifespace_query_task_s/u);
   assert.match(createTool.metadata.lifeSpaceSemanticToolName, /^lifespace_create_task_s/u);
+  assert.equal(queryTool.metadata.lifeSpaceModelVersion, 10);
+  assert.equal(queryTool.metadata.lifeSpaceSchemaHash, HASH_TASK);
   assert.notEqual(
     queryTool.metadata.lifeSpaceSemanticToolName,
     createTool.metadata.lifeSpaceSemanticToolName,
@@ -370,7 +413,7 @@ test('create invocation omits optional AI fields instead of synthesizing empty r
   const tool = (await new LifeSpaceTool().supplyData.call(context, 0)).response;
   await tool.invoke({ name: 'Buy milk' });
 
-  assert.equal(context.calls.length, 3, 'inventory + selected detail + one business POST');
+  assert.equal(context.calls.length, 1, 'runtime performs only the business POST');
   assert.equal(posted.method, 'POST');
   assert.equal(posted.url, `${BASE_URL}/spaces/spc_test/models/task/records`);
   assert.deepEqual(posted.body, { name: 'Buy milk' });
@@ -403,7 +446,7 @@ test('generic query schema exposes published explicit Time Semantics without leg
     sort: ['createdAt:desc'],
     limit: 20,
   });
-  assert.equal(context.calls.length, 3, 'Tool invocation performs no execution-time Discovery');
+  assert.equal(context.calls.length, 1, 'runtime performs only the business query');
   assert.deepEqual(requested.qs, {
     q: 'milk',
     status: 'open',
@@ -869,12 +912,24 @@ test('future synthetic models require no source-specific Tool implementation', (
   assert.ok(definition.schema.properties.capacity);
 });
 
-test('Progressive Discovery identity drift fails closed before an Agent Tool is supplied', async () => {
+test('design-time Record Type loading fails closed on Progressive Discovery identity drift', async () => {
   const driftedDetail = taskDetail({ schemaHash: 'sha256:wrong' });
-  const context = supplyContext(baseToolParameters, { detail: driftedDetail });
+  const context = supplyContext(baseToolParameters, {
+    detail: driftedDetail,
+    runtimeSnapshot: false,
+  });
   await assert.rejects(
-    () => new LifeSpaceTool().supplyData.call(context, 0),
+    () => new LifeSpaceTool().methods.loadOptions.getRecordTypes.call(context),
     /identity drifted/u,
   );
-  assert.equal(context.calls.length, 2);
+  assert.equal(context.calls.length, 2, 'design time performs inventory plus selected semantic detail');
+});
+
+test('runtime rejects legacy Agent Tool configuration without performing Discovery', async () => {
+  const context = supplyContext(baseToolParameters, { runtimeSnapshot: false });
+  await assert.rejects(
+    () => new LifeSpaceTool().supplyData.call(context, 0),
+    /reselect Record Type/u,
+  );
+  assert.equal(context.calls.length, 0);
 });

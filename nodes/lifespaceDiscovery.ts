@@ -380,7 +380,6 @@ const RELATION_TARGET_OPTION_LIMIT = 1000;
 const RELATION_TARGET_LOOKUP_PATH = '/api/v1/spaces/{spaceId}/_relation-targets/{modelKey}/{fieldKey}';
 const MODEL_SEMANTIC_DETAIL_PATH = '/api/v1/spaces/{spaceId}/_discovery/models/{modelKey}';
 const RECORD_TYPE_SELECTOR_PREFIX = 'lsrt1.';
-const executionSemanticCache = new WeakMap<IExecuteFunctions, Map<string, Promise<DiscoveryResponse>>>();
 
 export type RecordTypeSelector = {
   modelKey: string;
@@ -563,52 +562,39 @@ function replacePathTemplate(template: string, values: Record<string, string>): 
   );
 }
 
-async function requestSelectedExecutionSemanticDetail(
-  context: IExecuteFunctions,
-  baseUrl: string,
+export async function loadDesignTimeSemanticDetail(
+  this: ILoadOptionsFunctions,
   spaceId: string,
-  modelKey: string,
-): Promise<DiscoveryResponse> {
-  const path = replacePathTemplate(MODEL_SEMANTIC_DETAIL_PATH, { spaceId, modelKey });
+  identity: Pick<DiscoveryModel, 'key' | 'version' | 'schemaHash' | 'access'>,
+): Promise<DiscoveryModel> {
+  const credentials = await this.getCredentials('lifeSpaceApi');
+  const baseUrl = normalizeBaseUrl(credentials.baseUrl);
+  const path = replacePathTemplate(MODEL_SEMANTIC_DETAIL_PATH, {
+    spaceId,
+    modelKey: identity.key,
+  });
+
   let response: SemanticDetailResponse;
   try {
-    response = await authenticatedGet<SemanticDetailResponse>(context, baseUrl, path);
+    response = await authenticatedGet<SemanticDetailResponse>(this, baseUrl, path);
   } catch (error) {
-    throw new NodeApiError(context.getNode(), error as JsonObject);
+    throw new NodeApiError(this.getNode(), error as JsonObject);
   }
+
   const detail = response?.data;
-  if (!detail || detail.key !== modelKey) {
-    throw new NodeOperationError(context.getNode(), 'LifeSpace Runtime Discovery semantic detail returned an invalid response');
+  if (
+    !detail
+    || detail.key !== identity.key
+    || detail.version !== identity.version
+    || detail.schemaHash !== identity.schemaHash
+  ) {
+    throw new NodeOperationError(
+      this.getNode(),
+      `LifeSpace Runtime Discovery semantic detail identity drifted for ${identity.key}`,
+    );
   }
-  return {
-    data: {
-      spaces: [{
-        spaceId,
-        models: [detailedModel(detail, detail.declaredAccess)],
-      }],
-    },
-  };
-}
 
-function cachedExecutionSemanticDetail(
-  context: IExecuteFunctions,
-  baseUrl: string,
-  spaceId: string,
-  modelKey: string,
-): Promise<DiscoveryResponse> {
-  let cache = executionSemanticCache.get(context);
-  if (!cache) {
-    cache = new Map();
-    executionSemanticCache.set(context, cache);
-  }
-  const key = `${baseUrl}\n${spaceId}\n${modelKey}`;
-  const existing = cache.get(key);
-  if (existing) return existing;
-
-  const pending = requestSelectedExecutionSemanticDetail(context, baseUrl, spaceId, modelKey);
-  cache.set(key, pending);
-  void pending.catch(() => cache?.delete(key));
-  return pending;
+  return detailedModel(detail, identity.access);
 }
 
 async function requestProgressiveRuntimeDiscovery(
@@ -802,6 +788,13 @@ export async function searchRelationTargetsForAgent(
   return parseRelationTargets(context, response).items;
 }
 
+export async function loadRuntimeDiscoveryInventory(this: ILoadOptionsFunctions): Promise<DiscoveryResponse> {
+  const credentials = await this.getCredentials('lifeSpaceApi');
+  const baseUrl = normalizeBaseUrl(credentials.baseUrl);
+  const progressive = await requestProgressiveRuntimeDiscovery(this, baseUrl);
+  return progressive ?? requestFullRuntimeDiscovery(this, baseUrl);
+}
+
 export async function loadRuntimeDiscovery(this: ILoadOptionsFunctions): Promise<DiscoveryResponse> {
   const credentials = await this.getCredentials('lifeSpaceApi');
   const baseUrl = normalizeBaseUrl(credentials.baseUrl);
@@ -818,43 +811,6 @@ export async function loadRuntimeDiscovery(this: ILoadOptionsFunctions): Promise
   };
   const progressive = await requestProgressiveRuntimeDiscovery(this, baseUrl, selection);
   return progressive ?? requestFullRuntimeDiscovery(this, baseUrl);
-}
-
-export async function loadExecutionRuntimeDiscovery(
-  context: IExecuteFunctions,
-  baseUrl: string,
-  spaceId?: string,
-  modelKey?: string,
-): Promise<DiscoveryResponse> {
-  if (spaceId && modelKey) {
-    return cachedExecutionSemanticDetail(context, baseUrl, spaceId, modelKey);
-  }
-  return requestFullRuntimeDiscovery(context, baseUrl);
-}
-
-
-export async function loadAgentToolRuntimeDiscovery(
-  context: IExecuteFunctions | ISupplyDataFunctions,
-  baseUrl: string,
-  spaceId: string,
-  modelKey: string,
-): Promise<DiscoveryResponse> {
-  const progressive = await requestProgressiveRuntimeDiscovery(context, baseUrl, { spaceId, modelKey });
-  if (!progressive) {
-    throw new NodeOperationError(
-      context.getNode(),
-      'LifeSpace Tool requires Progressive Runtime Discovery from Core Kernel 0.35.0 or newer',
-    );
-  }
-  const space = discoverySpace(progressive, spaceId);
-  const model = discoveryModel(progressive, spaceId, modelKey);
-  if (!space || !model) {
-    throw new NodeOperationError(
-      context.getNode(),
-      `LifeSpace Runtime Discovery did not return complete semantic detail for ${modelKey}`,
-    );
-  }
-  return progressive;
 }
 
 export function discoverySpace(discovery: DiscoveryResponse, spaceId: string): DiscoverySpace | undefined {

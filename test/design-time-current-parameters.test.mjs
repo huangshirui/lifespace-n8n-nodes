@@ -5,6 +5,7 @@ import { test } from 'node:test';
 const require = createRequire(import.meta.url);
 const { LifeSpace } = require('../dist/nodes/LifeSpace/LifeSpace.node.js');
 const { encodeRecordTypeSelector } = require('../dist/nodes/lifespaceDiscovery.js');
+const { decodeLifeSpaceActionSnapshot } = require('../dist/nodes/shared/lifeSpaceActionSnapshot.js');
 const BASE_URL = 'https://example.invalid/api/v1';
 const RECORD_TYPE = encodeRecordTypeSelector('task');
 const model = {
@@ -54,7 +55,10 @@ test('Fields and Actions use editor-current Record Type before save', async () =
   assert.deepEqual(fields.fields.map((field) => field.id), ['name']);
   assert.deepEqual(fieldsContext.calls.map((call) => call.url), [`${BASE_URL}/me/_discovery/inventory`, `${BASE_URL}/spaces/spc_test/_discovery/models/task`]);
   const actions = await node.methods.loadOptions.getActions.call(context(current, saved));
-  assert.deepEqual(actions.map((entry) => entry.value), ['complete']);
+  assert.deepEqual(
+    actions.map((entry) => decodeLifeSpaceActionSnapshot(entry.value)?.action.key),
+    ['complete'],
+  );
 });
 
 test('Empty editor-current Record Type does not reuse stale saved selection', async () => {
