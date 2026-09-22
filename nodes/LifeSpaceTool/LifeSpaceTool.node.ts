@@ -14,6 +14,7 @@ import type {
 import {
   NodeApiError,
   NodeConnectionTypes,
+  nodeNameToToolName,
   NodeOperationError,
 } from 'n8n-workflow';
 import {
@@ -688,11 +689,15 @@ export class LifeSpaceTool implements INodeType {
   async supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {
     const runtime = await LifeSpaceTool.prototype.agentRuntime.call(this, this, itemIndex);
 
+    // n8n Tools Agent V3 reconstructs ordinary Tool history from the source node name.
+    // Keep the provider-facing Tool identity aligned with that reconstruction so a
+    // completed Tool call is attached to the same identity on the next Agent iteration.
+    // LifeSpace's semantic identity remains available as metadata/description instead.
     const tool: StructuralAiTool = {
-      name: runtime.definition.name,
+      name: nodeNameToToolName(this.getNode()),
       description: runtime.definition.description,
       schema: runtime.definition.schema,
-      metadata: {},
+      metadata: { lifeSpaceSemanticToolName: runtime.definition.name },
       invoke: async (query: unknown): Promise<string> => {
         const { index } = this.addInputData(NodeConnectionTypes.AiTool, [[{ json: { query: inputForLog(query) } }]]);
         let output: string;

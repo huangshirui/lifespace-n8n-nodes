@@ -153,6 +153,8 @@ test('registered Agent Tool exposes and executes Canonical Query', async () => {
   });
 
   const tool = (await new LifeSpaceAgentTool().supplyData.call(execution, 0)).response;
+  assert.equal(tool.name, 'LifeSpace_AI_Tool');
+  assert.match(tool.metadata.lifeSpaceSemanticToolName, /^lifespace_query_work_item_s/u);
   assert.ok(tool.schema.properties.filters);
   assert.equal(Object.hasOwn(tool.schema.properties, 'localDateWindows'), false);
   assert.ok(tool.schema.properties.sort);
