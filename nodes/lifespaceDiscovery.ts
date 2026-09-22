@@ -590,6 +590,41 @@ async function requestSelectedExecutionSemanticDetail(
   };
 }
 
+export async function loadDesignTimeSemanticDetail(
+  this: ILoadOptionsFunctions,
+  spaceId: string,
+  identity: Pick<DiscoveryModel, 'key' | 'version' | 'schemaHash' | 'access'>,
+): Promise<DiscoveryModel> {
+  const credentials = await this.getCredentials('lifeSpaceApi');
+  const baseUrl = normalizeBaseUrl(credentials.baseUrl);
+  const path = replacePathTemplate(MODEL_SEMANTIC_DETAIL_PATH, {
+    spaceId,
+    modelKey: identity.key,
+  });
+
+  let response: SemanticDetailResponse;
+  try {
+    response = await authenticatedGet<SemanticDetailResponse>(this, baseUrl, path);
+  } catch (error) {
+    throw new NodeApiError(this.getNode(), error as JsonObject);
+  }
+
+  const detail = response?.data;
+  if (
+    !detail
+    || detail.key !== identity.key
+    || detail.version !== identity.version
+    || detail.schemaHash !== identity.schemaHash
+  ) {
+    throw new NodeOperationError(
+      this.getNode(),
+      `LifeSpace Runtime Discovery semantic detail identity drifted for ${identity.key}`,
+    );
+  }
+
+  return detailedModel(detail, identity.access);
+}
+
 function cachedExecutionSemanticDetail(
   context: IExecuteFunctions,
   baseUrl: string,
@@ -800,6 +835,13 @@ export async function searchRelationTargetsForAgent(
     throw new NodeApiError(context.getNode(), error as JsonObject);
   }
   return parseRelationTargets(context, response).items;
+}
+
+export async function loadRuntimeDiscoveryInventory(this: ILoadOptionsFunctions): Promise<DiscoveryResponse> {
+  const credentials = await this.getCredentials('lifeSpaceApi');
+  const baseUrl = normalizeBaseUrl(credentials.baseUrl);
+  const progressive = await requestProgressiveRuntimeDiscovery(this, baseUrl);
+  return progressive ?? requestFullRuntimeDiscovery(this, baseUrl);
 }
 
 export async function loadRuntimeDiscovery(this: ILoadOptionsFunctions): Promise<DiscoveryResponse> {
