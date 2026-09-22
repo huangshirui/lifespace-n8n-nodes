@@ -689,6 +689,9 @@ function validateValue(schema: JsonSchema, value: unknown, key: string): void {
     if (!types.includes('null')) throw new Error(`${key} cannot be null`);
     return;
   }
+  if (types.length === 1 && types[0] === 'null') {
+    throw new Error(`${key} must be null`);
+  }
 
   const type = types.find((entry) => entry !== 'null');
   if (type === 'string') {
