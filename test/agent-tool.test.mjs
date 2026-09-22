@@ -194,6 +194,8 @@ function canonicalEventDetail() {
       declaredAccess: ['read', 'write'],
       fields: [
         { key: 'summary', type: 'string', title: 'Summary', required: true },
+        { key: 'description', type: 'text', title: 'Description', nullable: true, maxLength: 5000 },
+        { key: 'location', type: 'string', title: 'Location', nullable: true, maxLength: 500 },
         { key: 'when', type: 'temporal_range', title: 'When', description: 'When the occurrence happens.', required: true },
         {
           key: 'attendeePersonIds',
@@ -586,6 +588,8 @@ test('Agent Tool Create Event accepts semantic when and attendee names then lowe
 
   await tool.invoke({
     summary: '数学课',
+    description: '带学习资料',
+    location: '社区教室',
     when: {
       kind: 'instant',
       start: '2026-09-20T19:00:00+08:00',
@@ -598,6 +602,8 @@ test('Agent Tool Create Event accepts semantic when and attendee names then lowe
   assert.ok(post);
   assert.deepEqual(post.body, {
     summary: '数学课',
+    description: '带学习资料',
+    location: '社区教室',
     when: {
       kind: 'instant',
       start: '2026-09-20T19:00:00+08:00',
