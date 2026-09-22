@@ -21,9 +21,10 @@ import {
   decodeRecordTypeSelector,
   discoveryModel,
   discoverySpace,
-  loadAgentToolRuntimeDiscovery,
+  loadDesignTimeSemanticDetail,
   loadOptionParameter,
   loadRuntimeDiscovery,
+  loadRuntimeDiscoveryInventory,
   normalizeBaseUrl,
   searchRelationTargetsForAgent,
   type DiscoveryAccess,
@@ -40,6 +41,10 @@ import {
   type AgentToolRequest,
   type AgentToolSchema,
 } from '../agent/lifeSpaceToolFactory';
+import {
+  decodeAgentToolSemanticSnapshot,
+  encodeAgentToolSemanticSnapshot,
+} from '../agent/lifeSpaceToolSnapshot';
 
 type StructuralAiTool = {
   name: string;
@@ -66,8 +71,17 @@ function requiredAccess(operation: string): DiscoveryAccess | null {
 
 async function selectedOptionModel(context: ILoadOptionsFunctions): Promise<{ model: DiscoveryModel; spaceId: string } | null> {
   const spaceId = loadOptionParameter(context, 'spaceId');
-  const recordType = decodeRecordTypeSelector(loadOptionParameter(context, 'recordType'));
-  if (!spaceId || !recordType) return null;
+  const rawRecordType = loadOptionParameter(context, 'recordType');
+  if (!spaceId || !rawRecordType) return null;
+
+  const snapshot = decodeAgentToolSemanticSnapshot(rawRecordType);
+  if (snapshot) {
+    return snapshot.spaceId === spaceId ? { model: snapshot.model, spaceId } : null;
+  }
+
+  // Legacy editor compatibility only. Runtime execution never refreshes semantics.
+  const recordType = decodeRecordTypeSelector(rawRecordType);
+  if (!recordType) return null;
   const discovery = await loadRuntimeDiscovery.call(context);
   const model = discoveryModel(discovery, spaceId, recordType.modelKey);
   return model ? { model, spaceId } : null;
@@ -503,7 +517,7 @@ export class LifeSpaceTool implements INodeType {
         options: [],
         default: '',
         required: true,
-        description: 'Fixes this Tool instance to one LifeSpace model key discovered for the selected Space. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+        description: 'Fixes this Tool instance to one LifeSpace Record Type and pins its current semantic contract into the workflow. Reselect the Record Type to refresh the pinned contract after a LifeSpace model change.',
       },
       {
         displayName: 'Query Mode',
@@ -569,7 +583,7 @@ export class LifeSpaceTool implements INodeType {
   methods = {
     loadOptions: {
       async getSpaces(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-        const discovery = await loadRuntimeDiscovery.call(this);
+        const discovery = await loadRuntimeDiscoveryInventory.call(this);
         return discovery.data.spaces.map((space) => ({
           name: space.spaceName?.trim() || space.spaceId,
           value: space.spaceId,
@@ -579,14 +593,26 @@ export class LifeSpaceTool implements INodeType {
         const spaceId = loadOptionParameter(this, 'spaceId');
         const operation = loadOptionParameter(this, 'operation') || 'query';
         if (!spaceId) return [];
-        const discovery = await loadRuntimeDiscovery.call(this);
-        return (discoverySpace(discovery, spaceId)?.models ?? [])
-          .filter((model) => modelSupportsOperation(model, operation))
-          .map((model) => ({
-            name: model.display.singular?.trim() || model.key,
-            value: model.key,
-            description: model.description ?? undefined,
-          }));
+
+        const discovery = await loadRuntimeDiscoveryInventory.call(this);
+        const space = discoverySpace(discovery, spaceId);
+        if (!space) return [];
+
+        const candidates = space.models.filter((model) => modelSupportsOperation(model, operation));
+        const models = await Promise.all(
+          candidates.map((model) => loadDesignTimeSemanticDetail.call(this, spaceId, model)),
+        );
+
+        return models.map((model) => ({
+          name: model.display.singular?.trim() || model.key,
+          value: encodeAgentToolSemanticSnapshot({
+            format: 1,
+            spaceId,
+            spaceName: space.spaceName ?? null,
+            model,
+          }),
+          description: model.description ?? undefined,
+        }));
       },
       async getActions(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const selected = await selectedOptionModel(this);
@@ -618,9 +644,20 @@ export class LifeSpaceTool implements INodeType {
     const credentials = await context.getCredentials('lifeSpaceApi', itemIndex);
     const baseUrl = normalizeBaseUrl(credentials.baseUrl);
     const spaceId = String(context.getNodeParameter('spaceId', itemIndex)).trim();
-    const recordType = decodeRecordTypeSelector(context.getNodeParameter('recordType', itemIndex, ''));
-    if (!recordType) {
-      throw new NodeOperationError(context.getNode(), 'Choose a valid LifeSpace Record Type from Runtime Discovery', { itemIndex });
+    const snapshot = decodeAgentToolSemanticSnapshot(context.getNodeParameter('recordType', itemIndex, ''));
+    if (!snapshot) {
+      throw new NodeOperationError(
+        context.getNode(),
+        'This LifeSpace Tool has no saved design-time semantic contract. Open the node, reselect Record Type, and save the workflow before running it.',
+        { itemIndex },
+      );
+    }
+    if (snapshot.spaceId !== spaceId) {
+      throw new NodeOperationError(
+        context.getNode(),
+        'The saved LifeSpace Tool semantic contract belongs to a different Space. Reselect Record Type and save the workflow.',
+        { itemIndex },
+      );
     }
 
     const operation = context.getNodeParameter('operation', itemIndex) as AgentToolOperation;
@@ -629,16 +666,11 @@ export class LifeSpaceTool implements INodeType {
     const actionKey = String(context.getNodeParameter('actionKey', itemIndex, '') ?? '').trim();
     const descriptionOverride = String(context.getNodeParameter('descriptionOverride', itemIndex, '') ?? '').trim();
 
-    const discovery = await loadAgentToolRuntimeDiscovery(context, baseUrl, spaceId, recordType.modelKey);
-    const model = discoveryModel(discovery, spaceId, recordType.modelKey);
-    const space = discoverySpace(discovery, spaceId);
-    if (!model || !space) {
-      throw new NodeOperationError(context.getNode(), 'The selected LifeSpace model is no longer visible in this Space', { itemIndex });
-    }
+    const model = snapshot.model;
 
     const config: AgentToolConfig = {
       spaceId,
-      spaceName: space.spaceName,
+      spaceName: snapshot.spaceName,
       operation,
       queryMode,
       capabilityQueryKey,
@@ -697,7 +729,11 @@ export class LifeSpaceTool implements INodeType {
       name: nodeNameToToolName(this.getNode()),
       description: runtime.definition.description,
       schema: runtime.definition.schema,
-      metadata: { lifeSpaceSemanticToolName: runtime.definition.name },
+      metadata: {
+        lifeSpaceSemanticToolName: runtime.definition.name,
+        lifeSpaceModelVersion: runtime.model.version,
+        lifeSpaceSchemaHash: runtime.model.schemaHash,
+      },
       invoke: async (query: unknown): Promise<string> => {
         const { index } = this.addInputData(NodeConnectionTypes.AiTool, [[{ json: { query: inputForLog(query) } }]]);
         let output: string;
