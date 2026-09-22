@@ -968,7 +968,7 @@ export class LifeSpace implements INodeType {
         typeOptions: { loadOptionsMethod: 'getActions', loadOptionsDependsOn: ['spaceId', 'recordType'] },
         options: [], default: '', required: true,
         displayOptions: { show: { resource: ['modelRecord'], operation: ['executeAction'] } },
-        description: 'Choose an Action from the selected Record Type. The current Action semantic contract is pinned into the workflow at design time; reselect the Action to refresh it after a model change.',
+        description: 'The current Action semantic contract is pinned into the workflow at design time; reselect the Action to refresh it after a model change. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
       },
       {
         displayName: 'Action Input', name: 'actionInput', type: 'resourceMapper',
