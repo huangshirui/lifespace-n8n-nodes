@@ -16,7 +16,6 @@ import {
   discoveryModel,
   discoverySpace,
   humanizeKey,
-  loadExecutionRuntimeDiscovery,
   loadOptionParameter,
   loadRelationTargets,
   loadRuntimeDiscovery,
@@ -29,6 +28,10 @@ import {
   type DiscoveryModel,
   type RelationTarget,
 } from '../lifespaceDiscovery';
+import {
+  decodeLifeSpaceActionSnapshot,
+  encodeLifeSpaceActionSnapshot,
+} from '../shared/lifeSpaceActionSnapshot';
 
 type QueryFilter = {
   field?: string;
@@ -591,37 +594,14 @@ async function mutationVersion(
   return currentRecordVersion(context, itemIndex, baseUrl, recordPath);
 }
 
-async function executionModel(
-  context: IExecuteFunctions,
-  itemIndex: number,
-  baseUrl: string,
-  spaceId: string,
-  modelKey: string,
-): Promise<DiscoveryModel> {
-  const discovery = await loadExecutionRuntimeDiscovery(context, baseUrl, spaceId, modelKey);
-  const model = discoveryModel(discovery, spaceId, modelKey);
-  if (!model) {
-    throw new NodeOperationError(context.getNode(), `LifeSpace Record Type ${modelKey} is not available`, { itemIndex });
-  }
-  return model;
-}
-
 async function actionBodyWithConcurrency(
   context: IExecuteFunctions,
   itemIndex: number,
   baseUrl: string,
-  spaceId: string,
-  modelKey: string,
   recordPath: string,
-  actionKey: string,
+  action: DiscoveryAction,
   semanticInput: IDataObject,
 ): Promise<IDataObject> {
-  const model = await executionModel(context, itemIndex, baseUrl, spaceId, modelKey);
-  const action = model.actions.find((entry) => entry.key === actionKey);
-  if (!action) {
-    throw new NodeOperationError(context.getNode(), `LifeSpace Action ${actionKey} is not available`, { itemIndex });
-  }
-
   const normalizedInput = normalizeActionInput(context, itemIndex, semanticInput, action.input.fields);
   const concurrency = action.concurrency;
   if (!concurrency || !concurrency.required) return normalizedInput;
@@ -640,10 +620,10 @@ async function actionBodyWithConcurrency(
   };
 }
 
-function actionOption(action: DiscoveryAction): INodePropertyOptions {
+function actionOption(modelKey: string, action: DiscoveryAction): INodePropertyOptions {
   return {
     name: humanizeKey(action.key),
-    value: action.key,
+    value: encodeLifeSpaceActionSnapshot({ format: 1, modelKey, action }),
     description: `${action.kind} action · ${action.access} access`,
   };
 }
@@ -984,11 +964,11 @@ export class LifeSpace implements INodeType {
         options: [{ displayName: 'Version', name: 'version', type: 'number', typeOptions: { minValue: 1, numberPrecision: 0 }, default: 1, description: 'Optional known record version. If omitted, the node reads the current record version immediately before the mutation.' }],
       },
       {
-        displayName: 'Action Name or ID', name: 'actionKey', type: 'options',
+        displayName: 'Action Name or ID', name: 'actionKey', type: 'options', noDataExpression: true,
         typeOptions: { loadOptionsMethod: 'getActions', loadOptionsDependsOn: ['spaceId', 'recordType'] },
         options: [], default: '', required: true,
         displayOptions: { show: { resource: ['modelRecord'], operation: ['executeAction'] } },
-        description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+        description: 'Choose an Action from the selected Record Type. The current Action semantic contract is pinned into the workflow at design time; reselect the Action to refresh it after a model change.',
       },
       {
         displayName: 'Action Input', name: 'actionInput', type: 'resourceMapper',
@@ -1051,7 +1031,9 @@ export class LifeSpace implements INodeType {
       },
       async getActions(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const selected = await optionModel(this);
-        return selected ? selected.model.actions.map(actionOption) : [];
+        return selected
+          ? selected.model.actions.map((action) => actionOption(selected.model.key, action))
+          : [];
       },
       async getFilterableFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
         const selected = await optionModel(this);
@@ -1197,8 +1179,11 @@ export class LifeSpace implements INodeType {
       },
       async getActionInputFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
         const selected = await optionModel(this);
-        const actionKey = loadOptionParameter(this, 'actionKey');
-        const action = selected?.model.actions.find((entry) => entry.key === actionKey);
+        const actionValue = loadOptionParameter(this, 'actionKey');
+        const snapshot = decodeLifeSpaceActionSnapshot(actionValue);
+        const action = snapshot && selected && snapshot.modelKey === selected.model.key
+          ? snapshot.action
+          : selected?.model.actions.find((entry) => entry.key === actionValue);
         return action
           ? { fields: action.input.fields.map((field) => mapperField(field, field.required === true)) }
           : { fields: [] };
@@ -1322,8 +1307,18 @@ export class LifeSpace implements INodeType {
                 json: true,
               };
             } else {
-              const rawActionKey = String(this.getNodeParameter('actionKey', itemIndex));
-              const actionKey = encodeURIComponent(rawActionKey);
+              const actionSnapshot = decodeLifeSpaceActionSnapshot(
+                this.getNodeParameter('actionKey', itemIndex),
+              );
+              if (!actionSnapshot || actionSnapshot.modelKey !== rawModelKey) {
+                throw new NodeOperationError(
+                  this.getNode(),
+                  'This Execute Action configuration has no saved design-time Action contract. Open the node, reselect Action, and save the workflow before running it.',
+                  { itemIndex },
+                );
+              }
+              const action = actionSnapshot.action;
+              const actionKey = encodeURIComponent(action.key);
               options = {
                 method: 'POST',
                 url: `${baseUrl}${recordPath}/actions/${actionKey}`,
@@ -1331,10 +1326,8 @@ export class LifeSpace implements INodeType {
                   this,
                   itemIndex,
                   baseUrl,
-                  rawSpaceId,
-                  rawModelKey,
                   recordPath,
-                  rawActionKey,
+                  action,
                   mappedValue(this, itemIndex, 'actionInput'),
                 ),
                 json: true,
