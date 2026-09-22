@@ -517,7 +517,9 @@ export class LifeSpaceTool implements INodeType {
         options: [],
         default: '',
         required: true,
-        description: 'Fixes this Tool instance to one LifeSpace Record Type and pins its current semantic contract into the workflow. Reselect the Record Type to refresh the pinned contract after a LifeSpace model change. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+        // Structural selector: the option value carries the pinned model semantic contract, so expressions are intentionally disabled.
+        // eslint-disable-next-line n8n-nodes-base/node-param-description-wrong-for-dynamic-options
+        description: 'Fixes this Tool instance to one LifeSpace Record Type and pins its current semantic contract into the workflow. Reselect the Record Type to refresh the pinned contract after a LifeSpace model change.',
       },
       {
         displayName: 'Query Mode',
