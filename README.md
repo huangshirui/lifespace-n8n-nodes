@@ -69,7 +69,7 @@ Runtime Discovery determines which Spaces, Record Types, fields, queries, Action
 The package deliberately exposes two different projections over the same LifeSpace Runtime Discovery semantics:
 
 - **LifeSpace** is the human-authored workflow node. Create/Update scalar and relation fields are generated through n8n Resource Mapper from the selected Record Type. Writable `temporal_range` fields are projected directly as three adjacent controls named from the field itself, for example **When · Type / When · Start / When · End**; there is no redundant Field selector and no raw object/JSON entry. List / Query exposes semantic predicates instead of asking the workflow author to choose a filter type first. Multi-value relations keep their dedicated multi-select UX.
-- **LifeSpace Agent Tool** is the native AI Tool surface. Its schema is generated from Runtime Discovery for Query/Create/Update/Delete/Action. AI-facing values stay semantic: `temporal_range` uses one `{ kind, start, end }` object, relation fields accept `{ name }` / `{ id }` references, and Canonical Query exposes semantic `field` / `operator` / `value` predicates. The adapter resolves names through the field's published relation lookup, injects the effective n8n workflow timezone when TemporalRange semantics require it, and lowers everything to the canonical LifeSpace transport.
+- **LifeSpace Agent Tool** is the native AI Tool surface. Its schema is generated from Runtime Discovery at design time and pinned into the saved workflow for Query/Create/Update/Delete/Action; workflow execution does not re-run Discovery. AI-facing values stay semantic: `temporal_range` uses one `{ kind, start, end }` object, relation fields accept `{ name }` / `{ id }` references, and Canonical Query exposes semantic `field` / `operator` / `value` predicates. The adapter resolves names through the field's published relation lookup, injects the effective n8n workflow timezone when TemporalRange semantics require it, and lowers everything to the canonical LifeSpace transport.
 
 The human workflow node is not exposed through `usableAsTool`; this avoids maintaining two competing Agent Tool surfaces with different schema behavior.
 
@@ -83,7 +83,7 @@ For Update/Delete/Action, the Agent Tool still requires a stable `recordId`. If 
 
 The node displays the authorized human-readable `spaceName` when present while continuing to submit the stable `spc_*` ID.
 
-Record Type is the LifeSpace `modelKey` (for example `task`). Design-time options, expressions, Trigger output and downstream Record nodes all use that plain value. CRUD calls go directly to `/spaces/{spaceId}/models/{modelKey}/records/...`, so execution adds no Discovery request and the adapter maintains no modelKey-to-route mapping. Existing `lsrt1...` workflow values are decoded only as a deprecated read-compatibility path and are never emitted or written by new configuration.
+For the human **LifeSpace** workflow node and Trigger composition, Record Type is the LifeSpace `modelKey` (for example `task`). Design-time options, expressions, Trigger output and downstream Record nodes use that plain value. CRUD calls go directly to `/spaces/{spaceId}/models/{modelKey}/records/...`, so execution adds no Discovery request and the adapter maintains no modelKey-to-route mapping. Existing `lsrt1...` workflow values are decoded only as a deprecated read-compatibility path and are never emitted or written by new configuration. The native **LifeSpace Agent Tool** deliberately treats Record Type as a structural design-time choice and stores a private pinned semantic snapshot behind that selection; the user-facing choice still displays the LifeSpace Record Type.
 
 Current Calendar models expose the canonical `capabilityBindings.calendar.rangeField` role, which points at one authoritative `temporal_range` field (for example Event v6 `when`). Historical split-field Calendar bindings remain readable only for already-published compatibility models. Date-only values are normalized to `YYYY-MM-DD`; ordinary `instant` fields use the n8n date-time control. Create/Update `temporal_range` fields use direct Discovery-generated component controls. **All Day / Date** stores `{ kind: "date", start, endExclusive }` and treats the Human End date as inclusive, while **Date & Time** stores `{ kind: "instant", start, endExclusive }` from the date-time controls. Existing stored workflows that already contain canonical object values or the earlier pre-release Temporal Ranges fixedCollection remain executable. Create/Update execution does not fetch fresh semantic Discovery solely to produce an adapter-local Calendar conflict error; the canonical mutation goes directly to LifeSpace Core, which remains authoritative for Calendar validation and current authorization.
 
@@ -125,7 +125,7 @@ GET /me/_discovery/inventory
 
 Design-time callbacks prefer n8n editor-current parameters, so Fields and Actions refresh immediately after Record Type selection. A legacy 0.1.3 `modelRoute` remains readable only for the four previously deployed baseline models; re-selecting Record Type writes the plain `modelKey`.
 
-Execution is deliberately narrower. Get/List/Create/Update/Delete call the canonical modelKey-addressed Runtime path directly without a fresh Runtime Discovery preflight. Execute Action loads only the selected model's `0.26+` static semantic detail, and reuses that detail within the same node execution for repeated items using the same Space/Record Type. No cached Discovery result is treated as authorization proof; every CRUD or Action request still goes through canonical LifeSpace Core current-state enforcement.
+Execution is deliberately narrower. Get/List/Create/Update/Delete and Execute Action perform no Runtime Discovery preflight. Execute Action pins the selected Action's semantic input and concurrency contract when the workflow is authored, then uses that saved contract plus the current-record read required for optimistic concurrency. The native Agent Tool likewise reconstructs its Tool schema from its saved semantic snapshot with zero execution-time Discovery. No saved semantic snapshot is treated as authorization proof; every business request still goes through canonical LifeSpace Core current-state enforcement.
 
 The legacy aggregate `GET /me/_discovery` remains an intentional design-time compatibility fallback. Neither cached Discovery nor relation lookup is treated as authorization proof; every mutation still goes through canonical LifeSpace Runtime enforcement.
 
@@ -156,7 +156,7 @@ Examples:
 {{$vars.lifeSpaceRecordType}}
 ```
 
-Discovery-backed selectors such as **Space**, **Sort Field** and **Action** support the normal n8n pattern: choose a value from the list, or switch the parameter to an expression and provide the corresponding stable ID/key. **Record Type** stores the plain LifeSpace `modelKey`, so a LifeSpace Trigger can feed a Record node directly without a mapping step or an extra Discovery request.
+Discovery-backed runtime selectors such as **Space** and **Sort Field** support the normal n8n pattern: choose a value from the list, or switch the parameter to an expression and provide the corresponding stable ID/key. **Record Type** on the human workflow node stores the plain LifeSpace `modelKey`, so a LifeSpace Trigger can feed a Record node directly without a mapping step or an extra Discovery request. **Action** is intentionally structural: selecting it pins the Action input/concurrency contract at design time, so it is reselected rather than supplied dynamically by an expression.
 
 The same applies to ordinary values such as Record ID, Search, Return All, Limit, Sort Direction, Cursor, explicit Version, API Method, API Path and JSON Body.
 
@@ -256,11 +256,11 @@ New configurations do not expose Standard Query or Capability Query. Stored work
 
 ### Execute Action
 
-Choose an Action from Runtime Discovery.
+Choose an Action from Runtime Discovery while authoring the workflow. The selected Action's semantic input and concurrency metadata are pinned into the workflow configuration.
 
-**Action Input** contains only semantic/domain inputs. LifeSpace concurrency metadata is not rendered as a business field. For the current `record-version` contract, the node reads the current Record version immediately before Action execution and sends it using the transport declared by Runtime Discovery.
+**Action Input** contains only semantic/domain inputs. LifeSpace concurrency metadata is not rendered as a business field. For the current `record-version` contract, execution reads the current Record version immediately before the Action and sends it using the transport declared by the saved Action contract.
 
-Execution-time Action metadata is loaded directly from the selected model's static semantic-detail endpoint rather than first loading the broad current-principal inventory. Human Action Input uses the same current field-type projection as Create/Update, including `instant`, fixed Range values and `temporal_range`. The static detail is reused for repeated items of the same Space/Record Type during one node execution. It is semantic input only, not cached authority; Core rechecks current Action authority on every invocation.
+Execute Action performs zero Runtime Discovery requests. Human Action Input still uses the same Discovery-driven field-type projection as Create/Update, including `instant`, fixed Range values and `temporal_range`. The saved Action contract is execution metadata only, not authorization proof; Core rechecks current Action authority on every invocation. Workflows saved before this contract pinning change must reselect the Action once and save before they can execute it.
 
 This means actions such as `complete` / `reopen` no longer ask users to type an internal version value.
 
@@ -280,7 +280,7 @@ Use normal Record operations when possible because they benefit from Runtime Dis
 
 Use **LifeSpace Agent Tool** when connecting LifeSpace to an n8n AI Agent. This is a separate native AiTool surface rather than the human workflow node running through `usableAsTool`.
 
-Configure the Tool's structural scope — Space, Record Type and operation — in the node. The Tool then derives its model-facing name, description and input schema from Runtime Discovery, so multiple LifeSpace Tools can distinguish their configured purpose without requiring handwritten descriptions.
+Configure the Tool's structural scope — Space, Record Type and operation — in the node. Selecting the Record Type loads the current LifeSpace semantic detail and pins the model version, `schemaHash`, fields/query/action semantics and Space label into the workflow. At runtime the Tool derives its model-facing name, description and input schema from that saved snapshot, so `supplyData()` performs zero Runtime Discovery requests. Reselect Record Type to refresh the pinned contract after a LifeSpace model change.
 
 For Canonical Query, the model receives semantic inputs such as:
 
