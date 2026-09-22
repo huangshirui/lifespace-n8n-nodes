@@ -332,7 +332,7 @@ const baseToolParameters = {
   capabilityQueryKey: '', actionKey: '', descriptionOverride: '',
 };
 
-test('native LifeSpace Tool supplies distinct automatic tool identities and model-derived create schema', async () => {
+test('native LifeSpace Tool uses n8n node identity while preserving semantic Tool metadata and schema', async () => {
   const node = new LifeSpaceTool();
   const queryContext = supplyContext(baseToolParameters);
   const queryTool = (await node.supplyData.call(queryContext, 0)).response;
@@ -341,9 +341,14 @@ test('native LifeSpace Tool supplies distinct automatic tool identities and mode
   const createContext = supplyContext({ ...baseToolParameters, operation: 'create' });
   const createTool = (await node.supplyData.call(createContext, 0)).response;
 
-  assert.notEqual(queryTool.name, createTool.name);
-  assert.match(queryTool.name, /^lifespace_query_task_s/u);
-  assert.match(createTool.name, /^lifespace_create_task_s/u);
+  assert.equal(queryTool.name, 'LifeSpace_Tool');
+  assert.equal(createTool.name, 'LifeSpace_Tool');
+  assert.match(queryTool.metadata.lifeSpaceSemanticToolName, /^lifespace_query_task_s/u);
+  assert.match(createTool.metadata.lifeSpaceSemanticToolName, /^lifespace_create_task_s/u);
+  assert.notEqual(
+    queryTool.metadata.lifeSpaceSemanticToolName,
+    createTool.metadata.lifeSpaceSemanticToolName,
+  );
   assert.match(queryTool.description, /Query Tasks/u);
   assert.match(createTool.description, /Create a Task/u);
   assert.match(createTool.description, /Test Space/u);
