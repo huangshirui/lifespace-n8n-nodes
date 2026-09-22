@@ -94,12 +94,13 @@ test('runtime node inputs remain expression-capable except structural controls',
   assert.match(node, /name: 'semanticQueryInput',[\s\S]{0,180}noDataExpression: true/u);
   assert.doesNotMatch(trigger, /noDataExpression: true/u);
 
-  // Discovery-backed runtime selectors keep the standard n8n "select or expression"
-  // path so workflows can pass stable IDs/keys from variables or previous item data.
+  // Dynamic runtime selectors keep the standard n8n "select or expression" path.
+  // Action is structural because its semantic input/concurrency contract is pinned at design time.
   assert.match(node, /name: 'spaceId'[\s\S]{0,360}specify an ID using an <a href=/u);
   assert.match(node, /name: 'recordType'[\s\S]{0,800}specify an ID using an <a href=/u);
   const actionKey = sourceBlock(node, "name: 'actionKey'", "name: 'actionInput'");
-  assert.match(actionKey, /specify an ID using an <a href=/u);
+  assert.match(actionKey, /noDataExpression: true/u);
+  assert.match(actionKey, /pinned into the workflow at design time/u);
   assert.match(trigger, /name: 'spaceId'[\s\S]{0,360}specify an ID using an <a href=/u);
   assert.match(trigger, /name: 'recordTypes'[\s\S]{0,460}specify IDs using an <a href=/u);
 });
