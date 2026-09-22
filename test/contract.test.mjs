@@ -7,6 +7,7 @@ const require = createRequire(import.meta.url);
 const { LifeSpace } = require('../dist/nodes/LifeSpace/LifeSpace.node.js');
 const { LifeSpaceTrigger } = require('../dist/nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.js');
 const { decodeRecordTypeSelector, encodeRecordTypeSelector } = require('../dist/nodes/lifespaceDiscovery.js');
+const { encodeLifeSpaceActionSnapshot } = require('../dist/nodes/shared/lifeSpaceActionSnapshot.js');
 
 const TASK_RECORD_TYPE = encodeRecordTypeSelector('task');
 const NOTE_RECORD_TYPE = encodeRecordTypeSelector('note');
@@ -139,6 +140,11 @@ function semanticDetailFixture({ legacyAction = false } = {}) {
       capabilityBindings: {},
     },
   };
+}
+
+function actionSelector({ legacyAction = false } = {}) {
+  const action = discoveryFixture({ legacyAction }).data.spaces[0].models[0].actions[0];
+  return encodeLifeSpaceActionSnapshot({ format: 1, modelKey: 'task', action });
 }
 
 function loadOptionsContext(discovery, parameters = {}) {
@@ -497,7 +503,7 @@ test('Update accepts an explicit advanced version without an extra read', async 
   assert.deepEqual(context.calls[0].options.body, { name: 'Updated', version: 5 });
 });
 
-test('Execute Action resolves record-version concurrency from selected-model semantic detail', async () => {
+test('Execute Action resolves record-version concurrency from the pinned design-time Action contract', async () => {
   const node = new LifeSpace();
   const context = executeContext(
     {
@@ -506,11 +512,10 @@ test('Execute Action resolves record-version concurrency from selected-model sem
       spaceId: 'spc_test',
       recordType: TASK_RECORD_TYPE,
       recordId: 'tsk_test',
-      actionKey: 'complete',
+      actionKey: actionSelector(),
       'actionInput.value': {},
     },
     (options) => {
-      if (options.url.endsWith('/spaces/spc_test/_discovery/models/task')) return semanticDetailFixture();
       if (options.method === 'GET' && options.url.endsWith('/models/task/records/tsk_test')) {
         return { data: { id: 'tsk_test', version: 7 } };
       }
@@ -523,13 +528,12 @@ test('Execute Action resolves record-version concurrency from selected-model sem
 
   await node.execute.call(context);
 
-  assert.equal(context.calls.length, 3);
+  assert.equal(context.calls.length, 2);
   assert.deepEqual(context.calls.map((call) => [call.options.method, call.options.url]), [
-    ['GET', `${BASE_URL}/spaces/spc_test/_discovery/models/task`],
     ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/tsk_test`],
     ['POST', `${BASE_URL}/spaces/spc_test/models/task/records/tsk_test/actions/complete`],
   ]);
-  assert.deepEqual(context.calls[2].options.body, { version: 7 });
+  assert.deepEqual(context.calls[1].options.body, { version: 7 });
 });
 
 test('Execute Action preserves compatibility when semantic detail still carries version as semantic input', async () => {
@@ -541,11 +545,10 @@ test('Execute Action preserves compatibility when semantic detail still carries 
       spaceId: 'spc_test',
       recordType: TASK_RECORD_TYPE,
       recordId: 'tsk_legacy',
-      actionKey: 'complete',
+      actionKey: actionSelector({ legacyAction: true }),
       'actionInput.value': { version: 4 },
     },
     (options) => {
-      if (options.url.endsWith('/spaces/spc_test/_discovery/models/task')) return semanticDetailFixture({ legacyAction: true });
       if (options.method === 'POST' && options.url.endsWith('/models/task/records/tsk_legacy/actions/complete')) {
         return { data: { id: 'tsk_legacy', status: 'completed', version: 5 } };
       }
@@ -555,12 +558,11 @@ test('Execute Action preserves compatibility when semantic detail still carries 
 
   await node.execute.call(context);
 
-  assert.equal(context.calls.length, 2);
+  assert.equal(context.calls.length, 1);
   assert.deepEqual(context.calls.map((call) => [call.options.method, call.options.url]), [
-    ['GET', `${BASE_URL}/spaces/spc_test/_discovery/models/task`],
     ['POST', `${BASE_URL}/spaces/spc_test/models/task/records/tsk_legacy/actions/complete`],
   ]);
-  assert.deepEqual(context.calls[1].options.body, { version: 4 });
+  assert.deepEqual(context.calls[0].options.body, { version: 4 });
 });
 
 test('LifeSpace Trigger accepts a correctly signed event for any selected Record Type', async () => {
