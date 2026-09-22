@@ -6,6 +6,7 @@ const require = createRequire(import.meta.url);
 const { LifeSpace } = require('../dist/nodes/LifeSpace/LifeSpace.node.js');
 const { LifeSpaceWorkflow } = require('../dist/nodes/LifeSpaceWorkflow/LifeSpaceWorkflow.node.js');
 const { encodeRecordTypeSelector } = require('../dist/nodes/lifespaceDiscovery.js');
+const { encodeLifeSpaceActionSnapshot } = require('../dist/nodes/shared/lifeSpaceActionSnapshot.js');
 
 const BASE_URL = 'https://example.invalid/api/v1';
 const TASK_RECORD_TYPE = encodeRecordTypeSelector('task');
@@ -51,6 +52,12 @@ function actionDetail() {
     },
   };
 }
+
+const TASK_COMPLETE_ACTION = encodeLifeSpaceActionSnapshot({
+  format: 1,
+  modelKey: 'task',
+  action: actionDetail().data.actions[0],
+});
 
 function valueFor(parameters, name, itemIndex, defaultValue) {
   if (!Object.prototype.hasOwnProperty.call(parameters, name)) return defaultValue;
@@ -223,15 +230,14 @@ test('Delete without an explicit version performs only concurrency read plus mut
   ]);
 });
 
-test('Execute Action uses selected static semantic detail, concurrency read, and action request only', async () => {
+test('Execute Action uses pinned design-time semantics, concurrency read, and zero Discovery', async () => {
   const calls = await execute({
     operation: 'executeAction',
     recordId: 'rec_action',
-    actionKey: 'complete',
+    actionKey: TASK_COMPLETE_ACTION,
     'actionInput.value': {},
   });
   assert.deepEqual(requestShape(calls), [
-    ['GET', `${BASE_URL}/spaces/spc_test/_discovery/models/task`],
     ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/rec_action`],
     ['POST', `${BASE_URL}/spaces/spc_test/models/task/records/rec_action/actions/complete`],
   ]);
@@ -249,15 +255,14 @@ test('per-item Record Type expressions do not introduce Discovery for CRUD execu
   ]);
 });
 
-test('same-model multi-item Action reuses static semantic detail once per node execution', async () => {
+test('same-model multi-item Action performs only concurrency reads and mutations', async () => {
   const calls = await execute({
     operation: 'executeAction',
     recordId: (itemIndex) => `rec_action_${itemIndex + 1}`,
-    actionKey: 'complete',
+    actionKey: TASK_COMPLETE_ACTION,
     'actionInput.value': {},
   }, 2);
   assert.deepEqual(requestShape(calls), [
-    ['GET', `${BASE_URL}/spaces/spc_test/_discovery/models/task`],
     ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/rec_action_1`],
     ['POST', `${BASE_URL}/spaces/spc_test/models/task/records/rec_action_1/actions/complete`],
     ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/rec_action_2`],
