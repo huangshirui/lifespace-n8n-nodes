@@ -292,3 +292,126 @@ test('delegated Batch Create sends one atomic Core mutation with per-item Delega
     'delegated Batch must not use Service PAT',
   );
 });
+
+
+test('delegated design-time Discovery uses Agent JWT and Read Delegation without Service PAT', async () => {
+  const calls = [];
+  const current = {
+    authorityMode: 'delegatedAgent',
+    principalUserId: PRINCIPAL,
+    delegationId: DELEGATION,
+    readDelegationId: READ_DELEGATION,
+    operation: 'create',
+    spaceId: 'spc_test',
+    recordType: '',
+  };
+  const inventory = {
+    data: {
+      semanticDetailPathTemplate: '/api/v1/spaces/{spaceId}/_discovery/models/{modelKey}',
+      models: [{
+        key: 'task',
+        version: 1,
+        schemaHash: 'sha256:authority-v2-test',
+        display: { singular: 'Task', plural: 'Tasks' },
+        capabilities: [],
+        actions: [],
+      }],
+      spaces: [{
+        spaceId: 'spc_test',
+        spaceName: 'Test Space',
+        models: [{ modelKey: 'task', access: ['read', 'write'] }],
+      }],
+    },
+  };
+  const detail = {
+    data: {
+      key: 'task',
+      version: 1,
+      schemaHash: 'sha256:authority-v2-test',
+      display: { singular: 'Task', plural: 'Tasks' },
+      description: 'Authority v2 design-time model',
+      declaredAccess: ['read', 'write'],
+      fields: [{ key: 'name', type: 'string', title: 'Name', required: true }],
+      defaults: {},
+      query: {
+        searchable: ['name'],
+        filterable: [],
+        sortable: ['name'],
+        search: { parameter: 'q', minLength: 1, maxLength: 100 },
+        filters: [],
+        comparisons: [],
+        capabilityQueries: [],
+        sort: {
+          parameter: 'sort',
+          syntax: 'field:direction',
+          repeatable: true,
+          ordered: true,
+          maxCriteria: 8,
+          genericDefault: ['createdAt:desc'],
+          envelopeFields: ['createdAt', 'updatedAt'],
+          nullPlacement: 'last',
+          genericValues: ['createdAt:desc', 'name:asc'],
+        },
+        pagination: {
+          limit: { parameter: 'limit', minimum: 1, maximum: 200, default: 100 },
+          cursor: { parameter: 'cursor', type: 'string' },
+        },
+      },
+      actions: [],
+      capabilities: [],
+      capabilityBindings: {},
+    },
+  };
+  const design = {
+    getCredentials: async (name) => {
+      if (name !== 'lifeSpaceAgentExecutionApi') throw new Error(`unexpected credential ${name}`);
+      return {
+        coreBaseUrl: CORE_BASE,
+        identityBaseUrl: IDENTITY_BASE,
+        applicationSecret: 'lsa_test',
+        agentId: AGENT,
+      };
+    },
+    getCurrentNodeParameter(name) {
+      return Object.hasOwn(current, name) ? current[name] : undefined;
+    },
+    getNodeParameter(name, _itemIndex, fallback) {
+      return Object.hasOwn(current, name) ? current[name] : fallback;
+    },
+    getNode: () => ({ name: 'LifeSpace Tool', typeVersion: 1 }),
+    helpers: {
+      async httpRequestWithAuthentication(credentialName, options) {
+        calls.push({ transport: 'identity', credentialName, options });
+        assert.equal(credentialName, 'lifeSpaceAgentExecutionApi');
+        return {
+          data: {
+            accessToken: 'agent.jwt.design',
+            principalId: PRINCIPAL,
+            actor: { type: 'agent', id: AGENT },
+            applicationId: 'app_test',
+          },
+        };
+      },
+      async httpRequest(options) {
+        calls.push({ transport: 'core', options });
+        if (options.url === `${CORE_BASE}/me/_discovery/inventory`) return inventory;
+        if (options.url === `${CORE_BASE}/spaces/spc_test/_discovery/models/task`) return detail;
+        throw new Error(`unexpected Core request ${options.url}`);
+      },
+    },
+  };
+
+  const node = new LifeSpaceTool();
+  const spaces = await node.methods.loadOptions.getSpaces.call(design);
+  assert.deepEqual(spaces.map((entry) => entry.value), ['spc_test']);
+
+  const recordTypes = await node.methods.loadOptions.getRecordTypes.call(design);
+  assert.equal(recordTypes.length, 1);
+
+  const coreCalls = calls.filter((call) => call.transport === 'core');
+  assert.equal(coreCalls.some((call) => call.options.url.endsWith('/_discovery/models/task')), true);
+  const semanticCall = coreCalls.find((call) => call.options.url.endsWith('/_discovery/models/task'));
+  assert.equal(semanticCall.options.headers.Authorization, 'Bearer agent.jwt.design');
+  assert.equal(semanticCall.options.headers['X-LifeSpace-Delegation-Id'], READ_DELEGATION);
+  assert.equal(calls.some((call) => call.credentialName === 'lifeSpaceApi'), false);
+});
