@@ -773,7 +773,7 @@ export class LifeSpaceTool implements INodeType {
         default: '',
         placeholder: 'dlg_...',
         displayOptions: { show: { authorityMode: ['delegatedAgent'] } },
-        description: 'Model-read Delegation for delegated design-time Discovery and only those runtime calls that actually need relation-name resolution or optimistic-concurrency pre-reads. It is not used by pure mutations that need no helper read',
+        description: 'Model-read Delegation for delegated design-time Discovery and only those runtime calls that actually need relation-name resolution or optimistic-concurrency pre-reads. It is not used by pure mutations that need no helper read.',
       },
       {
         displayName: 'Batch Delegation IDs',
