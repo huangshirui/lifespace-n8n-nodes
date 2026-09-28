@@ -68,11 +68,12 @@ type AgentRuntime = {
   config: AgentToolConfig;
   definition: ReturnType<typeof buildAgentToolDefinition>;
   authority: LifeSpaceExecutionAuthority;
+  itemIndex: number;
 };
 
 function requiredAccess(operation: string): DiscoveryAccess | null {
   if (operation === 'query') return 'read';
-  if (['create', 'update', 'delete'].includes(operation)) return 'write';
+  if (['create', 'batchCreate', 'update', 'delete'].includes(operation)) return 'write';
   return null;
 }
 
@@ -177,6 +178,57 @@ async function performRequest(
     authority,
     requestOptions(baseUrl, request),
   );
+}
+
+function batchCreateItems(context: AgentRuntimeContext, value: unknown): unknown[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new NodeOperationError(context.getNode(), 'LifeSpace Batch Create input must be an object');
+  }
+  const items = (value as Record<string, unknown>).items;
+  if (!Array.isArray(items) || items.length < 1 || items.length > 20) {
+    throw new NodeOperationError(context.getNode(), 'LifeSpace Batch Create requires 1-20 items');
+  }
+  return items;
+}
+
+function configuredBatchDelegationIds(
+  context: AgentRuntimeContext,
+  runtime: AgentRuntime,
+  itemCount: number,
+): string[] {
+  if (runtime.authority.mode === 'service') return [];
+
+  const raw = context.getNodeParameter('batchDelegationIds', runtime.itemIndex, '[]');
+  let parsed: unknown;
+  try {
+    parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch (error) {
+    throw new NodeOperationError(context.getNode(), error as Error, { itemIndex: runtime.itemIndex });
+  }
+  const configured = Array.isArray(parsed)
+    ? parsed.map((value) => String(value ?? '').trim()).filter(Boolean)
+    : [];
+
+  if (!configured.length && runtime.authority.delegationId) {
+    return Array.from({ length: itemCount }, () => runtime.authority.delegationId!);
+  }
+  if (configured.length !== itemCount || configured.some((value) => !/^dlg_[A-Za-z0-9_-]+$/u.test(value))) {
+    throw new NodeOperationError(
+      context.getNode(),
+      'Delegated Batch Create requires Batch Delegation IDs to contain exactly one valid dlg_* selector per item, or one fallback Delegation ID for the whole Tool',
+      { itemIndex: runtime.itemIndex },
+    );
+  }
+  return configured;
+}
+
+function authorityWithDelegation(
+  authority: LifeSpaceExecutionAuthority,
+  delegationId: string | null,
+): LifeSpaceExecutionAuthority {
+  return authority.mode === 'service'
+    ? authority
+    : { ...authority, delegationId };
 }
 
 type AgentReferenceFailure = {
@@ -608,10 +660,22 @@ export class LifeSpaceTool implements INodeType {
         name: 'delegationId',
         type: 'string',
         default: '',
-        required: true,
         placeholder: 'dlg_...',
         displayOptions: { show: { authorityMode: ['delegatedAgent'] } },
-        description: 'Opaque current Delegation selector. This is execution metadata and is never exposed as an LLM Tool argument.',
+        description: 'Opaque current Delegation selector. Required for ordinary delegated operations. For Batch Create it can be a reusable fallback when Batch Delegation IDs is empty. This is execution metadata and is never exposed as an LLM Tool argument.',
+      },
+      {
+        displayName: 'Batch Delegation IDs',
+        name: 'batchDelegationIds',
+        type: 'json',
+        default: '[]',
+        displayOptions: {
+          show: {
+            authorityMode: ['delegatedAgent'],
+            operation: ['batchCreate'],
+          },
+        },
+        description: 'Optional JSON array with exactly one dlg_* selector per generated Batch item. Use this for multiple single-use Delegations. If empty, Delegation ID is applied to every item and therefore must be reusable for multi-item Batch execution.',
       },
       {
         displayName: 'Space Name or ID',
@@ -635,6 +699,12 @@ export class LifeSpaceTool implements INodeType {
             value: 'create',
             description: 'Create one record using fields published by Runtime Discovery',
 												action: 'Create one record using fields published by runtime discovery',
+          },
+          {
+            name: 'Create Records (Batch)',
+            value: 'batchCreate',
+            description: 'Create 1-20 records of the pinned Record Type atomically in one LifeSpace Batch',
+            action: 'Create multiple records atomically in one LifeSpace batch',
           },
           {
             name: 'Delete Record',
@@ -853,8 +923,13 @@ export class LifeSpaceTool implements INodeType {
         { itemIndex },
       );
     }
-    const authority = await executionAuthority(context, itemIndex, required);
-    return { baseUrl, model, config, definition, authority };
+    const authority = await executionAuthority(
+      context,
+      itemIndex,
+      required,
+      { requireDelegation: operation !== 'batchCreate' },
+    );
+    return { baseUrl, model, config, definition, authority, itemIndex };
   }
 
   private async invokeAgentTool(
@@ -862,6 +937,50 @@ export class LifeSpaceTool implements INodeType {
     runtime: AgentRuntime,
     query: unknown,
   ): Promise<string> {
+    if (runtime.config.operation === 'batchCreate') {
+      const rawItems = batchCreateItems(context, query);
+      const delegationIds = configuredBatchDelegationIds(context, runtime, rawItems.length);
+      const createConfig: AgentToolConfig = { ...runtime.config, operation: 'create' };
+      const preparedItems: unknown[] = [];
+
+      for (let index = 0; index < rawItems.length; index += 1) {
+        const itemAuthority = runtime.authority.mode === 'service'
+          ? runtime.authority
+          : authorityWithDelegation(runtime.authority, delegationIds[index] ?? null);
+        const requester: AgentRelationRequester = async (options) => lifeSpaceRequest(
+          context,
+          itemAuthority,
+          options,
+        );
+        preparedItems.push(await prepareAgentInput(
+          context,
+          runtime.baseUrl,
+          runtime.model,
+          createConfig,
+          rawItems[index],
+          requester,
+        ));
+      }
+
+      const request = buildAgentToolRequest(
+        runtime.model,
+        runtime.config,
+        { items: preparedItems },
+      );
+      if (runtime.authority.mode === 'delegatedAgent') {
+        const operations = (request.body?.operations ?? []) as Array<Record<string, unknown>>;
+        request.body = {
+          operations: operations.map((operation, index) => ({
+            ...operation,
+            delegationId: delegationIds[index],
+          })),
+        };
+      }
+      const batchAuthority = authorityWithDelegation(runtime.authority, null);
+      const response = await performRequest(context, runtime.baseUrl, request, batchAuthority);
+      return stringifyToolOutput(response);
+    }
+
     const requester: AgentRelationRequester = async (options) => lifeSpaceRequest(
       context,
       runtime.authority,
