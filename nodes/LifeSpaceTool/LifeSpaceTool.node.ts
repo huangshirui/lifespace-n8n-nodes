@@ -245,8 +245,9 @@ function configuredBatchDelegationIds(
     ? parsed.map((value) => String(value ?? '').trim()).filter(Boolean)
     : [];
 
-  if (!configured.length && runtime.authority.delegationId) {
-    return Array.from({ length: itemCount }, () => runtime.authority.delegationId!);
+  const fallbackDelegationId = runtime.authority.delegationId;
+  if (!configured.length && fallbackDelegationId) {
+    return Array.from({ length: itemCount }, () => fallbackDelegationId);
   }
   if (configured.length !== itemCount || configured.some((value) => !/^dlg_[A-Za-z0-9_-]+$/u.test(value))) {
     throw new NodeOperationError(
