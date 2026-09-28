@@ -31,6 +31,7 @@ import {
   type DiscoveryField,
   type AgentRelationRequester,
   type DiscoveryModel,
+  type DiscoveryTransport,
 } from '../lifespaceDiscovery';
 import {
   buildAgentToolDefinition,
@@ -78,6 +79,38 @@ function requiredAccess(operation: string): DiscoveryAccess | null {
   return null;
 }
 
+function discoveryAccess(operation: string): DiscoveryAccess {
+  return operation === 'query' ? 'read' : 'write';
+}
+
+async function agentDiscoveryTransport(
+  context: ILoadOptionsFunctions,
+  requireReadDelegation: boolean,
+): Promise<DiscoveryTransport | undefined> {
+  const mode = loadOptionParameter(context, 'authorityMode') || 'service';
+  if (mode === 'service') return undefined;
+  if (mode !== 'delegatedAgent') {
+    throw new NodeOperationError(context.getNode(), `Unsupported LifeSpace authority mode ${mode}`);
+  }
+
+  const operation = loadOptionParameter(context, 'operation') || 'query';
+  const authority = await executionAuthority(
+    context,
+    0,
+    discoveryAccess(operation),
+    {
+      delegationParameter: 'readDelegationId',
+      requireDelegation: requireReadDelegation,
+    },
+  );
+  const credentials = await context.getCredentials('lifeSpaceAgentExecutionApi');
+  const baseUrl = delegatedAgentCoreBaseUrl(context, credentials);
+  return {
+    baseUrl,
+    request: async (options) => lifeSpaceRequest(context, authority, options),
+  };
+}
+
 async function selectedOptionModel(context: ILoadOptionsFunctions): Promise<{ model: DiscoveryModel; spaceId: string } | null> {
   const spaceId = loadOptionParameter(context, 'spaceId');
   const rawRecordType = loadOptionParameter(context, 'recordType');
@@ -91,7 +124,8 @@ async function selectedOptionModel(context: ILoadOptionsFunctions): Promise<{ mo
   // Legacy editor compatibility only. Runtime execution never refreshes semantics.
   const recordType = decodeRecordTypeSelector(rawRecordType);
   if (!recordType) return null;
-  const discovery = await loadRuntimeDiscovery.call(context);
+  const transport = await agentDiscoveryTransport(context, true);
+  const discovery = await loadRuntimeDiscovery.call(context, transport);
   const model = discoveryModel(discovery, spaceId, recordType.modelKey);
   return model ? { model, spaceId } : null;
 }
@@ -637,12 +671,12 @@ export class LifeSpaceTool implements INodeType {
           {
             name: 'Service Principal',
             value: 'service',
-            description: 'Use the existing LifeSpace Service API Token. Principal and Actor are the Service Principal.',
+            description: 'Use the existing LifeSpace Service API Token. Principal and Actor are the Service Principal',
           },
           {
             name: 'Delegated Agent',
             value: 'delegatedAgent',
-            description: 'Mint a short-lived Agent execution token for a User Principal and execute with an explicit Delegation selector.',
+            description: 'Mint a short-lived Agent execution token for a User Principal and execute with an explicit Delegation selector',
           },
         ],
         default: 'service',
@@ -655,7 +689,7 @@ export class LifeSpaceTool implements INodeType {
         required: true,
         placeholder: 'usr_...',
         displayOptions: { show: { authorityMode: ['delegatedAgent'] } },
-        description: 'Execution context only. This value is sent to LifeSpace Identity to mint the Agent token and is never exposed as an LLM Tool argument.',
+        description: 'Execution context only. This value is sent to LifeSpace Identity to mint the Agent token and is never exposed as an LLM Tool argument',
       },
       {
         displayName: 'Delegation ID',
@@ -664,7 +698,17 @@ export class LifeSpaceTool implements INodeType {
         default: '',
         placeholder: 'dlg_...',
         displayOptions: { show: { authorityMode: ['delegatedAgent'] } },
-        description: 'Opaque current Delegation selector. Required for ordinary delegated operations. For Batch Create it can be a reusable fallback when Batch Delegation IDs is empty. This is execution metadata and is never exposed as an LLM Tool argument.',
+        description: 'Opaque selector used only for the actual Tool query/mutation/action. For Batch Create it can be a reusable fallback when Batch Delegation IDs is empty. It is never exposed as an LLM Tool argument',
+      },
+      {
+        displayName: 'Read Delegation ID',
+        name: 'readDelegationId',
+        type: 'string',
+        default: '',
+        required: true,
+        placeholder: 'dlg_...',
+        displayOptions: { show: { authorityMode: ['delegatedAgent'] } },
+        description: 'Reusable model-read Delegation used only for semantic Discovery, relation-name resolution and optimistic-concurrency pre-reads. Keep single-use business Delegations in Delegation ID / Batch Delegation IDs',
       },
       {
         displayName: 'Batch Delegation IDs',
@@ -677,7 +721,7 @@ export class LifeSpaceTool implements INodeType {
             operation: ['batchCreate'],
           },
         },
-        description: 'Optional JSON array with exactly one dlg_* selector per generated Batch item. Use this for multiple single-use Delegations. If empty, Delegation ID is applied to every item and therefore must be reusable for multi-item Batch execution.',
+        description: 'Optional JSON array with exactly one dlg_* selector per generated Batch item. Use this for multiple single-use Delegations. If empty, Delegation ID is applied to every item and therefore must be reusable for multi-item Batch execution',
       },
       {
         displayName: 'Space Name or ID',
@@ -688,7 +732,7 @@ export class LifeSpaceTool implements INodeType {
         default: '',
         required: true,
         noDataExpression: true,
-        description: 'Fixes this Tool instance to one authorized LifeSpace Space. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+        description: 'Fixes this Tool instance to one authorized LifeSpace Space. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
       },
       {
         displayName: 'Operation',
@@ -706,7 +750,7 @@ export class LifeSpaceTool implements INodeType {
             name: 'Create Records (Batch)',
             value: 'batchCreate',
             description: 'Create 1-20 records of the pinned Record Type atomically in one LifeSpace Batch',
-            action: 'Create multiple records atomically in one LifeSpace batch',
+            action: 'Create multiple records atomically',
           },
           {
             name: 'Delete Record',
@@ -812,7 +856,8 @@ export class LifeSpaceTool implements INodeType {
   methods = {
     loadOptions: {
       async getSpaces(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-        const discovery = await loadRuntimeDiscoveryInventory.call(this);
+        const transport = await agentDiscoveryTransport(this, false);
+        const discovery = await loadRuntimeDiscoveryInventory.call(this, transport);
         return discovery.data.spaces.map((space) => ({
           name: space.spaceName?.trim() || space.spaceId,
           value: space.spaceId,
@@ -823,13 +868,14 @@ export class LifeSpaceTool implements INodeType {
         const operation = loadOptionParameter(this, 'operation') || 'query';
         if (!spaceId) return [];
 
-        const discovery = await loadRuntimeDiscoveryInventory.call(this);
+        const transport = await agentDiscoveryTransport(this, true);
+        const discovery = await loadRuntimeDiscoveryInventory.call(this, transport);
         const space = discoverySpace(discovery, spaceId);
         if (!space) return [];
 
         const candidates = space.models.filter((model) => modelSupportsOperation(model, operation));
         const models = await Promise.all(
-          candidates.map((model) => loadDesignTimeSemanticDetail.call(this, spaceId, model)),
+          candidates.map((model) => loadDesignTimeSemanticDetail.call(this, spaceId, model, transport)),
         );
 
         return models.map((model) => ({
