@@ -322,23 +322,6 @@ async function runtimeReadAuthority(
   );
 }
 
-function configuredDelegationId(
-  context: AgentRuntimeContext,
-  itemIndex: number,
-  parameter: string,
-  label: string,
-): string {
-  const value = String(context.getNodeParameter(parameter, itemIndex, '') ?? '').trim();
-  if (!/^dlg_[A-Za-z0-9_-]+$/u.test(value)) {
-    throw new NodeOperationError(
-      context.getNode(),
-      `${label} must be a valid dlg_* identifier`,
-      { itemIndex },
-    );
-  }
-  return value;
-}
-
 type AgentReferenceFailure = {
   code: 'REFERENCE_NOT_FOUND' | 'AMBIGUOUS_REFERENCE' | 'REFERENCE_LOOKUP_UNAVAILABLE';
   field: string;
