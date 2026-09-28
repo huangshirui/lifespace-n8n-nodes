@@ -145,7 +145,11 @@ function context(runtimeModel, business, overrides = {}) {
 }
 
 test('delegated Agent token mint is lazy and reused inside one Tool runtime', async () => {
-  const execution = context(model(), () => ({ data: { id: 'rec_lazy', version: 1 } }));
+  const execution = context(
+    model(),
+    () => ({ data: { id: 'rec_lazy', version: 1 } }),
+    { readDelegationId: '' },
+  );
   const tool = (await new LifeSpaceTool().supplyData.call(execution, 0)).response;
 
   assert.equal(
