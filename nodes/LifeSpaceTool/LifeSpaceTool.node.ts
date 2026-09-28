@@ -403,6 +403,74 @@ async function prepareAgentInput(
   return input;
 }
 
+type AgentAuthorityFailure = {
+  code:
+    | 'DELEGATION_REQUIRED'
+    | 'DELEGATION_INVALID'
+    | 'DELEGATION_SCOPE_INSUFFICIENT'
+    | 'PRINCIPAL_AUTHORITY_INSUFFICIENT'
+    | 'APPLICATION_ACCESS_INSUFFICIENT'
+    | 'CREDENTIAL_SCOPE_INSUFFICIENT'
+    | 'MODEL_OPERATION_UNSUPPORTED'
+    | 'POLICY_DENIED';
+  message: string;
+};
+
+const AUTHORITY_FAILURE_CODES = new Set<AgentAuthorityFailure['code']>([
+  'DELEGATION_REQUIRED',
+  'DELEGATION_INVALID',
+  'DELEGATION_SCOPE_INSUFFICIENT',
+  'PRINCIPAL_AUTHORITY_INSUFFICIENT',
+  'APPLICATION_ACCESS_INSUFFICIENT',
+  'CREDENTIAL_SCOPE_INSUFFICIENT',
+  'MODEL_OPERATION_UNSUPPORTED',
+  'POLICY_DENIED',
+]);
+
+function parseJsonCandidate(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
+}
+
+function authorityFailure(error: unknown): AgentAuthorityFailure | null {
+  const queue: unknown[] = [error];
+  const seen = new Set<unknown>();
+  while (queue.length) {
+    const current = parseJsonCandidate(queue.shift());
+    if (!current || typeof current !== 'object' || Array.isArray(current) || seen.has(current)) continue;
+    seen.add(current);
+    const object = current as Record<string, unknown>;
+    const nested = object.error;
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+      const apiError = nested as Record<string, unknown>;
+      const code = String(apiError.code ?? '') as AgentAuthorityFailure['code'];
+      if (AUTHORITY_FAILURE_CODES.has(code)) {
+        return {
+          code,
+          message: typeof apiError.message === 'string'
+            ? apiError.message
+            : 'LifeSpace denied the current execution authority',
+        };
+      }
+    }
+    for (const key of ['body', 'data', 'response', 'cause', 'description', 'message']) {
+      if (object[key] !== undefined) queue.push(object[key]);
+    }
+  }
+  return null;
+}
+
+function authorityFailureInstruction(failure: AgentAuthorityFailure): string {
+  if (failure.code.startsWith('DELEGATION_')) {
+    return 'Do not retry the same Tool call. The Application must obtain or select a valid current Delegation from the User Principal before trying again.';
+  }
+  return 'Do not retry the same Tool call unchanged. The current Principal/Application/credential/model policy does not authorize it.';
+}
+
 function referenceFailureInstruction(reference: AgentReferenceFailure): string {
   if (reference.code === 'REFERENCE_NOT_FOUND') {
     return 'Do not retry this Tool with the same or a guessed name/ID. Tell the user no matching LifeSpace reference exists in this Space and ask them to provide or choose an existing reference.';
@@ -414,6 +482,18 @@ function referenceFailureInstruction(reference: AgentReferenceFailure): string {
 }
 
 function toolFailureOutput(error: unknown, executionError: NodeOperationError): string {
+  const authority = authorityFailure(error);
+  if (authority) {
+    return JSON.stringify({
+      ok: false,
+      error: {
+        ...authority,
+        retryable: false,
+        nextAction: authority.code.startsWith('DELEGATION_') ? 'request_authorization' : 'report_failure',
+        instruction: authorityFailureInstruction(authority),
+      },
+    });
+  }
   const reference = parseReferenceFailure(error);
   if (reference) {
     return JSON.stringify({
@@ -869,7 +949,7 @@ export class LifeSpaceTool implements INodeType {
         });
       } catch (error) {
         const executionError = toolError(this, error);
-        const structuredFailure = parseReferenceFailure(error) ?? parseAgentQueryFailure(error);
+        const structuredFailure = authorityFailure(error) ?? parseReferenceFailure(error) ?? parseAgentQueryFailure(error);
         if (structuredFailure) {
           output.push({
             json: { response: toolFailureOutput(error, executionError) },
