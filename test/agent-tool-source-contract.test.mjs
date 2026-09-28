@@ -14,6 +14,13 @@ test('package registers separate human workflow and native Agent Tool surfaces',
   assert.equal(packageJson.n8n.nodes.includes('dist/nodes/LifeSpace/LifeSpace.node.js'), false);
   assert.equal(packageJson.dependencies?.['@langchain/core'], undefined);
   assert.equal(packageJson.peerDependencies?.['@langchain/core'], undefined);
+  assert.ok(packageJson.n8n.credentials.includes(
+    'dist/credentials/LifeSpaceAgentExecutionApi.credentials.js',
+  ));
+  assert.equal(
+    packageJson.n8n.credentials.includes('dist/credentials/LifeSpaceAgentExecution.credentials.js'),
+    false,
+  );
 });
 
 test('Agent Tool remains a native AiTool and keeps structural scope outside model input', async () => {
@@ -25,6 +32,9 @@ test('Agent Tool remains a native AiTool and keeps structural scope outside mode
   assert.match(projection, /LifeSpaceTool\.prototype\.supplyData\.call/u);
   assert.match(base, /async execute\(this: IExecuteFunctions/u);
   assert.match(base, /buildAgentToolRequest\(runtime\.model, runtime\.config, prepared\)/u);
+  assert.match(base, /name: 'readDelegationId'/u);
+  assert.match(base, /runtime\.readAuthority/u);
+  assert.match(base, /name: 'lifeSpaceAgentExecutionApi'/u);
   assert.doesNotMatch(projection, /@langchain\/core/u);
   assert.doesNotMatch(projection, /DynamicStructuredTool/u);
 });
