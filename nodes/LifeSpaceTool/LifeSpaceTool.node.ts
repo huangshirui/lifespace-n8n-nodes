@@ -580,6 +580,16 @@ function parseJsonCandidate(value: unknown): unknown {
 }
 
 function authorityFailure(error: unknown): AgentAuthorityFailure | null {
+  if (
+    error instanceof Error
+    && error.message.includes('Delegation ID is required for delegated Agent execution')
+  ) {
+    return {
+      code: 'DELEGATION_REQUIRED',
+      message: 'Delegated Agent execution requires an explicit current Delegation selector',
+    };
+  }
+
   const queue: unknown[] = [error];
   const seen = new Set<unknown>();
   while (queue.length) {
