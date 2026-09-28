@@ -371,6 +371,11 @@ type SemanticDetailResponse = {
   data: SemanticDetail;
 };
 
+export type DiscoveryTransport = {
+  baseUrl: string;
+  request: (options: IHttpRequestOptions) => Promise<unknown>;
+};
+
 type DiscoverySelection = {
   spaceId: string;
   modelKey: string;
@@ -420,20 +425,25 @@ async function authenticatedGet<T>(
   context: ILoadOptionsFunctions | IExecuteFunctions | ISupplyDataFunctions,
   baseUrl: string,
   path: string,
+  transport?: DiscoveryTransport,
 ): Promise<T> {
-  return await context.helpers.httpRequestWithAuthentication.call(
-    context,
-    'lifeSpaceApi',
-    { method: 'GET', url: apiUrl(baseUrl, path), json: true },
-  ) as T;
+  const options: IHttpRequestOptions = { method: 'GET', url: apiUrl(baseUrl, path), json: true };
+  return transport
+    ? await transport.request(options) as T
+    : await context.helpers.httpRequestWithAuthentication.call(
+      context,
+      'lifeSpaceApi',
+      options,
+    ) as T;
 }
 
 async function requestFullRuntimeDiscovery(
   context: ILoadOptionsFunctions | IExecuteFunctions,
   baseUrl: string,
+  transport?: DiscoveryTransport,
 ): Promise<DiscoveryResponse> {
   try {
-    return await authenticatedGet<DiscoveryResponse>(context, baseUrl, '/me/_discovery');
+    return await authenticatedGet<DiscoveryResponse>(context, baseUrl, '/me/_discovery', transport);
   } catch (error) {
     throw new NodeApiError(context.getNode(), error as JsonObject);
   }
@@ -567,9 +577,11 @@ export async function loadDesignTimeSemanticDetail(
   this: ILoadOptionsFunctions,
   spaceId: string,
   identity: Pick<DiscoveryModel, 'key' | 'version' | 'schemaHash' | 'access'>,
+  transport?: DiscoveryTransport,
 ): Promise<DiscoveryModel> {
-  const credentials = await this.getCredentials('lifeSpaceApi');
-  const baseUrl = normalizeBaseUrl(credentials.baseUrl);
+  const baseUrl = transport
+    ? transport.baseUrl
+    : normalizeBaseUrl((await this.getCredentials('lifeSpaceApi')).baseUrl);
   const path = replacePathTemplate(MODEL_SEMANTIC_DETAIL_PATH, {
     spaceId,
     modelKey: identity.key,
@@ -577,7 +589,7 @@ export async function loadDesignTimeSemanticDetail(
 
   let response: SemanticDetailResponse;
   try {
-    response = await authenticatedGet<SemanticDetailResponse>(this, baseUrl, path);
+    response = await authenticatedGet<SemanticDetailResponse>(this, baseUrl, path, transport);
   } catch (error) {
     throw new NodeApiError(this.getNode(), error as JsonObject);
   }
@@ -602,10 +614,11 @@ async function requestProgressiveRuntimeDiscovery(
   context: ILoadOptionsFunctions | IExecuteFunctions | ISupplyDataFunctions,
   baseUrl: string,
   selection?: DiscoverySelection,
+  transport?: DiscoveryTransport,
 ): Promise<DiscoveryResponse | null> {
   let inventory: InventoryResponse;
   try {
-    inventory = await authenticatedGet<InventoryResponse>(context, baseUrl, '/me/_discovery/inventory');
+    inventory = await authenticatedGet<InventoryResponse>(context, baseUrl, '/me/_discovery/inventory', transport);
   } catch {
     return null;
   }
@@ -631,7 +644,7 @@ async function requestProgressiveRuntimeDiscovery(
         modelKey: selectedIdentity.key,
       });
       try {
-        const response = await authenticatedGet<SemanticDetailResponse>(context, baseUrl, path);
+        const response = await authenticatedGet<SemanticDetailResponse>(context, baseUrl, path, transport);
         const detail = response.data;
         if (!detail || detail.key !== selectedIdentity.key || detail.version !== selectedIdentity.version || detail.schemaHash !== selectedIdentity.schemaHash) {
           throw new NodeOperationError(
@@ -795,29 +808,37 @@ export async function searchRelationTargetsForAgent(
   return parseRelationTargets(context, response).items;
 }
 
-export async function loadRuntimeDiscoveryInventory(this: ILoadOptionsFunctions): Promise<DiscoveryResponse> {
-  const credentials = await this.getCredentials('lifeSpaceApi');
-  const baseUrl = normalizeBaseUrl(credentials.baseUrl);
-  const progressive = await requestProgressiveRuntimeDiscovery(this, baseUrl);
-  return progressive ?? requestFullRuntimeDiscovery(this, baseUrl);
+export async function loadRuntimeDiscoveryInventory(
+  this: ILoadOptionsFunctions,
+  transport?: DiscoveryTransport,
+): Promise<DiscoveryResponse> {
+  const baseUrl = transport
+    ? transport.baseUrl
+    : normalizeBaseUrl((await this.getCredentials('lifeSpaceApi')).baseUrl);
+  const progressive = await requestProgressiveRuntimeDiscovery(this, baseUrl, undefined, transport);
+  return progressive ?? requestFullRuntimeDiscovery(this, baseUrl, transport);
 }
 
-export async function loadRuntimeDiscovery(this: ILoadOptionsFunctions): Promise<DiscoveryResponse> {
-  const credentials = await this.getCredentials('lifeSpaceApi');
-  const baseUrl = normalizeBaseUrl(credentials.baseUrl);
+export async function loadRuntimeDiscovery(
+  this: ILoadOptionsFunctions,
+  transport?: DiscoveryTransport,
+): Promise<DiscoveryResponse> {
+  const baseUrl = transport
+    ? transport.baseUrl
+    : normalizeBaseUrl((await this.getCredentials('lifeSpaceApi')).baseUrl);
   const recordType = loadOptionParameter(this, 'recordType');
   const decodedRecordType = recordType ? decodeRecordTypeSelector(recordType) : null;
   if (recordType && !decodedRecordType) {
     throw new NodeOperationError(this.getNode(), 'LifeSpace Record Type selector is invalid. Choose a Record Type from Discovery or pass a Trigger recordType value.');
   }
   const legacyModelRoute = recordType ? '' : loadOptionParameter(this, 'modelRoute');
-  if (legacyModelRoute) return requestFullRuntimeDiscovery(this, baseUrl);
+  if (legacyModelRoute) return requestFullRuntimeDiscovery(this, baseUrl, transport);
   const selection = {
     spaceId: loadOptionParameter(this, 'spaceId'),
     modelKey: decodedRecordType?.modelKey ?? '',
   };
-  const progressive = await requestProgressiveRuntimeDiscovery(this, baseUrl, selection);
-  return progressive ?? requestFullRuntimeDiscovery(this, baseUrl);
+  const progressive = await requestProgressiveRuntimeDiscovery(this, baseUrl, selection, transport);
+  return progressive ?? requestFullRuntimeDiscovery(this, baseUrl, transport);
 }
 
 export function discoverySpace(discovery: DiscoveryResponse, spaceId: string): DiscoverySpace | undefined {
