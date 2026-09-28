@@ -68,15 +68,21 @@ export async function delegatedAgentAuthority(
   context: LifeSpaceRuntimeContext,
   itemIndex: number,
   scopes: string[],
-  options: { requireDelegation?: boolean } = {},
+  options: {
+    requireDelegation?: boolean;
+    principalParameter?: string;
+    delegationParameter?: string;
+  } = {},
 ): Promise<LifeSpaceExecutionAuthority> {
+  const principalParameter = options.principalParameter ?? 'principalUserId';
+  const delegationParameter = options.delegationParameter ?? 'delegationId';
   const principalUserId = requiredString(
     context,
-    context.getNodeParameter('principalUserId', itemIndex, ''),
+    context.getNodeParameter(principalParameter, itemIndex, ''),
     'Principal User ID',
     /^usr_[A-Za-z0-9_-]+$/u,
   );
-  const delegationValue = String(context.getNodeParameter('delegationId', itemIndex, '') ?? '').trim();
+  const delegationValue = String(context.getNodeParameter(delegationParameter, itemIndex, '') ?? '').trim();
   if (options.requireDelegation !== false && !/^dlg_[A-Za-z0-9_-]+$/u.test(delegationValue)) {
     throw new NodeOperationError(
       context.getNode(),
@@ -142,9 +148,15 @@ export async function executionAuthority(
   context: LifeSpaceRuntimeContext,
   itemIndex: number,
   requiredAccess: 'read' | 'write' | 'manage',
-  options: { requireDelegation?: boolean } = {},
+  options: {
+    requireDelegation?: boolean;
+    modeParameter?: string;
+    principalParameter?: string;
+    delegationParameter?: string;
+  } = {},
 ): Promise<LifeSpaceExecutionAuthority> {
-  const mode = String(context.getNodeParameter('authorityMode', itemIndex, 'service') ?? 'service');
+  const modeParameter = options.modeParameter ?? 'authorityMode';
+  const mode = String(context.getNodeParameter(modeParameter, itemIndex, 'service') ?? 'service');
   if (mode === 'service') return { mode: 'service' };
   if (mode !== 'delegatedAgent') {
     throw new NodeOperationError(context.getNode(), `Unsupported LifeSpace authority mode ${mode}`);
