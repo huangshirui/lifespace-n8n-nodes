@@ -64,13 +64,18 @@ type StructuralAiTool = {
 
 type AgentRuntimeContext = IExecuteFunctions | ISupplyDataFunctions;
 
+type AgentRuntimeAuthorities = {
+  authority: LifeSpaceExecutionAuthority;
+  readAuthority: LifeSpaceExecutionAuthority;
+};
+
 type AgentRuntime = {
   baseUrl: string;
   model: DiscoveryModel;
   config: AgentToolConfig;
   definition: ReturnType<typeof buildAgentToolDefinition>;
-  authority: LifeSpaceExecutionAuthority;
-  readAuthority: LifeSpaceExecutionAuthority;
+  requiredAccess: DiscoveryAccess;
+  authorityPromise?: Promise<AgentRuntimeAuthorities>;
   itemIndex: number;
 };
 
@@ -230,9 +235,10 @@ function batchCreateItems(context: AgentRuntimeContext, value: unknown): unknown
 function configuredBatchDelegationIds(
   context: AgentRuntimeContext,
   runtime: AgentRuntime,
+  authority: LifeSpaceExecutionAuthority,
   itemCount: number,
 ): string[] {
-  if (runtime.authority.mode === 'service') return [];
+  if (authority.mode === 'service') return [];
 
   const raw = context.getNodeParameter('batchDelegationIds', runtime.itemIndex, '[]');
   let parsed: unknown;
@@ -245,7 +251,7 @@ function configuredBatchDelegationIds(
     ? parsed.map((value) => String(value ?? '').trim()).filter(Boolean)
     : [];
 
-  const fallbackDelegationId = runtime.authority.delegationId;
+  const fallbackDelegationId = authority.delegationId;
   if (!configured.length && fallbackDelegationId) {
     return Array.from({ length: itemCount }, () => fallbackDelegationId);
   }
@@ -266,6 +272,38 @@ function authorityWithDelegation(
   return authority.mode === 'service'
     ? authority
     : { ...authority, delegationId };
+}
+
+async function runtimeAuthorities(
+  context: AgentRuntimeContext,
+  runtime: AgentRuntime,
+): Promise<AgentRuntimeAuthorities> {
+  if (!runtime.authorityPromise) {
+    runtime.authorityPromise = (async () => {
+      const authority = await executionAuthority(
+        context,
+        runtime.itemIndex,
+        runtime.requiredAccess,
+        { requireDelegation: runtime.config.operation !== 'batchCreate' },
+      );
+      const readAuthority = authority.mode === 'service'
+        ? authority
+        : authorityWithDelegation(
+          authority,
+          configuredDelegationId(
+            context,
+            runtime.itemIndex,
+            'readDelegationId',
+            'Read Delegation ID',
+          ),
+        );
+      return { authority, readAuthority };
+    })().catch((error) => {
+      runtime.authorityPromise = undefined;
+      throw error;
+    });
+  }
+  return await runtime.authorityPromise;
 }
 
 function configuredDelegationId(
@@ -1009,24 +1047,14 @@ export class LifeSpaceTool implements INodeType {
         { itemIndex },
       );
     }
-    const authority = await executionAuthority(
-      context,
+    return {
+      baseUrl,
+      model,
+      config,
+      definition,
+      requiredAccess: required,
       itemIndex,
-      required,
-      { requireDelegation: operation !== 'batchCreate' },
-    );
-    const readAuthority = authority.mode === 'service'
-      ? authority
-      : authorityWithDelegation(
-        authority,
-        configuredDelegationId(
-          context,
-          itemIndex,
-          'readDelegationId',
-          'Read Delegation ID',
-        ),
-      );
-    return { baseUrl, model, config, definition, authority, readAuthority, itemIndex };
+    };
   }
 
   private async invokeAgentTool(
@@ -1034,16 +1062,18 @@ export class LifeSpaceTool implements INodeType {
     runtime: AgentRuntime,
     query: unknown,
   ): Promise<string> {
+    const { authority, readAuthority } = await runtimeAuthorities(context, runtime);
+
     if (runtime.config.operation === 'batchCreate') {
       const rawItems = batchCreateItems(context, query);
-      const delegationIds = configuredBatchDelegationIds(context, runtime, rawItems.length);
+      const delegationIds = configuredBatchDelegationIds(context, runtime, authority, rawItems.length);
       const createConfig: AgentToolConfig = { ...runtime.config, operation: 'create' };
       const preparedItems: unknown[] = [];
 
       for (let index = 0; index < rawItems.length; index += 1) {
         const requester: AgentRelationRequester = async (options) => lifeSpaceRequest(
           context,
-          runtime.readAuthority,
+          readAuthority,
           options,
         );
         preparedItems.push(await prepareAgentInput(
@@ -1061,7 +1091,7 @@ export class LifeSpaceTool implements INodeType {
         runtime.config,
         { items: preparedItems },
       );
-      if (runtime.authority.mode === 'delegatedAgent') {
+      if (authority.mode === 'delegatedAgent') {
         const operations = (request.body?.operations ?? []) as Array<Record<string, unknown>>;
         request.body = {
           operations: operations.map((operation, index) => ({
@@ -1070,14 +1100,14 @@ export class LifeSpaceTool implements INodeType {
           })),
         };
       }
-      const batchAuthority = authorityWithDelegation(runtime.authority, null);
+      const batchAuthority = authorityWithDelegation(authority, null);
       const response = await performRequest(context, runtime.baseUrl, request, batchAuthority);
       return stringifyToolOutput(response);
     }
 
     const requester: AgentRelationRequester = async (options) => lifeSpaceRequest(
       context,
-      runtime.readAuthority,
+      readAuthority,
       options,
     );
     const prepared = await prepareAgentInput(
@@ -1093,7 +1123,7 @@ export class LifeSpaceTool implements INodeType {
       const recordResponse = await performRequest(context, runtime.baseUrl, {
         method: 'GET',
         path: currentRecordPath(request),
-      }, runtime.readAuthority);
+      }, readAuthority);
       request = buildAgentToolRequest(
         runtime.model,
         runtime.config,
@@ -1101,7 +1131,7 @@ export class LifeSpaceTool implements INodeType {
         currentRecordVersion(context, recordResponse),
       );
     }
-    const response = await performRequest(context, runtime.baseUrl, request, runtime.authority);
+    const response = await performRequest(context, runtime.baseUrl, request, authority);
     return stringifyToolOutput(response);
   }
 
