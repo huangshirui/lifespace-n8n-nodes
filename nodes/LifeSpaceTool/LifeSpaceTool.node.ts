@@ -64,18 +64,13 @@ type StructuralAiTool = {
 
 type AgentRuntimeContext = IExecuteFunctions | ISupplyDataFunctions;
 
-type AgentRuntimeAuthorities = {
-  authority: LifeSpaceExecutionAuthority;
-  readAuthority: LifeSpaceExecutionAuthority;
-};
-
 type AgentRuntime = {
   baseUrl: string;
   model: DiscoveryModel;
   config: AgentToolConfig;
   definition: ReturnType<typeof buildAgentToolDefinition>;
   requiredAccess: DiscoveryAccess;
-  authorityPromise?: Promise<AgentRuntimeAuthorities>;
+  authorityPromise?: Promise<LifeSpaceExecutionAuthority>;
   itemIndex: number;
 };
 
@@ -274,36 +269,57 @@ function authorityWithDelegation(
     : { ...authority, delegationId };
 }
 
-async function runtimeAuthorities(
+async function runtimeAuthority(
   context: AgentRuntimeContext,
   runtime: AgentRuntime,
-): Promise<AgentRuntimeAuthorities> {
+): Promise<LifeSpaceExecutionAuthority> {
   if (!runtime.authorityPromise) {
-    runtime.authorityPromise = (async () => {
-      const authority = await executionAuthority(
-        context,
-        runtime.itemIndex,
-        runtime.requiredAccess,
-        { requireDelegation: runtime.config.operation !== 'batchCreate' },
-      );
-      const readAuthority = authority.mode === 'service'
-        ? authority
-        : authorityWithDelegation(
-          authority,
-          configuredDelegationId(
-            context,
-            runtime.itemIndex,
-            'readDelegationId',
-            'Read Delegation ID',
-          ),
-        );
-      return { authority, readAuthority };
-    })().catch((error) => {
+    runtime.authorityPromise = executionAuthority(
+      context,
+      runtime.itemIndex,
+      runtime.requiredAccess,
+      { requireDelegation: runtime.config.operation !== 'batchCreate' },
+    ).catch((error) => {
       runtime.authorityPromise = undefined;
       throw error;
     });
   }
   return await runtime.authorityPromise;
+}
+
+function configuredOptionalDelegationId(
+  context: AgentRuntimeContext,
+  itemIndex: number,
+  parameter: string,
+  label: string,
+): string | null {
+  const value = String(context.getNodeParameter(parameter, itemIndex, '') ?? '').trim();
+  if (!value) return null;
+  if (!/^dlg_[A-Za-z0-9_-]+$/u.test(value)) {
+    throw new NodeOperationError(
+      context.getNode(),
+      `${label} must be a valid dlg_* identifier`,
+      { itemIndex },
+    );
+  }
+  return value;
+}
+
+async function runtimeReadAuthority(
+  context: AgentRuntimeContext,
+  runtime: AgentRuntime,
+): Promise<LifeSpaceExecutionAuthority> {
+  const authority = await runtimeAuthority(context, runtime);
+  if (authority.mode === 'service') return authority;
+  return authorityWithDelegation(
+    authority,
+    configuredOptionalDelegationId(
+      context,
+      runtime.itemIndex,
+      'readDelegationId',
+      'Read Delegation ID',
+    ),
+  );
 }
 
 function configuredDelegationId(
@@ -762,10 +778,9 @@ export class LifeSpaceTool implements INodeType {
         name: 'readDelegationId',
         type: 'string',
         default: '',
-        required: true,
         placeholder: 'dlg_...',
         displayOptions: { show: { authorityMode: ['delegatedAgent'] } },
-        description: 'Reusable model-read Delegation used only for semantic Discovery, relation-name resolution and optimistic-concurrency pre-reads. Keep single-use business Delegations in Delegation ID / Batch Delegation IDs.',
+        description: 'Model-read Delegation for delegated design-time Discovery and only those runtime calls that actually need relation-name resolution or optimistic-concurrency pre-reads. It is not used by pure mutations that need no helper read',
       },
       {
         displayName: 'Batch Delegation IDs',
@@ -1062,7 +1077,7 @@ export class LifeSpaceTool implements INodeType {
     runtime: AgentRuntime,
     query: unknown,
   ): Promise<string> {
-    const { authority, readAuthority } = await runtimeAuthorities(context, runtime);
+    const authority = await runtimeAuthority(context, runtime);
 
     if (runtime.config.operation === 'batchCreate') {
       const rawItems = batchCreateItems(context, query);
@@ -1073,7 +1088,7 @@ export class LifeSpaceTool implements INodeType {
       for (let index = 0; index < rawItems.length; index += 1) {
         const requester: AgentRelationRequester = async (options) => lifeSpaceRequest(
           context,
-          readAuthority,
+          await runtimeReadAuthority(context, runtime),
           options,
         );
         preparedItems.push(await prepareAgentInput(
@@ -1107,7 +1122,7 @@ export class LifeSpaceTool implements INodeType {
 
     const requester: AgentRelationRequester = async (options) => lifeSpaceRequest(
       context,
-      readAuthority,
+      await runtimeReadAuthority(context, runtime),
       options,
     );
     const prepared = await prepareAgentInput(
@@ -1123,7 +1138,7 @@ export class LifeSpaceTool implements INodeType {
       const recordResponse = await performRequest(context, runtime.baseUrl, {
         method: 'GET',
         path: currentRecordPath(request),
-      }, readAuthority);
+      }, await runtimeReadAuthority(context, runtime));
       request = buildAgentToolRequest(
         runtime.model,
         runtime.config,
