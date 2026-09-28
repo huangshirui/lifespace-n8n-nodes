@@ -81,7 +81,7 @@ function snapshot(runtimeModel) {
   });
 }
 
-function context(runtimeModel, business) {
+function context(runtimeModel, business, overrides = {}) {
   const calls = [];
   const parameters = {
     authorityMode: 'delegatedAgent',
@@ -95,6 +95,7 @@ function context(runtimeModel, business) {
     capabilityQueryKey: '',
     actionKey: '',
     descriptionOverride: '',
+    ...overrides,
   };
   return {
     calls,
@@ -222,4 +223,72 @@ test('Authority v2 denials are returned as deterministic non-retryable Tool resu
       instruction: 'Do not retry the same Tool call. The Application must obtain or select a valid current Delegation from the User Principal before trying again.',
     },
   });
+});
+
+
+test('delegated Update uses Read Delegation for version lookup and business Delegation only for mutation', async () => {
+  const coreCalls = [];
+  const execution = context(model(), (options) => {
+    coreCalls.push(options);
+    if (options.method === 'GET') return { data: { id: 'rec_update', version: 7 } };
+    return { data: { id: 'rec_update', version: 8 } };
+  }, {
+    operation: 'update',
+  });
+
+  const tool = (await new LifeSpaceTool().supplyData.call(execution, 0)).response;
+  await tool.invoke({ recordId: 'rec_update', name: 'Updated' });
+
+  assert.equal(coreCalls.length, 2);
+  assert.equal(coreCalls[0].method, 'GET');
+  assert.equal(coreCalls[0].headers['X-LifeSpace-Delegation-Id'], READ_DELEGATION);
+  assert.equal(coreCalls[1].method, 'PATCH');
+  assert.equal(coreCalls[1].headers['X-LifeSpace-Delegation-Id'], DELEGATION);
+  assert.equal(coreCalls[1].body.version, 7);
+});
+
+test('delegated Batch Create sends one atomic Core mutation with per-item Delegation selectors', async () => {
+  const coreCalls = [];
+  const execution = context(model(), (options) => {
+    coreCalls.push(options);
+    return {
+      data: {
+        changeSetId: 'cgs_test',
+        items: [
+          { recordId: 'rec_1', version: 1 },
+          { recordId: 'rec_2', version: 1 },
+        ],
+      },
+    };
+  }, {
+    operation: 'batchCreate',
+    delegationId: '',
+    batchDelegationIds: JSON.stringify(['dlg_one', 'dlg_two']),
+  });
+
+  const tool = (await new LifeSpaceTool().supplyData.call(execution, 0)).response;
+  assert.equal(Object.hasOwn(tool.schema.properties, 'delegationId'), false);
+  assert.equal(Object.hasOwn(tool.schema.properties, 'batchDelegationIds'), false);
+
+  const result = JSON.parse(await tool.invoke({
+    items: [{ name: 'One' }, { name: 'Two' }],
+  }));
+
+  assert.equal(result.data.changeSetId, 'cgs_test');
+  assert.equal(coreCalls.length, 1);
+  assert.equal(coreCalls[0].method, 'POST');
+  assert.equal(coreCalls[0].url, `${CORE_BASE}/spaces/spc_test/models/batch`);
+  assert.equal(coreCalls[0].headers.Authorization, 'Bearer agent.jwt.test');
+  assert.equal(coreCalls[0].headers['X-LifeSpace-Delegation-Id'], undefined);
+  assert.deepEqual(coreCalls[0].body, {
+    operations: [
+      { operation: 'create', modelKey: 'task', data: { name: 'One' }, delegationId: 'dlg_one' },
+      { operation: 'create', modelKey: 'task', data: { name: 'Two' }, delegationId: 'dlg_two' },
+    ],
+  });
+  assert.equal(
+    execution.calls.some((call) => call.credentialName === 'lifeSpaceApi'),
+    false,
+    'delegated Batch must not use Service PAT',
+  );
 });
