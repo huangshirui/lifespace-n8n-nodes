@@ -70,6 +70,7 @@ type AgentRuntime = {
   config: AgentToolConfig;
   definition: ReturnType<typeof buildAgentToolDefinition>;
   authority: LifeSpaceExecutionAuthority;
+  readAuthority: LifeSpaceExecutionAuthority;
   itemIndex: number;
 };
 
@@ -264,6 +265,23 @@ function authorityWithDelegation(
   return authority.mode === 'service'
     ? authority
     : { ...authority, delegationId };
+}
+
+function configuredDelegationId(
+  context: AgentRuntimeContext,
+  itemIndex: number,
+  parameter: string,
+  label: string,
+): string {
+  const value = String(context.getNodeParameter(parameter, itemIndex, '') ?? '').trim();
+  if (!/^dlg_[A-Za-z0-9_-]+$/u.test(value)) {
+    throw new NodeOperationError(
+      context.getNode(),
+      `${label} must be a valid dlg_* identifier`,
+      { itemIndex },
+    );
+  }
+  return value;
 }
 
 type AgentReferenceFailure = {
@@ -984,7 +1002,18 @@ export class LifeSpaceTool implements INodeType {
       required,
       { requireDelegation: operation !== 'batchCreate' },
     );
-    return { baseUrl, model, config, definition, authority, itemIndex };
+    const readAuthority = authority.mode === 'service'
+      ? authority
+      : authorityWithDelegation(
+        authority,
+        configuredDelegationId(
+          context,
+          itemIndex,
+          'readDelegationId',
+          'Read Delegation ID',
+        ),
+      );
+    return { baseUrl, model, config, definition, authority, readAuthority, itemIndex };
   }
 
   private async invokeAgentTool(
@@ -999,12 +1028,9 @@ export class LifeSpaceTool implements INodeType {
       const preparedItems: unknown[] = [];
 
       for (let index = 0; index < rawItems.length; index += 1) {
-        const itemAuthority = runtime.authority.mode === 'service'
-          ? runtime.authority
-          : authorityWithDelegation(runtime.authority, delegationIds[index] ?? null);
         const requester: AgentRelationRequester = async (options) => lifeSpaceRequest(
           context,
-          itemAuthority,
+          runtime.readAuthority,
           options,
         );
         preparedItems.push(await prepareAgentInput(
@@ -1038,7 +1064,7 @@ export class LifeSpaceTool implements INodeType {
 
     const requester: AgentRelationRequester = async (options) => lifeSpaceRequest(
       context,
-      runtime.authority,
+      runtime.readAuthority,
       options,
     );
     const prepared = await prepareAgentInput(
@@ -1054,7 +1080,7 @@ export class LifeSpaceTool implements INodeType {
       const recordResponse = await performRequest(context, runtime.baseUrl, {
         method: 'GET',
         path: currentRecordPath(request),
-      }, runtime.authority);
+      }, runtime.readAuthority);
       request = buildAgentToolRequest(
         runtime.model,
         runtime.config,
