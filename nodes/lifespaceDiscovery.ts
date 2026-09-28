@@ -1,5 +1,6 @@
 import type {
   IExecuteFunctions,
+  IHttpRequestOptions,
   ILoadOptionsFunctions,
   ISupplyDataFunctions,
   JsonObject,
@@ -751,6 +752,8 @@ export async function loadRelationTargets(
   return targets;
 }
 
+export type AgentRelationRequester = (options: IHttpRequestOptions) => Promise<unknown>;
+
 export async function searchRelationTargetsForAgent(
   context: IExecuteFunctions | ISupplyDataFunctions,
   baseUrl: string,
@@ -758,6 +761,7 @@ export async function searchRelationTargetsForAgent(
   modelKey: string,
   field: DiscoveryField,
   query: string,
+  requester?: AgentRelationRequester,
 ): Promise<RelationTarget[]> {
   const lookup = field.relation?.lookup;
   if (!lookup?.supported) {
@@ -777,11 +781,14 @@ export async function searchRelationTargetsForAgent(
   };
   let response: RelationTargetResponse;
   try {
-    response = await context.helpers.httpRequestWithAuthentication.call(
-      context,
-      'lifeSpaceApi',
-      { method: 'GET', url, qs, json: true },
-    ) as RelationTargetResponse;
+    const options: IHttpRequestOptions = { method: 'GET', url, qs, json: true };
+    response = requester
+      ? await requester(options) as RelationTargetResponse
+      : await context.helpers.httpRequestWithAuthentication.call(
+        context,
+        'lifeSpaceApi',
+        options,
+      ) as RelationTargetResponse;
   } catch (error) {
     throw new NodeApiError(context.getNode(), error as JsonObject);
   }
