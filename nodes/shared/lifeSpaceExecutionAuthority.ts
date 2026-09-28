@@ -40,11 +40,18 @@ function nodeParameter(
       const current = loadContext.getCurrentNodeParameter(name);
       if (current !== undefined) return current;
     } catch {
-      // Runtime contexts do not always expose editor-current parameters.
+      // Fall back to the saved design-time parameter below.
+    }
+    try {
+      return loadContext.getNodeParameter(name, fallback as never);
+    } catch {
+      return fallback;
     }
   }
+
   try {
-    return context.getNodeParameter(name, itemIndex, fallback as never);
+    const runtimeContext = context as IExecuteFunctions | ISupplyDataFunctions;
+    return runtimeContext.getNodeParameter(name, itemIndex, fallback as never);
   } catch {
     return fallback;
   }
