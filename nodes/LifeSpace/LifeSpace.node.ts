@@ -33,6 +33,7 @@ import {
   encodeLifeSpaceActionSnapshot,
 } from '../shared/lifeSpaceActionSnapshot';
 import {
+  delegatedAgentCoreBaseUrl,
   executionAuthority,
   lifeSpaceRequest,
 } from '../shared/lifeSpaceExecutionAuthority';
@@ -826,9 +827,15 @@ export class LifeSpace implements INodeType {
       {
         name: 'lifeSpaceApi',
         required: true,
+        displayOptions: {
+          hide: {
+            resource: ['batchMutation'],
+            batchAuthorityMode: ['delegatedAgent'],
+          },
+        },
       },
       {
-        name: 'lifeSpaceAgentExecution',
+        name: 'lifeSpaceAgentExecutionApi',
         required: true,
         displayOptions: {
           show: {
@@ -1369,9 +1376,6 @@ export class LifeSpace implements INodeType {
   async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
     const items = this.getInputData();
     const output: INodeExecutionData[] = [];
-    const credentials = await this.getCredentials('lifeSpaceApi');
-    const baseUrl = normalizeBaseUrl(credentials.baseUrl);
-
     for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
       try {
         const resource = this.getNodeParameter('resource', itemIndex) as string;
@@ -1385,6 +1389,12 @@ export class LifeSpace implements INodeType {
           const batchAuthorityMode = String(
             this.getNodeParameter('batchAuthorityMode', itemIndex, 'service') ?? 'service',
           );
+          const baseUrl = batchAuthorityMode === 'delegatedAgent'
+            ? delegatedAgentCoreBaseUrl(
+              this,
+              await this.getCredentials('lifeSpaceAgentExecutionApi', itemIndex),
+            )
+            : normalizeBaseUrl((await this.getCredentials('lifeSpaceApi', itemIndex)).baseUrl);
           const operations = batchMutationOperations(
             this,
             itemIndex,
@@ -1409,6 +1419,9 @@ export class LifeSpace implements INodeType {
             json: true,
           });
         } else if (resource === 'modelRecord') {
+          const baseUrl = normalizeBaseUrl(
+            (await this.getCredentials('lifeSpaceApi', itemIndex)).baseUrl,
+          );
           const operation = this.getNodeParameter('operation', itemIndex) as string;
           const rawSpaceId = String(this.getNodeParameter('spaceId', itemIndex));
           const recordType = decodeRecordTypeSelector(this.getNodeParameter('recordType', itemIndex, ''));
@@ -1536,6 +1549,9 @@ export class LifeSpace implements INodeType {
             response = await this.helpers.httpRequestWithAuthentication.call(this, 'lifeSpaceApi', options);
           }
         } else {
+          const baseUrl = normalizeBaseUrl(
+            (await this.getCredentials('lifeSpaceApi', itemIndex)).baseUrl,
+          );
           const method = this.getNodeParameter('method', itemIndex) as IHttpRequestOptions['method'];
           const path = String(this.getNodeParameter('path', itemIndex));
           const options: IHttpRequestOptions = {
