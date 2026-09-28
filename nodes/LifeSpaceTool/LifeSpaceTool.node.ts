@@ -47,6 +47,7 @@ import {
   encodeAgentToolSemanticSnapshot,
 } from '../agent/lifeSpaceToolSnapshot';
 import {
+  delegatedAgentCoreBaseUrl,
   executionAuthority,
   lifeSpaceRequest,
   type LifeSpaceExecutionAuthority,
@@ -618,9 +619,10 @@ export class LifeSpaceTool implements INodeType {
       {
         name: 'lifeSpaceApi',
         required: true,
+        displayOptions: { show: { authorityMode: ['service'] } },
       },
       {
-        name: 'lifeSpaceAgentExecution',
+        name: 'lifeSpaceAgentExecutionApi',
         required: true,
         displayOptions: { show: { authorityMode: ['delegatedAgent'] } },
       },
@@ -868,8 +870,15 @@ export class LifeSpaceTool implements INodeType {
     context: AgentRuntimeContext,
     itemIndex: number,
   ): Promise<AgentRuntime> {
-    const credentials = await context.getCredentials('lifeSpaceApi', itemIndex);
-    const baseUrl = normalizeBaseUrl(credentials.baseUrl);
+    const authorityMode = String(
+      context.getNodeParameter('authorityMode', itemIndex, 'service') ?? 'service',
+    );
+    const baseUrl = authorityMode === 'delegatedAgent'
+      ? delegatedAgentCoreBaseUrl(
+        context,
+        await context.getCredentials('lifeSpaceAgentExecutionApi', itemIndex),
+      )
+      : normalizeBaseUrl((await context.getCredentials('lifeSpaceApi', itemIndex)).baseUrl);
     const spaceId = String(context.getNodeParameter('spaceId', itemIndex)).trim();
     const snapshot = decodeAgentToolSemanticSnapshot(context.getNodeParameter('recordType', itemIndex, ''));
     if (!snapshot) {
