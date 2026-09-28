@@ -33,8 +33,10 @@ test('Agent Tool remains a native AiTool and keeps structural scope outside mode
   assert.match(base, /async execute\(this: IExecuteFunctions/u);
   assert.match(base, /buildAgentToolRequest\(runtime\.model, runtime\.config, prepared\)/u);
   assert.match(base, /name: 'readDelegationId'/u);
-  assert.match(base, /runtimeAuthorities\(context, runtime\)/u);
-  assert.match(base, /readAuthority/u);
+  assert.match(base, /runtimeAuthority\(context, runtime\)/u);
+  assert.match(base, /runtimeReadAuthority\(context, runtime\)/u);
+  assert.match(base, /authorityPromise\?: Promise<LifeSpaceExecutionAuthority>/u);
+  assert.match(base, /await runtimeReadAuthority\(context, runtime\)/u);
   assert.match(base, /name: 'lifeSpaceAgentExecutionApi'/u);
   assert.doesNotMatch(projection, /@langchain\/core/u);
   assert.doesNotMatch(projection, /DynamicStructuredTool/u);
