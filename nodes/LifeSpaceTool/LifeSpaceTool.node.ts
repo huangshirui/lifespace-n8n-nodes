@@ -29,6 +29,7 @@ import {
   searchRelationTargetsForAgent,
   type DiscoveryAccess,
   type DiscoveryField,
+  type AgentRelationRequester,
   type DiscoveryModel,
 } from '../lifespaceDiscovery';
 import {
@@ -45,6 +46,11 @@ import {
   decodeAgentToolSemanticSnapshot,
   encodeAgentToolSemanticSnapshot,
 } from '../agent/lifeSpaceToolSnapshot';
+import {
+  executionAuthority,
+  lifeSpaceRequest,
+  type LifeSpaceExecutionAuthority,
+} from '../shared/lifeSpaceExecutionAuthority';
 
 type StructuralAiTool = {
   name: string;
@@ -61,6 +67,7 @@ type AgentRuntime = {
   model: DiscoveryModel;
   config: AgentToolConfig;
   definition: ReturnType<typeof buildAgentToolDefinition>;
+  authority: LifeSpaceExecutionAuthority;
 };
 
 function requiredAccess(operation: string): DiscoveryAccess | null {
@@ -163,10 +170,11 @@ async function performRequest(
   context: AgentRuntimeContext,
   baseUrl: string,
   request: AgentToolRequest,
+  authority: LifeSpaceExecutionAuthority,
 ): Promise<unknown> {
-  return await context.helpers.httpRequestWithAuthentication.call(
+  return await lifeSpaceRequest(
     context,
-    'lifeSpaceApi',
+    authority,
     requestOptions(baseUrl, request),
   );
 }
@@ -249,6 +257,7 @@ async function resolveOneReference(
   field: DiscoveryField,
   value: unknown,
   allowMe = false,
+  requester?: AgentRelationRequester,
 ): Promise<string> {
   const parsed = referenceInput(value);
   const raw = parsed.id ?? parsed.name ?? '';
@@ -271,7 +280,15 @@ async function resolveOneReference(
     );
   }
 
-  const candidates = await searchRelationTargetsForAgent(context, baseUrl, spaceId, model.key, field, name);
+  const candidates = await searchRelationTargetsForAgent(
+    context,
+    baseUrl,
+    spaceId,
+    model.key,
+    field,
+    name,
+    requester,
+  );
   const normalized = name.toLocaleLowerCase();
   const exact = candidates.filter((candidate) => candidate.label.trim().toLocaleLowerCase() === normalized);
   if (exact.length === 1) return exact[0].id;
@@ -302,15 +319,25 @@ async function resolveFieldReference(
   field: DiscoveryField,
   value: unknown,
   allowMe = false,
+  requester?: AgentRelationRequester,
 ): Promise<unknown> {
   if (value === null || value === undefined) return value;
   if (field.type === 'person_list' || field.type === 'record_list') {
     if (!Array.isArray(value)) return value;
     return await Promise.all(
-      value.map((entry) => resolveOneReference(context, baseUrl, spaceId, model, field, entry, allowMe)),
+      value.map((entry) => resolveOneReference(
+        context,
+        baseUrl,
+        spaceId,
+        model,
+        field,
+        entry,
+        allowMe,
+        requester,
+      )),
     );
   }
-  return await resolveOneReference(context, baseUrl, spaceId, model, field, value, allowMe);
+  return await resolveOneReference(context, baseUrl, spaceId, model, field, value, allowMe, requester);
 }
 
 async function prepareAgentInput(
@@ -319,6 +346,7 @@ async function prepareAgentInput(
   model: DiscoveryModel,
   config: AgentToolConfig,
   raw: unknown,
+  requester?: AgentRelationRequester,
 ): Promise<unknown> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
   const input = { ...(raw as Record<string, unknown>) };
@@ -344,6 +372,7 @@ async function prepareAgentInput(
           field,
           filter.value,
           target.acceptsCurrentActorPersonAlias === 'me',
+          requester,
         );
       }
       filters.push(filter);
@@ -367,6 +396,8 @@ async function prepareAgentInput(
       model,
       field,
       input[field.key],
+      false,
+      requester,
     );
   }
   return input;
@@ -456,8 +487,52 @@ export class LifeSpaceTool implements INodeType {
         name: 'lifeSpaceApi',
         required: true,
       },
+      {
+        name: 'lifeSpaceAgentExecution',
+        required: true,
+        displayOptions: { show: { authorityMode: ['delegatedAgent'] } },
+      },
     ],
     properties: [
+      {
+        displayName: 'Authority Mode',
+        name: 'authorityMode',
+        type: 'options',
+        noDataExpression: true,
+        options: [
+          {
+            name: 'Service Principal',
+            value: 'service',
+            description: 'Use the existing LifeSpace Service API Token. Principal and Actor are the Service Principal.',
+          },
+          {
+            name: 'Delegated Agent',
+            value: 'delegatedAgent',
+            description: 'Mint a short-lived Agent execution token for a User Principal and execute with an explicit Delegation selector.',
+          },
+        ],
+        default: 'service',
+      },
+      {
+        displayName: 'Principal User ID',
+        name: 'principalUserId',
+        type: 'string',
+        default: '',
+        required: true,
+        placeholder: 'usr_...',
+        displayOptions: { show: { authorityMode: ['delegatedAgent'] } },
+        description: 'Execution context only. This value is sent to LifeSpace Identity to mint the Agent token and is never exposed as an LLM Tool argument.',
+      },
+      {
+        displayName: 'Delegation ID',
+        name: 'delegationId',
+        type: 'string',
+        default: '',
+        required: true,
+        placeholder: 'dlg_...',
+        displayOptions: { show: { authorityMode: ['delegatedAgent'] } },
+        description: 'Opaque current Delegation selector. This is execution metadata and is never exposed as an LLM Tool argument.',
+      },
       {
         displayName: 'Space Name or ID',
         name: 'spaceId',
@@ -688,7 +763,18 @@ export class LifeSpaceTool implements INodeType {
       throw new NodeOperationError(context.getNode(), error as Error, { itemIndex });
     }
 
-    return { baseUrl, model, config, definition };
+    const required = config.operation === 'action'
+      ? model.actions.find((action) => action.key === config.actionKey)?.access
+      : requiredAccess(config.operation);
+    if (!required) {
+      throw new NodeOperationError(
+        context.getNode(),
+        'LifeSpace Tool could not determine the access required by this operation',
+        { itemIndex },
+      );
+    }
+    const authority = await executionAuthority(context, itemIndex, required);
+    return { baseUrl, model, config, definition, authority };
   }
 
   private async invokeAgentTool(
@@ -696,19 +782,25 @@ export class LifeSpaceTool implements INodeType {
     runtime: AgentRuntime,
     query: unknown,
   ): Promise<string> {
+    const requester: AgentRelationRequester = async (options) => lifeSpaceRequest(
+      context,
+      runtime.authority,
+      options,
+    );
     const prepared = await prepareAgentInput(
       context,
       runtime.baseUrl,
       runtime.model,
       runtime.config,
       query,
+      requester,
     );
     let request = buildAgentToolRequest(runtime.model, runtime.config, prepared);
     if (request.needsCurrentVersion) {
       const recordResponse = await performRequest(context, runtime.baseUrl, {
         method: 'GET',
         path: currentRecordPath(request),
-      });
+      }, runtime.authority);
       request = buildAgentToolRequest(
         runtime.model,
         runtime.config,
@@ -716,7 +808,7 @@ export class LifeSpaceTool implements INodeType {
         currentRecordVersion(context, recordResponse),
       );
     }
-    const response = await performRequest(context, runtime.baseUrl, request);
+    const response = await performRequest(context, runtime.baseUrl, request, runtime.authority);
     return stringifyToolOutput(response);
   }
 
