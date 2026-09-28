@@ -874,7 +874,7 @@ export class LifeSpaceTool implements INodeType {
   methods = {
     loadOptions: {
       async getSpaces(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-        const transport = await agentDiscoveryTransport(this, false);
+        const transport = await agentDiscoveryTransport(this, true);
         const discovery = await loadRuntimeDiscoveryInventory.call(this, transport);
         return discovery.data.spaces.map((space) => ({
           name: space.spaceName?.trim() || space.spaceId,
