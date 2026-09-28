@@ -689,7 +689,7 @@ export class LifeSpaceTool implements INodeType {
           {
             name: 'Service Principal',
             value: 'service',
-            description: 'Use the existing LifeSpace Service API Token. Principal and Actor are the Service Principal',
+            description: 'Use the existing LifeSpace Service API Token. Principal and Actor are the Service Principal.',
           },
           {
             name: 'Delegated Agent',
@@ -707,7 +707,7 @@ export class LifeSpaceTool implements INodeType {
         required: true,
         placeholder: 'usr_...',
         displayOptions: { show: { authorityMode: ['delegatedAgent'] } },
-        description: 'Execution context only. This value is sent to LifeSpace Identity to mint the Agent token and is never exposed as an LLM Tool argument',
+        description: 'Execution context only. This value is sent to LifeSpace Identity to mint the Agent token and is never exposed as an LLM Tool argument.',
       },
       {
         displayName: 'Delegation ID',
@@ -726,7 +726,7 @@ export class LifeSpaceTool implements INodeType {
         required: true,
         placeholder: 'dlg_...',
         displayOptions: { show: { authorityMode: ['delegatedAgent'] } },
-        description: 'Reusable model-read Delegation used only for semantic Discovery, relation-name resolution and optimistic-concurrency pre-reads. Keep single-use business Delegations in Delegation ID / Batch Delegation IDs',
+        description: 'Reusable model-read Delegation used only for semantic Discovery, relation-name resolution and optimistic-concurrency pre-reads. Keep single-use business Delegations in Delegation ID / Batch Delegation IDs.',
       },
       {
         displayName: 'Batch Delegation IDs',
@@ -750,7 +750,7 @@ export class LifeSpaceTool implements INodeType {
         default: '',
         required: true,
         noDataExpression: true,
-        description: 'Fixes this Tool instance to one authorized LifeSpace Space. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+        description: 'Fixes this Tool instance to one authorized LifeSpace Space. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
       },
       {
         displayName: 'Operation',
