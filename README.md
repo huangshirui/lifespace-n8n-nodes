@@ -339,12 +339,15 @@ Webhook Endpoint / Event Subscription creation is intentionally not performed by
 
 ## What the package provides
 
-- **LifeSpace API** credential for API authentication and Runtime Discovery;
+- **LifeSpace API** credential for Service Principal authentication and Runtime Discovery;
+- **LifeSpace Delegated Agent API** credential for server-only Application authentication, short-lived Agent token minting, and delegated Core execution without a Service PAT;
 - **LifeSpace Webhook Signing** credential for endpoint-scoped inbound HMAC verification;
-- **LifeSpace** human workflow node with Discovery-driven Record operations plus advanced API Request;
-- **LifeSpace Agent Tool** native AiTool with Discovery-driven semantic schemas;
+- **LifeSpace** human workflow node with Discovery-driven Record operations, first-class 1-20 atomic Batch create/update/delete, plus advanced API Request;
+- **LifeSpace Agent Tool** native AiTool with Discovery-driven semantic schemas and bounded same-model Batch Create;
 - **LifeSpace Trigger** with signed multi-Record-Type Domain Event filtering;
 - shared thin adapter projection from LifeSpace Runtime Discovery into human n8n controls and model-facing Tool schemas.
+
+The human Batch surface is the generic cross-model atomic transport. The Agent Tool deliberately exposes only same-model Batch Create in this release: Agent Update/Delete continue to resolve optimistic concurrency through a read before mutation, and the adapter does not turn multiple such reads into an N+1 pseudo-Batch. Cross-model or mutation-mixed Agent Batch should be added only when its full input contract can remain deterministic and bounded without reintroducing per-item Runtime round trips.
 
 LifeSpace remains authoritative for validation, authorization, defaults, Mutation Authority, Action semantics, query/time semantics, relation semantics and event contracts. Runtime Discovery and Relation Target Lookup are current capability/reference projections, not execution-authorization proofs.
 
