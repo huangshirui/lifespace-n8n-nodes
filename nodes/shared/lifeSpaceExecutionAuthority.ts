@@ -50,6 +50,14 @@ function credentialString(
   return requiredString(context, credentials[key], label, pattern);
 }
 
+export function delegatedAgentCoreBaseUrl(
+  context: LifeSpaceRuntimeContext,
+  credentials: ICredentialDataDecryptedObject,
+): string {
+  return requiredString(context, credentials.coreBaseUrl, 'LifeSpace Core API Base URL')
+    .replace(/\/+$/u, '');
+}
+
 function identityBaseUrl(
   context: LifeSpaceRuntimeContext,
   credentials: ICredentialDataDecryptedObject,
@@ -93,7 +101,7 @@ export async function delegatedAgentAuthority(
     throw new NodeOperationError(context.getNode(), 'Delegation ID must be a valid dlg_* identifier');
   }
 
-  const credentials = await context.getCredentials('lifeSpaceAgentExecution', itemIndex);
+  const credentials = await context.getCredentials('lifeSpaceAgentExecutionApi', itemIndex);
   const agentId = credentialString(
     context,
     credentials,
@@ -105,7 +113,7 @@ export async function delegatedAgentAuthority(
 
   const response = await context.helpers.httpRequestWithAuthentication.call(
     context,
-    'lifeSpaceAgentExecution',
+    'lifeSpaceAgentExecutionApi',
     {
       method: 'POST',
       url: `${baseUrl}/internal/v1/agent-tokens`,
