@@ -227,6 +227,27 @@ test('delegated relation lookup uses the same Agent JWT and Delegation selector 
   });
 });
 
+test('missing business Delegation returns DELEGATION_REQUIRED without a Core mutation', async () => {
+  const execution = context(
+    model(),
+    () => {
+      throw new Error('Core must not be called when business Delegation is missing');
+    },
+    { delegationId: '', readDelegationId: '' },
+  );
+  const tool = (await new LifeSpaceTool().supplyData.call(execution, 0)).response;
+  const result = JSON.parse(await tool.invoke({ name: 'Must not execute' }));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'DELEGATION_REQUIRED');
+  assert.equal(result.error.retryable, false);
+  assert.equal(result.error.nextAction, 'request_authorization');
+  assert.equal(
+    execution.calls.filter((call) => call.transport === 'direct').length,
+    0,
+  );
+});
+
 test('Authority v2 denials are returned as deterministic non-retryable Tool results', async () => {
   const execution = context(model(), () => {
     throw {
