@@ -19,6 +19,7 @@ test('public LifeSpace adapter surfaces use neutral examples', async () => {
     'README.md',
     'credentials/LifeSpaceApi.credentials.ts',
     'credentials/LifeSpaceWebhookApi.credentials.ts',
+    'credentials/LifeSpaceAgentExecutionApi.credentials.ts',
     'nodes/LifeSpace/LifeSpace.node.ts',
     'nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.ts',
   ];
@@ -27,11 +28,12 @@ test('public LifeSpace adapter surfaces use neutral examples', async () => {
   assert.equal(content.includes('api.example.com'), true);
 });
 
-test('package separates outbound API auth from endpoint-scoped webhook signing', async () => {
+test('package separates Service, delegated Agent, and endpoint signing credentials', async () => {
   const packageJson = JSON.parse(await text('package.json'));
   assert.deepEqual(packageJson.n8n.credentials, [
     'dist/credentials/LifeSpaceApi.credentials.js',
     'dist/credentials/LifeSpaceWebhookApi.credentials.js',
+    'dist/credentials/LifeSpaceAgentExecutionApi.credentials.js',
   ]);
 
   const trigger = await text('nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.ts');
