@@ -412,8 +412,10 @@ test('delegated design-time Discovery uses Agent JWT and Read Delegation without
 
   const coreCalls = calls.filter((call) => call.transport === 'core');
   assert.equal(coreCalls.some((call) => call.options.url.endsWith('/_discovery/models/task')), true);
-  const semanticCall = coreCalls.find((call) => call.options.url.endsWith('/_discovery/models/task'));
-  assert.equal(semanticCall.options.headers.Authorization, 'Bearer agent.jwt.design');
-  assert.equal(semanticCall.options.headers['X-LifeSpace-Delegation-Id'], READ_DELEGATION);
+  assert.equal(coreCalls.length, 3);
+  for (const call of coreCalls) {
+    assert.equal(call.options.headers.Authorization, 'Bearer agent.jwt.design');
+    assert.equal(call.options.headers['X-LifeSpace-Delegation-Id'], READ_DELEGATION);
+  }
   assert.equal(calls.some((call) => call.credentialName === 'lifeSpaceApi'), false);
 });
