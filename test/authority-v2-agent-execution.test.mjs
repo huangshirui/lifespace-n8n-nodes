@@ -144,6 +144,30 @@ function context(runtimeModel, business, overrides = {}) {
   };
 }
 
+test('delegated Agent token mint is lazy and reused inside one Tool runtime', async () => {
+  const execution = context(model(), () => ({ data: { id: 'rec_lazy', version: 1 } }));
+  const tool = (await new LifeSpaceTool().supplyData.call(execution, 0)).response;
+
+  assert.equal(
+    execution.calls.filter((call) => call.transport === 'credential').length,
+    0,
+    'unused delegated Tool must perform zero Identity requests',
+  );
+
+  await tool.invoke({ name: 'One' });
+  await tool.invoke({ name: 'Two' });
+
+  assert.equal(
+    execution.calls.filter((call) => call.transport === 'credential').length,
+    1,
+    'one Tool runtime reuses the same short-lived Agent token',
+  );
+  assert.equal(
+    execution.calls.filter((call) => call.transport === 'direct').length,
+    2,
+  );
+});
+
 test('delegated Agent mode mints an Agent JWT and never uses the Service PAT for business execution', async () => {
   let posted;
   const execution = context(model(), (options) => {
