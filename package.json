@@ -51,7 +51,7 @@
     "credentials": [
       "dist/credentials/LifeSpaceApi.credentials.js",
       "dist/credentials/LifeSpaceWebhookApi.credentials.js",
-      "dist/credentials/LifeSpaceAgentExecution.credentials.js"
+      "dist/credentials/LifeSpaceAgentExecutionApi.credentials.js"
     ],
     "nodes": [
       "dist/nodes/LifeSpaceWorkflow/LifeSpaceWorkflow.node.js",
