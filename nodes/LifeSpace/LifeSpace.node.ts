@@ -32,6 +32,10 @@ import {
   decodeLifeSpaceActionSnapshot,
   encodeLifeSpaceActionSnapshot,
 } from '../shared/lifeSpaceActionSnapshot';
+import {
+  executionAuthority,
+  lifeSpaceRequest,
+} from '../shared/lifeSpaceExecutionAuthority';
 
 type QueryFilter = {
   field?: string;
@@ -162,6 +166,111 @@ function parseJsonObject(
     throw new NodeOperationError(context.getNode(), `${fieldName} must be a JSON object`, { itemIndex });
   }
   return parsed as IDataObject;
+}
+
+type BatchMutationOperation = {
+  operation: 'create' | 'update' | 'delete';
+  modelKey: string;
+  recordId?: string;
+  version?: number;
+  data?: IDataObject;
+  delegationId?: string;
+};
+
+function batchMutationOperations(
+  context: IExecuteFunctions,
+  itemIndex: number,
+  value: unknown,
+  delegated: boolean,
+): BatchMutationOperation[] {
+  let parsed: unknown;
+  try {
+    parsed = typeof value === 'string' ? JSON.parse(value) : value;
+  } catch (error) {
+    throw new NodeOperationError(context.getNode(), error as Error, { itemIndex });
+  }
+  if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 20) {
+    throw new NodeOperationError(
+      context.getNode(),
+      'Batch Operations must be a JSON array containing 1 to 20 create/update/delete operations',
+      { itemIndex },
+    );
+  }
+
+  return parsed.map((raw, index) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new NodeOperationError(context.getNode(), `Batch operation ${index} must be a JSON object`, { itemIndex });
+    }
+    const input = raw as Record<string, unknown>;
+    const operation = String(input.operation ?? '');
+    const modelKey = String(input.modelKey ?? '').trim();
+    if (!['create', 'update', 'delete'].includes(operation)) {
+      throw new NodeOperationError(context.getNode(), `Batch operation ${index} must be create, update, or delete`, { itemIndex });
+    }
+    if (!/^[A-Za-z][A-Za-z0-9_]{0,99}$/u.test(modelKey)) {
+      throw new NodeOperationError(context.getNode(), `Batch operation ${index} has an invalid modelKey`, { itemIndex });
+    }
+
+    const delegationId = String(input.delegationId ?? '').trim();
+    if (delegated && !/^dlg_[A-Za-z0-9_-]+$/u.test(delegationId)) {
+      throw new NodeOperationError(
+        context.getNode(),
+        `Batch operation ${index} requires its own valid delegationId in Delegated Agent mode`,
+        { itemIndex },
+      );
+    }
+    if (!delegated && delegationId) {
+      throw new NodeOperationError(
+        context.getNode(),
+        `Batch operation ${index} cannot use delegationId in Service Principal mode`,
+        { itemIndex },
+      );
+    }
+
+    if (operation === 'create') {
+      const data = input.data;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        throw new NodeOperationError(context.getNode(), `Batch create ${index} requires an object data field`, { itemIndex });
+      }
+      return {
+        operation: 'create',
+        modelKey,
+        data: data as IDataObject,
+        ...(delegationId ? { delegationId } : {}),
+      };
+    }
+
+    const recordId = String(input.recordId ?? '').trim();
+    const version = Number(input.version);
+    if (!/^rec_[A-Za-z0-9_-]+$/u.test(recordId)) {
+      throw new NodeOperationError(context.getNode(), `Batch operation ${index} has an invalid recordId`, { itemIndex });
+    }
+    if (!Number.isInteger(version) || version < 1) {
+      throw new NodeOperationError(context.getNode(), `Batch operation ${index} requires a positive integer version`, { itemIndex });
+    }
+    if (operation === 'delete') {
+      return {
+        operation: 'delete',
+        modelKey,
+        recordId,
+        version,
+        ...(delegationId ? { delegationId } : {}),
+      };
+    }
+
+    const data = input.data;
+    if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).length === 0) {
+      throw new NodeOperationError(context.getNode(), `Batch update ${index} requires non-empty object data`, { itemIndex });
+    }
+    return {
+      operation: 'update',
+      modelKey,
+      recordId,
+      version,
+      data: data as IDataObject,
+      ...(delegationId ? { delegationId } : {}),
+    };
+  });
 }
 
 function mappedValue(context: IExecuteFunctions, itemIndex: number, parameterName: string): IDataObject {
@@ -705,7 +814,7 @@ export class LifeSpace implements INodeType {
     },
     group: ['transform'],
     version: 1,
-    subtitle: '={{$parameter["resource"] === "modelRecord" ? $parameter["operation"] : "API Request"}}',
+    subtitle: '={{$parameter["resource"] === "modelRecord" ? $parameter["operation"] : ($parameter["resource"] === "batchMutation" ? "Batch Mutation" : "API Request")}}',
     description: 'Use LifeSpace records and APIs in n8n workflows',
     defaults: {
       name: 'LifeSpace',
@@ -717,6 +826,16 @@ export class LifeSpace implements INodeType {
       {
         name: 'lifeSpaceApi',
         required: true,
+      },
+      {
+        name: 'lifeSpaceAgentExecution',
+        required: true,
+        displayOptions: {
+          show: {
+            resource: ['batchMutation'],
+            batchAuthorityMode: ['delegatedAgent'],
+          },
+        },
       },
     ],
     properties: [
@@ -731,11 +850,59 @@ export class LifeSpace implements INodeType {
             value: 'modelRecord',
           },
           {
+            name: 'Batch Mutation',
+            value: 'batchMutation',
+          },
+          {
             name: 'API Request',
             value: 'apiRequest',
           },
         ],
         default: 'modelRecord',
+      },
+      {
+        displayName: 'Batch Authority Mode',
+        name: 'batchAuthorityMode',
+        type: 'options',
+        noDataExpression: true,
+        displayOptions: { show: { resource: ['batchMutation'] } },
+        options: [
+          {
+            name: 'Service Principal',
+            value: 'service',
+            description: 'Use the existing LifeSpace Service API Token for the atomic Batch',
+          },
+          {
+            name: 'Delegated Agent',
+            value: 'delegatedAgent',
+            description: 'Mint one short-lived User Principal -> Agent Actor token; every Batch item supplies its explicit Delegation selector',
+          },
+        ],
+        default: 'service',
+      },
+      {
+        displayName: 'Principal User ID',
+        name: 'batchPrincipalUserId',
+        type: 'string',
+        default: '',
+        required: true,
+        placeholder: 'usr_...',
+        displayOptions: {
+          show: {
+            resource: ['batchMutation'],
+            batchAuthorityMode: ['delegatedAgent'],
+          },
+        },
+        description: 'Execution context for delegated Batch only. This value is not part of any AI Tool input.',
+      },
+      {
+        displayName: 'Batch Operations',
+        name: 'batchOperations',
+        type: 'json',
+        default: '[]',
+        required: true,
+        displayOptions: { show: { resource: ['batchMutation'] } },
+        description: 'JSON array with 1-20 create/update/delete operations. Update/delete require recordId and version. Delegated Agent mode requires delegationId on every item. The adapter sends one atomic Core Batch request and performs no rollback logic itself.',
       },
       {
         displayName: 'Operation',
@@ -756,7 +923,7 @@ export class LifeSpace implements INodeType {
       {
         displayName: 'Space Name or ID', name: 'spaceId', type: 'options',
         typeOptions: { loadOptionsMethod: 'getSpaces' }, options: [], default: '', required: true,
-        displayOptions: { show: { resource: ['modelRecord'] } },
+        displayOptions: { show: { resource: ['modelRecord', 'batchMutation'] } },
         description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
       },
       {
@@ -1210,7 +1377,38 @@ export class LifeSpace implements INodeType {
         const resource = this.getNodeParameter('resource', itemIndex) as string;
         let response: unknown;
 
-        if (resource === 'modelRecord') {
+        if (resource === 'batchMutation') {
+          const rawSpaceId = String(this.getNodeParameter('spaceId', itemIndex)).trim();
+          if (!rawSpaceId) {
+            throw new NodeOperationError(this.getNode(), 'LifeSpace Batch Mutation requires a Space ID', { itemIndex });
+          }
+          const batchAuthorityMode = String(
+            this.getNodeParameter('batchAuthorityMode', itemIndex, 'service') ?? 'service',
+          );
+          const operations = batchMutationOperations(
+            this,
+            itemIndex,
+            this.getNodeParameter('batchOperations', itemIndex, '[]'),
+            batchAuthorityMode === 'delegatedAgent',
+          );
+          const authority = await executionAuthority(
+            this,
+            itemIndex,
+            'write',
+            {
+              modeParameter: 'batchAuthorityMode',
+              principalParameter: 'batchPrincipalUserId',
+              delegationParameter: 'batchDelegationId',
+              requireDelegation: false,
+            },
+          );
+          response = await lifeSpaceRequest(this, authority, {
+            method: 'POST',
+            url: `${baseUrl}/spaces/${encodeURIComponent(rawSpaceId)}/models/batch`,
+            body: { operations } as unknown as IDataObject,
+            json: true,
+          });
+        } else if (resource === 'modelRecord') {
           const operation = this.getNodeParameter('operation', itemIndex) as string;
           const rawSpaceId = String(this.getNodeParameter('spaceId', itemIndex));
           const recordType = decodeRecordTypeSelector(this.getNodeParameter('recordType', itemIndex, ''));
