@@ -154,6 +154,8 @@ test('delegated Agent mode mints an Agent JWT and never uses the Service PAT for
   const tool = (await new LifeSpaceTool().supplyData.call(execution, 0)).response;
   assert.equal(Object.hasOwn(tool.schema.properties, 'principalUserId'), false);
   assert.equal(Object.hasOwn(tool.schema.properties, 'delegationId'), false);
+  assert.equal(Object.hasOwn(tool.schema.properties, 'readDelegationId'), false);
+  assert.equal(Object.hasOwn(tool.schema.properties, 'batchDelegationIds'), false);
 
   await tool.invoke({ name: 'Buy milk' });
 
