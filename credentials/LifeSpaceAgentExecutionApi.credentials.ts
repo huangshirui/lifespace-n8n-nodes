@@ -38,7 +38,7 @@ export class LifeSpaceAgentExecutionApi implements ICredentialType {
     },
     {
       displayName: 'Application Credential',
-      name: 'applicationCredential',
+      name: 'applicationSecret',
       type: 'string',
       typeOptions: { password: true },
       default: '',
@@ -61,14 +61,14 @@ export class LifeSpaceAgentExecutionApi implements ICredentialType {
     type: 'generic',
     properties: {
       headers: {
-        Authorization: '=Bearer {{$credentials.applicationCredential}}',
+        Authorization: '=Bearer {{$credentials.applicationSecret}}',
       },
     },
   };
 
   test: ICredentialTestRequest = {
     request: {
-      baseURL: '={{$credentials.identityBaseUrl.replace(/\/$/, "")}}',
+      baseURL: '={{$credentials.identityBaseUrl.endsWith("/") ? $credentials.identityBaseUrl.slice(0, -1) : $credentials.identityBaseUrl}}',
       url: '/internal/v1/agents',
       method: 'GET',
     },
