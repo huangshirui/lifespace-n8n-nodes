@@ -57,7 +57,7 @@ For a user-initiated **Delegated Agent（委托智能体）** Tool or Batch, cre
 
 Delegated mode does **not** require or fall back to a Service PAT. The adapter uses the Application credential only to mint a short-lived `User Principal → Agent Actor` execution token from LifeSpace Identity, then calls Core with that token plus explicit Delegation selectors.
 
-`Principal User ID`, `Delegation ID`, `Read Delegation ID` and per-item Batch Delegation IDs are execution/control context, never LLM Tool arguments. `Read Delegation ID` is intentionally separate: it covers semantic Discovery, relation-name lookup and optimistic-concurrency pre-reads, so those helper reads cannot accidentally consume a single-use Delegation reserved for the actual query/mutation/action.
+`Principal User ID`, `Delegation ID`, `Read Delegation ID` and per-item Batch Delegation IDs are execution/control context, never LLM Tool arguments. `Read Delegation ID` is intentionally separate: it covers delegated design-time Discovery and only the runtime calls that actually need relation-name lookup or optimistic-concurrency pre-reads, so those helper reads cannot accidentally consume a single-use Delegation reserved for the actual query/mutation/action. A pure runtime mutation with no helper read does not exercise the Read Delegation.
 
 Credentials are secrets. Store them only in n8n credentials; do not put `lsp_pat_*`, `lsa_*`, Agent JWTs or other secrets in workflow fields, URLs, source files or workflow exports.
 
