@@ -6,7 +6,7 @@ const require = createRequire(import.meta.url);
 const { LifeSpaceTool } = require('../dist/nodes/agent/LifeSpaceAgentToolBase.js');
 
 function assertNoEnvelopeFields(schema) {
-  for (const key of ['action', 'sessionId', 'chatInput', 'toolCallId']) {
+  for (const key of ['action', 'sessionId', 'chatInput', 'toolCallId', 'principalUserId', 'delegationId', 'readDelegationId', 'batchDelegationIds']) {
     assert.equal(
       Object.prototype.hasOwnProperty.call(schema.properties ?? {}, key),
       false,
