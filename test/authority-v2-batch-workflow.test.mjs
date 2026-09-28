@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import test from 'node:test';
 
 const require = createRequire(import.meta.url);
-const { LifeSpace } = require('../dist/nodes/LifeSpace/LifeSpace.node.js');
+const { LifeSpaceWorkflow } = require('../dist/nodes/LifeSpaceWorkflow/LifeSpaceWorkflow.node.js');
 
 const CORE_BASE = 'https://core.example.com/api/v1';
 const IDENTITY_BASE = 'https://identity.example.com';
@@ -83,7 +83,7 @@ test('human Service Batch sends exactly one atomic Core mutation request', async
     batchOperations: JSON.stringify(operations),
   }, 'service');
 
-  await new LifeSpace().execute.call(execution);
+  await new LifeSpaceWorkflow().execute.call(execution);
 
   const business = execution.calls.filter((call) => call.credentialName === 'lifeSpaceApi');
   assert.equal(business.length, 1);
@@ -118,7 +118,7 @@ test('human delegated Batch uses Agent JWT, per-item selectors and no Service PA
     batchOperations: JSON.stringify(operations),
   }, 'delegatedAgent');
 
-  await new LifeSpace().execute.call(execution);
+  await new LifeSpaceWorkflow().execute.call(execution);
 
   const identity = execution.calls.filter((call) => call.credentialName === 'lifeSpaceAgentExecutionApi');
   const core = execution.calls.filter((call) => call.transport === 'direct');
@@ -154,7 +154,7 @@ test('human Batch rejects more than 20 operations before any network call', asyn
   }, 'service');
 
   await assert.rejects(
-    () => new LifeSpace().execute.call(execution),
+    () => new LifeSpaceWorkflow().execute.call(execution),
     /1 to 20/u,
   );
   assert.equal(execution.calls.length, 0);
