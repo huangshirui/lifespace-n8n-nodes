@@ -11,6 +11,7 @@ const IDENTITY_BASE = 'https://identity.example.com';
 const PRINCIPAL = 'usr_test';
 const AGENT = 'agt_test';
 const DELEGATION = 'dlg_test';
+const READ_DELEGATION = 'dlg_read_test';
 
 function model(withRelation = false) {
   return {
@@ -86,6 +87,7 @@ function context(runtimeModel, business) {
     authorityMode: 'delegatedAgent',
     principalUserId: PRINCIPAL,
     delegationId: DELEGATION,
+    readDelegationId: READ_DELEGATION,
     spaceId: 'spc_test',
     recordType: snapshot(runtimeModel),
     operation: 'create',
@@ -97,11 +99,11 @@ function context(runtimeModel, business) {
   return {
     calls,
     getCredentials: async (name) => {
-      if (name === 'lifeSpaceApi') return { baseUrl: CORE_BASE, token: 'lsp_pat_must_not_execute' };
-      if (name === 'lifeSpaceAgentExecution') {
+      if (name === 'lifeSpaceAgentExecutionApi') {
         return {
+          coreBaseUrl: CORE_BASE,
           identityBaseUrl: IDENTITY_BASE,
-          applicationCredential: 'lsa_test',
+          applicationSecret: 'lsa_test',
           agentId: AGENT,
         };
       }
@@ -117,7 +119,7 @@ function context(runtimeModel, business) {
     helpers: {
       async httpRequestWithAuthentication(credentialName, options) {
         calls.push({ transport: 'credential', credentialName, options });
-        assert.equal(credentialName, 'lifeSpaceAgentExecution');
+        assert.equal(credentialName, 'lifeSpaceAgentExecutionApi');
         assert.equal(options.url, `${IDENTITY_BASE}/internal/v1/agent-tokens`);
         assert.deepEqual(options.body, {
           subjectId: PRINCIPAL,
@@ -161,7 +163,7 @@ test('delegated Agent mode mints an Agent JWT and never uses the Service PAT for
   assert.equal(
     execution.calls.some((call) => call.credentialName === 'lifeSpaceApi'),
     false,
-    'delegated business execution must never fall back to Service PAT',
+    'delegated execution must never require or fall back to Service PAT',
   );
 });
 
@@ -184,8 +186,9 @@ test('delegated relation lookup uses the same Agent JWT and Delegation selector 
   assert.equal(coreCalls.length, 2);
   for (const request of coreCalls) {
     assert.equal(request.headers.Authorization, 'Bearer agent.jwt.test');
-    assert.equal(request.headers['X-LifeSpace-Delegation-Id'], DELEGATION);
   }
+  assert.equal(coreCalls[0].headers['X-LifeSpace-Delegation-Id'], READ_DELEGATION);
+  assert.equal(coreCalls[1].headers['X-LifeSpace-Delegation-Id'], DELEGATION);
   assert.match(coreCalls[0].url, /_relation-targets\/task\/assigneePersonIds/u);
   assert.deepEqual(coreCalls[1].body, {
     name: 'Call Alice',
