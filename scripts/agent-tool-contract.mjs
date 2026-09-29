@@ -27,7 +27,7 @@ if (!contract?.function?.parameters) {
 }
 
 const properties = contract.function.parameters.properties ?? {};
-for (const key of ['action', 'sessionId', 'chatInput', 'toolCallId']) {
+for (const key of ['action', 'sessionId', 'chatInput', 'toolCallId', 'principalUserId', 'delegationId', 'readDelegationId', 'batchDelegationIds']) {
   if (Object.hasOwn(properties, key)) {
     throw new Error(`Runtime field leaked into Agent Tool contract: ${key}`);
   }

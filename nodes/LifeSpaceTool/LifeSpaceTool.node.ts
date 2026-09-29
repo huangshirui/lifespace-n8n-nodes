@@ -29,7 +29,9 @@ import {
   searchRelationTargetsForAgent,
   type DiscoveryAccess,
   type DiscoveryField,
+  type AgentRelationRequester,
   type DiscoveryModel,
+  type DiscoveryTransport,
 } from '../lifespaceDiscovery';
 import {
   buildAgentToolDefinition,
@@ -45,6 +47,12 @@ import {
   decodeAgentToolSemanticSnapshot,
   encodeAgentToolSemanticSnapshot,
 } from '../agent/lifeSpaceToolSnapshot';
+import {
+  delegatedAgentCoreBaseUrl,
+  executionAuthority,
+  lifeSpaceRequest,
+  type LifeSpaceExecutionAuthority,
+} from '../shared/lifeSpaceExecutionAuthority';
 
 type StructuralAiTool = {
   name: string;
@@ -61,12 +69,47 @@ type AgentRuntime = {
   model: DiscoveryModel;
   config: AgentToolConfig;
   definition: ReturnType<typeof buildAgentToolDefinition>;
+  requiredAccess: DiscoveryAccess;
+  authorityPromise?: Promise<LifeSpaceExecutionAuthority>;
+  itemIndex: number;
 };
 
 function requiredAccess(operation: string): DiscoveryAccess | null {
   if (operation === 'query') return 'read';
-  if (['create', 'update', 'delete'].includes(operation)) return 'write';
+  if (['create', 'batchCreate', 'update', 'delete'].includes(operation)) return 'write';
   return null;
+}
+
+function discoveryAccess(operation: string): DiscoveryAccess {
+  return operation === 'query' ? 'read' : 'write';
+}
+
+async function agentDiscoveryTransport(
+  context: ILoadOptionsFunctions,
+  requireReadDelegation: boolean,
+): Promise<DiscoveryTransport | undefined> {
+  const mode = loadOptionParameter(context, 'authorityMode') || 'service';
+  if (mode === 'service') return undefined;
+  if (mode !== 'delegatedAgent') {
+    throw new NodeOperationError(context.getNode(), `Unsupported LifeSpace authority mode ${mode}`);
+  }
+
+  const operation = loadOptionParameter(context, 'operation') || 'query';
+  const authority = await executionAuthority(
+    context,
+    0,
+    discoveryAccess(operation),
+    {
+      delegationParameter: 'readDelegationId',
+      requireDelegation: requireReadDelegation,
+    },
+  );
+  const credentials = await context.getCredentials('lifeSpaceAgentExecutionApi');
+  const baseUrl = delegatedAgentCoreBaseUrl(context, credentials);
+  return {
+    baseUrl,
+    request: async (options) => lifeSpaceRequest(context, authority, options),
+  };
 }
 
 async function selectedOptionModel(context: ILoadOptionsFunctions): Promise<{ model: DiscoveryModel; spaceId: string } | null> {
@@ -82,7 +125,8 @@ async function selectedOptionModel(context: ILoadOptionsFunctions): Promise<{ mo
   // Legacy editor compatibility only. Runtime execution never refreshes semantics.
   const recordType = decodeRecordTypeSelector(rawRecordType);
   if (!recordType) return null;
-  const discovery = await loadRuntimeDiscovery.call(context);
+  const transport = await agentDiscoveryTransport(context, true);
+  const discovery = await loadRuntimeDiscovery.call(context, transport);
   const model = discoveryModel(discovery, spaceId, recordType.modelKey);
   return model ? { model, spaceId } : null;
 }
@@ -163,11 +207,118 @@ async function performRequest(
   context: AgentRuntimeContext,
   baseUrl: string,
   request: AgentToolRequest,
+  authority: LifeSpaceExecutionAuthority,
 ): Promise<unknown> {
-  return await context.helpers.httpRequestWithAuthentication.call(
+  return await lifeSpaceRequest(
     context,
-    'lifeSpaceApi',
+    authority,
     requestOptions(baseUrl, request),
+  );
+}
+
+function batchCreateItems(context: AgentRuntimeContext, value: unknown): unknown[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new NodeOperationError(context.getNode(), 'LifeSpace Batch Create input must be an object');
+  }
+  const items = (value as Record<string, unknown>).items;
+  if (!Array.isArray(items) || items.length < 1 || items.length > 20) {
+    throw new NodeOperationError(context.getNode(), 'LifeSpace Batch Create requires 1-20 items');
+  }
+  return items;
+}
+
+function configuredBatchDelegationIds(
+  context: AgentRuntimeContext,
+  runtime: AgentRuntime,
+  authority: LifeSpaceExecutionAuthority,
+  itemCount: number,
+): string[] {
+  if (authority.mode === 'service') return [];
+
+  const raw = context.getNodeParameter('batchDelegationIds', runtime.itemIndex, '[]');
+  let parsed: unknown;
+  try {
+    parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch (error) {
+    throw new NodeOperationError(context.getNode(), error as Error, { itemIndex: runtime.itemIndex });
+  }
+  const configured = Array.isArray(parsed)
+    ? parsed.map((value) => String(value ?? '').trim()).filter(Boolean)
+    : [];
+
+  const fallbackDelegationId = authority.delegationId;
+  if (!configured.length && fallbackDelegationId) {
+    return Array.from({ length: itemCount }, () => fallbackDelegationId);
+  }
+  if (configured.length !== itemCount || configured.some((value) => !/^dlg_[A-Za-z0-9_-]+$/u.test(value))) {
+    throw new NodeOperationError(
+      context.getNode(),
+      'Delegated Batch Create requires Batch Delegation IDs to contain exactly one valid dlg_* selector per item, or one fallback Delegation ID for the whole Tool',
+      { itemIndex: runtime.itemIndex },
+    );
+  }
+  return configured;
+}
+
+function authorityWithDelegation(
+  authority: LifeSpaceExecutionAuthority,
+  delegationId: string | null,
+): LifeSpaceExecutionAuthority {
+  return authority.mode === 'service'
+    ? authority
+    : { ...authority, delegationId };
+}
+
+async function runtimeAuthority(
+  context: AgentRuntimeContext,
+  runtime: AgentRuntime,
+): Promise<LifeSpaceExecutionAuthority> {
+  if (!runtime.authorityPromise) {
+    runtime.authorityPromise = executionAuthority(
+      context,
+      runtime.itemIndex,
+      runtime.requiredAccess,
+      { requireDelegation: runtime.config.operation !== 'batchCreate' },
+    ).catch((error) => {
+      runtime.authorityPromise = undefined;
+      throw error;
+    });
+  }
+  return await runtime.authorityPromise;
+}
+
+function configuredOptionalDelegationId(
+  context: AgentRuntimeContext,
+  itemIndex: number,
+  parameter: string,
+  label: string,
+): string | null {
+  const value = String(context.getNodeParameter(parameter, itemIndex, '') ?? '').trim();
+  if (!value) return null;
+  if (!/^dlg_[A-Za-z0-9_-]+$/u.test(value)) {
+    throw new NodeOperationError(
+      context.getNode(),
+      `${label} must be a valid dlg_* identifier`,
+      { itemIndex },
+    );
+  }
+  return value;
+}
+
+async function runtimeReadAuthority(
+  context: AgentRuntimeContext,
+  runtime: AgentRuntime,
+): Promise<LifeSpaceExecutionAuthority> {
+  const authority = await runtimeAuthority(context, runtime);
+  if (authority.mode === 'service') return authority;
+  return authorityWithDelegation(
+    authority,
+    configuredOptionalDelegationId(
+      context,
+      runtime.itemIndex,
+      'readDelegationId',
+      'Read Delegation ID',
+    ),
   );
 }
 
@@ -249,6 +400,7 @@ async function resolveOneReference(
   field: DiscoveryField,
   value: unknown,
   allowMe = false,
+  requester?: AgentRelationRequester,
 ): Promise<string> {
   const parsed = referenceInput(value);
   const raw = parsed.id ?? parsed.name ?? '';
@@ -271,7 +423,15 @@ async function resolveOneReference(
     );
   }
 
-  const candidates = await searchRelationTargetsForAgent(context, baseUrl, spaceId, model.key, field, name);
+  const candidates = await searchRelationTargetsForAgent(
+    context,
+    baseUrl,
+    spaceId,
+    model.key,
+    field,
+    name,
+    requester,
+  );
   const normalized = name.toLocaleLowerCase();
   const exact = candidates.filter((candidate) => candidate.label.trim().toLocaleLowerCase() === normalized);
   if (exact.length === 1) return exact[0].id;
@@ -302,15 +462,25 @@ async function resolveFieldReference(
   field: DiscoveryField,
   value: unknown,
   allowMe = false,
+  requester?: AgentRelationRequester,
 ): Promise<unknown> {
   if (value === null || value === undefined) return value;
   if (field.type === 'person_list' || field.type === 'record_list') {
     if (!Array.isArray(value)) return value;
     return await Promise.all(
-      value.map((entry) => resolveOneReference(context, baseUrl, spaceId, model, field, entry, allowMe)),
+      value.map((entry) => resolveOneReference(
+        context,
+        baseUrl,
+        spaceId,
+        model,
+        field,
+        entry,
+        allowMe,
+        requester,
+      )),
     );
   }
-  return await resolveOneReference(context, baseUrl, spaceId, model, field, value, allowMe);
+  return await resolveOneReference(context, baseUrl, spaceId, model, field, value, allowMe, requester);
 }
 
 async function prepareAgentInput(
@@ -319,6 +489,7 @@ async function prepareAgentInput(
   model: DiscoveryModel,
   config: AgentToolConfig,
   raw: unknown,
+  requester?: AgentRelationRequester,
 ): Promise<unknown> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
   const input = { ...(raw as Record<string, unknown>) };
@@ -344,6 +515,7 @@ async function prepareAgentInput(
           field,
           filter.value,
           target.acceptsCurrentActorPersonAlias === 'me',
+          requester,
         );
       }
       filters.push(filter);
@@ -367,9 +539,89 @@ async function prepareAgentInput(
       model,
       field,
       input[field.key],
+      false,
+      requester,
     );
   }
   return input;
+}
+
+type AgentAuthorityFailure = {
+  code:
+    | 'DELEGATION_REQUIRED'
+    | 'DELEGATION_INVALID'
+    | 'DELEGATION_SCOPE_INSUFFICIENT'
+    | 'PRINCIPAL_AUTHORITY_INSUFFICIENT'
+    | 'APPLICATION_ACCESS_INSUFFICIENT'
+    | 'CREDENTIAL_SCOPE_INSUFFICIENT'
+    | 'MODEL_OPERATION_UNSUPPORTED'
+    | 'POLICY_DENIED';
+  message: string;
+};
+
+const AUTHORITY_FAILURE_CODES = new Set<AgentAuthorityFailure['code']>([
+  'DELEGATION_REQUIRED',
+  'DELEGATION_INVALID',
+  'DELEGATION_SCOPE_INSUFFICIENT',
+  'PRINCIPAL_AUTHORITY_INSUFFICIENT',
+  'APPLICATION_ACCESS_INSUFFICIENT',
+  'CREDENTIAL_SCOPE_INSUFFICIENT',
+  'MODEL_OPERATION_UNSUPPORTED',
+  'POLICY_DENIED',
+]);
+
+function parseJsonCandidate(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
+}
+
+function authorityFailure(error: unknown): AgentAuthorityFailure | null {
+  if (
+    error instanceof Error
+    && error.message.includes('Delegation ID is required for delegated Agent execution')
+  ) {
+    return {
+      code: 'DELEGATION_REQUIRED',
+      message: 'Delegated Agent execution requires an explicit current Delegation selector',
+    };
+  }
+
+  const queue: unknown[] = [error];
+  const seen = new Set<unknown>();
+  while (queue.length) {
+    const current = parseJsonCandidate(queue.shift());
+    if (!current || typeof current !== 'object' || Array.isArray(current) || seen.has(current)) continue;
+    seen.add(current);
+    const object = current as Record<string, unknown>;
+    const nested = object.error;
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+      const apiError = nested as Record<string, unknown>;
+      const code = String(apiError.code ?? '') as AgentAuthorityFailure['code'];
+      if (AUTHORITY_FAILURE_CODES.has(code)) {
+        return {
+          code,
+          message: typeof apiError.message === 'string'
+            ? apiError.message
+            : 'LifeSpace denied the current execution authority',
+        };
+      }
+    }
+    for (const key of ['body', 'data', 'response', 'cause', 'description', 'message']) {
+      if (object[key] !== undefined) queue.push(object[key]);
+    }
+  }
+  return null;
+}
+
+function authorityFailureInstruction(failure: AgentAuthorityFailure): string {
+  if (failure.code.startsWith('DELEGATION_')) {
+    return 'Do not retry the same Tool call. The Application must obtain or select a valid current Delegation from the User Principal before trying again.';
+  }
+  return 'Do not retry the same Tool call unchanged. The current Principal/Application/credential/model policy does not authorize it.';
 }
 
 function referenceFailureInstruction(reference: AgentReferenceFailure): string {
@@ -383,6 +635,18 @@ function referenceFailureInstruction(reference: AgentReferenceFailure): string {
 }
 
 function toolFailureOutput(error: unknown, executionError: NodeOperationError): string {
+  const authority = authorityFailure(error);
+  if (authority) {
+    return JSON.stringify({
+      ok: false,
+      error: {
+        ...authority,
+        retryable: false,
+        nextAction: authority.code.startsWith('DELEGATION_') ? 'request_authorization' : 'report_failure',
+        instruction: authorityFailureInstruction(authority),
+      },
+    });
+  }
   const reference = parseReferenceFailure(error);
   if (reference) {
     return JSON.stringify({
@@ -455,14 +719,83 @@ export class LifeSpaceTool implements INodeType {
       {
         name: 'lifeSpaceApi',
         required: true,
+        displayOptions: { show: { authorityMode: ['service'] } },
+      },
+      {
+        name: 'lifeSpaceAgentExecutionApi',
+        required: true,
+        displayOptions: { show: { authorityMode: ['delegatedAgent'] } },
       },
     ],
     properties: [
       {
+        displayName: 'Authority Mode',
+        name: 'authorityMode',
+        type: 'options',
+        noDataExpression: true,
+        options: [
+          {
+            name: 'Service Principal',
+            value: 'service',
+            description: 'Use the existing LifeSpace Service API Token. Principal and Actor are the Service Principal.',
+          },
+          {
+            name: 'Delegated Agent',
+            value: 'delegatedAgent',
+            description: 'Mint a short-lived Agent execution token for a User Principal and execute with an explicit Delegation selector',
+          },
+        ],
+        default: 'service',
+      },
+      {
+        displayName: 'Principal User ID',
+        name: 'principalUserId',
+        type: 'string',
+        default: '',
+        required: true,
+        placeholder: 'usr_...',
+        displayOptions: { show: { authorityMode: ['delegatedAgent'] } },
+        description: 'Execution context only. This value is sent to LifeSpace Identity to mint the Agent token and is never exposed as an LLM Tool argument.',
+      },
+      {
+        displayName: 'Delegation ID',
+        name: 'delegationId',
+        type: 'string',
+        default: '',
+        placeholder: 'dlg_...',
+        displayOptions: { show: { authorityMode: ['delegatedAgent'] } },
+        description: 'Opaque selector used only for the actual Tool query/mutation/action. For Batch Create it can be a reusable fallback when Batch Delegation IDs is empty. It is never exposed as an LLM Tool argument',
+      },
+      {
+        displayName: 'Read Delegation ID',
+        name: 'readDelegationId',
+        type: 'string',
+        default: '',
+        placeholder: 'dlg_...',
+        displayOptions: { show: { authorityMode: ['delegatedAgent'] } },
+        description: 'Model-read Delegation for delegated design-time Discovery and only those runtime calls that actually need relation-name resolution or optimistic-concurrency pre-reads. It is not used by pure mutations that need no helper read.',
+      },
+      {
+        displayName: 'Batch Delegation IDs',
+        name: 'batchDelegationIds',
+        type: 'json',
+        default: '[]',
+        displayOptions: {
+          show: {
+            authorityMode: ['delegatedAgent'],
+            operation: ['batchCreate'],
+          },
+        },
+        description: 'Optional JSON array with exactly one dlg_* selector per generated Batch item. Use this for multiple single-use Delegations. If empty, Delegation ID is applied to every item and therefore must be reusable for multi-item Batch execution',
+      },
+      {
         displayName: 'Space Name or ID',
         name: 'spaceId',
         type: 'options',
-        typeOptions: { loadOptionsMethod: 'getSpaces' },
+        typeOptions: {
+          loadOptionsMethod: 'getSpaces',
+          loadOptionsDependsOn: ['authorityMode', 'principalUserId', 'readDelegationId', 'operation'],
+        },
         options: [],
         default: '',
         required: true,
@@ -480,6 +813,12 @@ export class LifeSpaceTool implements INodeType {
             value: 'create',
             description: 'Create one record using fields published by Runtime Discovery',
 												action: 'Create one record using fields published by runtime discovery',
+          },
+          {
+            name: 'Create Records (Batch)',
+            value: 'batchCreate',
+            description: 'Create 1-20 records of the pinned Record Type atomically in one LifeSpace Batch',
+            action: 'Create multiple records atomically',
           },
           {
             name: 'Delete Record',
@@ -513,7 +852,16 @@ export class LifeSpaceTool implements INodeType {
         name: 'recordType',
         type: 'options',
         noDataExpression: true,
-        typeOptions: { loadOptionsMethod: 'getRecordTypes', loadOptionsDependsOn: ['spaceId', 'operation'] },
+        typeOptions: {
+          loadOptionsMethod: 'getRecordTypes',
+          loadOptionsDependsOn: [
+            'authorityMode',
+            'principalUserId',
+            'readDelegationId',
+            'spaceId',
+            'operation',
+          ],
+        },
         options: [],
         default: '',
         required: true,
@@ -585,7 +933,8 @@ export class LifeSpaceTool implements INodeType {
   methods = {
     loadOptions: {
       async getSpaces(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-        const discovery = await loadRuntimeDiscoveryInventory.call(this);
+        const transport = await agentDiscoveryTransport(this, true);
+        const discovery = await loadRuntimeDiscoveryInventory.call(this, transport);
         return discovery.data.spaces.map((space) => ({
           name: space.spaceName?.trim() || space.spaceId,
           value: space.spaceId,
@@ -596,13 +945,14 @@ export class LifeSpaceTool implements INodeType {
         const operation = loadOptionParameter(this, 'operation') || 'query';
         if (!spaceId) return [];
 
-        const discovery = await loadRuntimeDiscoveryInventory.call(this);
+        const transport = await agentDiscoveryTransport(this, true);
+        const discovery = await loadRuntimeDiscoveryInventory.call(this, transport);
         const space = discoverySpace(discovery, spaceId);
         if (!space) return [];
 
         const candidates = space.models.filter((model) => modelSupportsOperation(model, operation));
         const models = await Promise.all(
-          candidates.map((model) => loadDesignTimeSemanticDetail.call(this, spaceId, model)),
+          candidates.map((model) => loadDesignTimeSemanticDetail.call(this, spaceId, model, transport)),
         );
 
         return models.map((model) => ({
@@ -643,8 +993,15 @@ export class LifeSpaceTool implements INodeType {
     context: AgentRuntimeContext,
     itemIndex: number,
   ): Promise<AgentRuntime> {
-    const credentials = await context.getCredentials('lifeSpaceApi', itemIndex);
-    const baseUrl = normalizeBaseUrl(credentials.baseUrl);
+    const authorityMode = String(
+      context.getNodeParameter('authorityMode', itemIndex, 'service') ?? 'service',
+    );
+    const baseUrl = authorityMode === 'delegatedAgent'
+      ? delegatedAgentCoreBaseUrl(
+        context,
+        await context.getCredentials('lifeSpaceAgentExecutionApi', itemIndex),
+      )
+      : normalizeBaseUrl((await context.getCredentials('lifeSpaceApi', itemIndex)).baseUrl);
     const spaceId = String(context.getNodeParameter('spaceId', itemIndex)).trim();
     const snapshot = decodeAgentToolSemanticSnapshot(context.getNodeParameter('recordType', itemIndex, ''));
     if (!snapshot) {
@@ -688,7 +1045,24 @@ export class LifeSpaceTool implements INodeType {
       throw new NodeOperationError(context.getNode(), error as Error, { itemIndex });
     }
 
-    return { baseUrl, model, config, definition };
+    const required = config.operation === 'action'
+      ? model.actions.find((action) => action.key === config.actionKey)?.access
+      : requiredAccess(config.operation);
+    if (!required) {
+      throw new NodeOperationError(
+        context.getNode(),
+        'LifeSpace Tool could not determine the access required by this operation',
+        { itemIndex },
+      );
+    }
+    return {
+      baseUrl,
+      model,
+      config,
+      definition,
+      requiredAccess: required,
+      itemIndex,
+    };
   }
 
   private async invokeAgentTool(
@@ -696,19 +1070,68 @@ export class LifeSpaceTool implements INodeType {
     runtime: AgentRuntime,
     query: unknown,
   ): Promise<string> {
+    const authority = await runtimeAuthority(context, runtime);
+
+    if (runtime.config.operation === 'batchCreate') {
+      const rawItems = batchCreateItems(context, query);
+      const delegationIds = configuredBatchDelegationIds(context, runtime, authority, rawItems.length);
+      const createConfig: AgentToolConfig = { ...runtime.config, operation: 'create' };
+      const preparedItems: unknown[] = [];
+
+      for (let index = 0; index < rawItems.length; index += 1) {
+        const requester: AgentRelationRequester = async (options) => lifeSpaceRequest(
+          context,
+          await runtimeReadAuthority(context, runtime),
+          options,
+        );
+        preparedItems.push(await prepareAgentInput(
+          context,
+          runtime.baseUrl,
+          runtime.model,
+          createConfig,
+          rawItems[index],
+          requester,
+        ));
+      }
+
+      const request = buildAgentToolRequest(
+        runtime.model,
+        runtime.config,
+        { items: preparedItems },
+      );
+      if (authority.mode === 'delegatedAgent') {
+        const operations = (request.body?.operations ?? []) as Array<Record<string, unknown>>;
+        request.body = {
+          operations: operations.map((operation, index) => ({
+            ...operation,
+            delegationId: delegationIds[index],
+          })),
+        };
+      }
+      const batchAuthority = authorityWithDelegation(authority, null);
+      const response = await performRequest(context, runtime.baseUrl, request, batchAuthority);
+      return stringifyToolOutput(response);
+    }
+
+    const requester: AgentRelationRequester = async (options) => lifeSpaceRequest(
+      context,
+      await runtimeReadAuthority(context, runtime),
+      options,
+    );
     const prepared = await prepareAgentInput(
       context,
       runtime.baseUrl,
       runtime.model,
       runtime.config,
       query,
+      requester,
     );
     let request = buildAgentToolRequest(runtime.model, runtime.config, prepared);
     if (request.needsCurrentVersion) {
       const recordResponse = await performRequest(context, runtime.baseUrl, {
         method: 'GET',
         path: currentRecordPath(request),
-      });
+      }, await runtimeReadAuthority(context, runtime));
       request = buildAgentToolRequest(
         runtime.model,
         runtime.config,
@@ -716,7 +1139,7 @@ export class LifeSpaceTool implements INodeType {
         currentRecordVersion(context, recordResponse),
       );
     }
-    const response = await performRequest(context, runtime.baseUrl, request);
+    const response = await performRequest(context, runtime.baseUrl, request, authority);
     return stringifyToolOutput(response);
   }
 
@@ -777,7 +1200,7 @@ export class LifeSpaceTool implements INodeType {
         });
       } catch (error) {
         const executionError = toolError(this, error);
-        const structuredFailure = parseReferenceFailure(error) ?? parseAgentQueryFailure(error);
+        const structuredFailure = authorityFailure(error) ?? parseReferenceFailure(error) ?? parseAgentQueryFailure(error);
         if (structuredFailure) {
           output.push({
             json: { response: toolFailureOutput(error, executionError) },

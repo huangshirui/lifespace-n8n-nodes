@@ -29,7 +29,7 @@ if (!parameters) {
 const properties = parameters.properties ?? {};
 
 // Runtime fields must never leak into an Agent-facing contract.
-const forbidden = ['action', 'sessionId', 'chatInput', 'toolCallId'];
+const forbidden = ['action', 'sessionId', 'chatInput', 'toolCallId', 'principalUserId', 'delegationId', 'readDelegationId', 'batchDelegationIds'];
 for (const key of forbidden) {
   if (Object.hasOwn(properties, key)) {
     throw new Error(`Forbidden Agent Tool contract property: ${key}`);

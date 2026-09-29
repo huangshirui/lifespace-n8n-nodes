@@ -11,7 +11,7 @@ import {
   genericQuerySchema as canonicalGenericQuerySchema,
 } from './lifeSpaceGenericQueryTool';
 
-export type AgentToolOperation = 'query' | 'create' | 'update' | 'delete' | 'action';
+export type AgentToolOperation = 'query' | 'create' | 'batchCreate' | 'update' | 'delete' | 'action';
 export type AgentToolQueryMode = 'generic' | 'capability';
 
 export type AgentToolConfig = {
@@ -560,12 +560,30 @@ function ensureConfiguredAccess(model: DiscoveryModel, config: AgentToolConfig):
   }
 }
 
+function batchCreateSchema(model: DiscoveryModel): AgentToolSchema {
+  return {
+    type: 'object',
+    properties: {
+      items: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 20,
+        items: mutationSchema(model, 'create'),
+        description: 'Create 1-20 records atomically. Every item uses the same pinned LifeSpace model contract.',
+      },
+    },
+    required: ['items'],
+    additionalProperties: false,
+  };
+}
+
 function toolSchema(model: DiscoveryModel, config: AgentToolConfig): AgentToolSchema {
   if (config.operation === 'query') {
     if (config.queryMode === 'capability') return capabilityQuerySchema(model, text(config.capabilityQueryKey));
     return genericQuerySchema(model);
   }
   if (config.operation === 'create') return mutationSchema(model, 'create');
+  if (config.operation === 'batchCreate') return batchCreateSchema(model);
   if (config.operation === 'update') return mutationSchema(model, 'update');
   if (config.operation === 'delete') return deleteSchema();
   return actionSchema(model, text(config.actionKey));
@@ -591,6 +609,8 @@ function defaultDescription(model: DiscoveryModel, config: AgentToolConfig): str
     purpose = `Query ${model.display.plural || modelName} using the published LifeSpace query contract`;
   } else if (config.operation === 'create') {
     purpose = `Create a ${modelName} record`;
+  } else if (config.operation === 'batchCreate') {
+    purpose = `Create 1-20 ${model.display.plural || modelName} atomically in one LifeSpace Batch`;
   } else if (config.operation === 'update') {
     purpose = `Update an existing ${modelName} record`;
   } else if (config.operation === 'delete') {
@@ -909,6 +929,23 @@ export function buildAgentToolRequest(
   if (config.operation === 'query') return queryRequest(model, config, validated);
   if (config.operation === 'create') {
     return { method: 'POST', path: collectionPath(model, config), body: semanticBody(schema, validated, mutationFields(model, 'create')) };
+  }
+  if (config.operation === 'batchCreate') {
+    const items = validated.items;
+    if (!Array.isArray(items) || items.length < 1 || items.length > 20) {
+      throw new Error('LifeSpace Batch Create requires 1-20 items');
+    }
+    const itemSchema = mutationSchema(model, 'create');
+    const operations = items.map((item) => ({
+      operation: 'create',
+      modelKey: model.key,
+      data: semanticBody(itemSchema, item as Record<string, unknown>, mutationFields(model, 'create')),
+    }));
+    return {
+      method: 'POST',
+      path: `/spaces/${encodeURIComponent(config.spaceId)}/models/batch`,
+      body: { operations },
+    };
   }
 
   const path = recordPath(model, config, validated);
