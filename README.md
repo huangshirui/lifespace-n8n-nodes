@@ -183,9 +183,13 @@ Credentials are intentionally static secure configuration and are not workflow-e
 
 The normal n8n-facing resource is **Record**. LifeSpace still owns **Model** semantics internally; the adapter uses **Record Type** for the workflow-facing selection.
 
-Supported human Workflow operations include ordinary Record CRUD/Query/Action plus **Batch Mutation**. Batch Mutation accepts 1-20 create/update/delete operations, may mix Record Types in one Space, and sends exactly one atomic Core request. Update/Delete items carry their already-known optimistic-concurrency `version`; the adapter does not turn Batch into N pre-read + CRUD calls.
+Supported human Workflow operations include ordinary Record CRUD/Query/Action. **Create / Update / Delete expose an optional Batch Mode under Record Options, default Off.** When enabled, the node consumes the incoming n8n `items[]` directly, requires 1-20 items resolving to one Space and one Record Type, and sends exactly one atomic Core Batch request. The response is expanded back to one n8n output item per input item with preserved pairing and a shared `changeSetId`.
 
-The native Agent Tool supports Query/Create/Update/Delete/Action plus **Create Records (Batch)** for 1-20 records of its pinned Record Type. Agent Batch Update/Delete are intentionally not synthesized in this version: automatically resolving N current versions would reintroduce an N-read waterfall. Use the human Batch surface with known versions, or add a future set-based version-resolution contract before exposing those Agent operations.
+Update/Delete `Version` remains optional in both modes. In single mode, omission keeps the historical behavior of reading the current record immediately before mutation. In Batch Mode, omission is delegated to the LifeSpace Batch contract: Core resolves current versions set-wise during Batch preparation and still commits conditionally, so there is no N-read HTTP waterfall and no blind write.
+
+**Advanced Mixed Batch** remains available for workflows that deliberately need mixed create/update/delete or cross-Record-Type operations in one atomic ChangeSet. It uses the explicit JSON operations surface and is not the primary Batch UX.
+
+The native Agent Tool supports Query/Create/Update/Delete/Action plus **Create Records (Batch)** for 1-20 records of its pinned Record Type. Agent Batch Update/Delete are not exposed by this workflow-UX change; they can be added separately against the same upstream optional-version Batch semantics without reintroducing N pre-read HTTP calls.
 
 Ordinary Record operations remain:
 

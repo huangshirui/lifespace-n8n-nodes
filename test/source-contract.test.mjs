@@ -63,6 +63,8 @@ test('Runtime Discovery UX is cross-Space and Record-facing', async () => {
   assert.match(node, /name: 'Record'/u);
   assert.match(node, /displayName: 'Record Type Name or ID'/u);
   assert.match(node, /displayName: 'Return All'/u);
+  assert.match(node, /name: 'recordOptions'[\s\S]{0,500}displayName: 'Batch Mode'/u);
+  assert.match(node, /name: 'Advanced Mixed Batch'/u);
   assert.match(node, /name: 'sorts'/u);
   assert.match(node, /field\.title\?\.trim\(\) \|\| humanizeKey/u);
 
@@ -91,6 +93,7 @@ test('runtime node inputs remain expression-capable except structural controls',
   assert.match(node, /name: 'queryMode'[\s\S]{0,160}noDataExpression: true/u);
   assert.match(node, /name: 'resource',[\s\S]{0,80}noDataExpression: true/u);
   assert.match(node, /name: 'operation',[\s\S]{0,80}noDataExpression: true/u);
+  assert.match(node, /name: 'recordOptions'[\s\S]{0,180}noDataExpression: true/u);
   assert.match(node, /name: 'fields',[\s\S]{0,140}noDataExpression: true/u);
   assert.match(node, /name: 'actionInput',[\s\S]{0,140}noDataExpression: true/u);
   assert.match(node, /name: 'semanticQueryInput',[\s\S]{0,180}noDataExpression: true/u);
