@@ -242,19 +242,28 @@ function batchMutationOperations(
     }
 
     const recordId = String(input.recordId ?? '').trim();
-    const version = Number(input.version);
+    const rawVersion = input.version;
+    let version: number | undefined;
+    if (rawVersion !== undefined && rawVersion !== null && rawVersion !== '') {
+      const parsedVersion = Number(rawVersion);
+      if (!Number.isInteger(parsedVersion) || parsedVersion < 1) {
+        throw new NodeOperationError(
+          context.getNode(),
+          `Batch operation ${index} version must be a positive integer when supplied`,
+          { itemIndex },
+        );
+      }
+      version = parsedVersion;
+    }
     if (!/^rec_[A-Za-z0-9_-]+$/u.test(recordId)) {
       throw new NodeOperationError(context.getNode(), `Batch operation ${index} has an invalid recordId`, { itemIndex });
-    }
-    if (!Number.isInteger(version) || version < 1) {
-      throw new NodeOperationError(context.getNode(), `Batch operation ${index} requires a positive integer version`, { itemIndex });
     }
     if (operation === 'delete') {
       return {
         operation: 'delete',
         modelKey,
         recordId,
-        version,
+        ...(version === undefined ? {} : { version }),
         ...(delegationId ? { delegationId } : {}),
       };
     }
@@ -267,7 +276,7 @@ function batchMutationOperations(
       operation: 'update',
       modelKey,
       recordId,
-      version,
+      ...(version === undefined ? {} : { version }),
       data: data as IDataObject,
       ...(delegationId ? { delegationId } : {}),
     };
@@ -690,18 +699,33 @@ async function currentRecordVersion(
   return recordVersion(context, itemIndex, await currentRecord(context, itemIndex, baseUrl, recordPath));
 }
 
+function configuredMutationVersion(
+  context: IExecuteFunctions,
+  itemIndex: number,
+): number | undefined {
+  const options = context.getNodeParameter('mutationOptions', itemIndex, {}) as IDataObject;
+  const configuredVersion = options.version;
+  if (configuredVersion === undefined || configuredVersion === null || configuredVersion === '') {
+    return undefined;
+  }
+  if (typeof configuredVersion === 'number' && Number.isInteger(configuredVersion) && configuredVersion >= 1) {
+    return configuredVersion;
+  }
+  throw new NodeOperationError(
+    context.getNode(),
+    'Version must be a positive integer when supplied',
+    { itemIndex },
+  );
+}
+
 async function mutationVersion(
   context: IExecuteFunctions,
   itemIndex: number,
   baseUrl: string,
   recordPath: string,
 ): Promise<number> {
-  const options = context.getNodeParameter('mutationOptions', itemIndex, {}) as IDataObject;
-  const configuredVersion = options.version;
-  if (typeof configuredVersion === 'number' && Number.isInteger(configuredVersion) && configuredVersion >= 1) {
-    return configuredVersion;
-  }
-  return currentRecordVersion(context, itemIndex, baseUrl, recordPath);
+  return configuredMutationVersion(context, itemIndex)
+    ?? currentRecordVersion(context, itemIndex, baseUrl, recordPath);
 }
 
 async function actionBodyWithConcurrency(
