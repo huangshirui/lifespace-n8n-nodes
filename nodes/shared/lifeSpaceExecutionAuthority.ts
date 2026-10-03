@@ -23,7 +23,9 @@ type AgentTokenResponse = {
   data?: {
     accessToken?: unknown;
     principalId?: unknown;
+    principalType?: unknown;
     applicationId?: unknown;
+    purpose?: unknown;
     actor?: { type?: unknown; id?: unknown };
   };
 };
@@ -146,9 +148,10 @@ export async function delegatedAgentAuthority(
     'lifeSpaceAgentExecutionApi',
     {
       method: 'POST',
-      url: `${baseUrl}/internal/v1/agent-tokens`,
+      url: `${baseUrl}/internal/v1/agent-execution-tokens`,
       body: {
-        subjectId: principalUserId,
+        principalType: 'user',
+        principalId: principalUserId,
         agentId,
         scopes: [...new Set(scopes)],
       },
@@ -160,16 +163,18 @@ export async function delegatedAgentAuthority(
   const accessToken = requiredString(
     context,
     data?.accessToken,
-    'Delegated Agent access token',
+    'Agent execution access token',
   );
   if (
     data?.principalId !== principalUserId
+    || data?.principalType !== 'user'
     || data?.actor?.type !== 'agent'
     || data?.actor?.id !== agentId
+    || data?.purpose !== 'agent_execution'
   ) {
     throw new NodeOperationError(
       context.getNode(),
-      'LifeSpace Identity returned a delegated Agent token for a different execution context',
+      'LifeSpace Identity returned an Agent execution token for a different execution context',
     );
   }
 

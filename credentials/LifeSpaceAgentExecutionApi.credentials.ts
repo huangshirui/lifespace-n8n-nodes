@@ -8,7 +8,7 @@ import type {
 export class LifeSpaceAgentExecutionApi implements ICredentialType {
   name = 'lifeSpaceAgentExecutionApi';
 
-  displayName = 'LifeSpace Delegated Agent API';
+  displayName = 'LifeSpace Agent Execution API';
 
   icon = {
     light: 'file:lifespace.svg',
@@ -25,7 +25,7 @@ export class LifeSpaceAgentExecutionApi implements ICredentialType {
       default: '',
       placeholder: 'https://core.example.com/api/v1',
       required: true,
-      description: 'LifeSpace Core API root used by delegated Agent business requests',
+      description: 'LifeSpace Core API root used by Agent business requests and Delegation creation',
     },
     {
       displayName: 'Identity API Base URL',
@@ -34,7 +34,7 @@ export class LifeSpaceAgentExecutionApi implements ICredentialType {
       default: '',
       placeholder: 'https://identity.example.com',
       required: true,
-      description: 'LifeSpace Identity origin. Do not include /internal/v1/agent-tokens',
+      description: 'LifeSpace Identity origin. Do not include an /internal/v1 token route.',
     },
     {
       displayName: 'Application Credential',
@@ -44,7 +44,7 @@ export class LifeSpaceAgentExecutionApi implements ICredentialType {
       default: '',
       placeholder: 'lsa_...',
       required: true,
-      description: 'Server-only trusted LifeSpace Application credential used only to mint short-lived delegated Agent execution tokens',
+      description: 'Server-only trusted LifeSpace Application credential used to mint short-lived User and Agent execution tokens',
     },
     {
       displayName: 'Agent ID',

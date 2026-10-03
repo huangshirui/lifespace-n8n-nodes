@@ -39,13 +39,15 @@ function context(parameters, mode, inputData = [{ json: {} }]) {
       async httpRequestWithAuthentication(credentialName, options) {
         calls.push({ transport: 'credential', credentialName, options });
         if (credentialName === 'lifeSpaceAgentExecutionApi') {
-          assert.equal(options.url, `${IDENTITY_BASE}/internal/v1/agent-tokens`);
+          assert.equal(options.url, `${IDENTITY_BASE}/internal/v1/agent-execution-tokens`);
           return {
             data: {
               accessToken: 'agent.jwt.batch',
               principalId: 'usr_test',
+              principalType: 'user',
               actor: { type: 'agent', id: 'agt_test' },
               applicationId: 'app_test',
+              purpose: 'agent_execution',
             },
           };
         }
@@ -107,7 +109,7 @@ test('human Service Batch sends exactly one atomic Core mutation request', async
   assert.deepEqual(business[0].options.body, { operations });
 });
 
-test('human delegated Batch uses Agent JWT, per-item selectors and no Service PAT', async () => {
+test('human delegated Batch uses Authority v3 Agent JWT, per-item selectors and no Service PAT', async () => {
   const operations = [
     {
       operation: 'update',
@@ -139,7 +141,8 @@ test('human delegated Batch uses Agent JWT, per-item selectors and no Service PA
   const core = execution.calls.filter((call) => call.transport === 'direct');
   assert.equal(identity.length, 1);
   assert.deepEqual(identity[0].options.body, {
-    subjectId: 'usr_test',
+    principalType: 'user',
+    principalId: 'usr_test',
     agentId: 'agt_test',
     scopes: ['resources:read', 'resources:write'],
   });
@@ -174,7 +177,6 @@ test('human Batch rejects more than 20 operations before any network call', asyn
   );
   assert.equal(execution.calls.length, 0);
 });
-
 
 test('Record Batch Mode maps incoming n8n items to one Core Batch and preserves paired output', async () => {
   const inputData = [{ json: { source: 1 } }, { json: { source: 2 } }];
