@@ -163,6 +163,7 @@ export class LifeSpaceDelegation implements INodeType {
     },
     inputs: [NodeConnectionTypes.Main],
     outputs: [NodeConnectionTypes.Main],
+    usableAsTool: true,
     credentials: [
       {
         name: 'lifeSpaceAgentExecutionApi',
@@ -258,6 +259,12 @@ export class LifeSpaceDelegation implements INodeType {
       },
     ],
   };
+
+  constructor() {
+    const description = this.description as INodeTypeDescription & { usableAsTool?: boolean };
+    delete description.usableAsTool;
+    this.description = description;
+  }
 
   async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
     const items = this.getInputData();
