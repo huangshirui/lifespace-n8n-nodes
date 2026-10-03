@@ -56,6 +56,11 @@ function context(inputData, parameters) {
   };
 }
 
+test('Delegation is a workflow-only node and is not exposed through usableAsTool', () => {
+  const node = new LifeSpaceDelegation();
+  assert.equal(node.description.usableAsTool, undefined);
+});
+
 test('confirmed authorization creates one Root Delegation per input item and reuses the User token', async () => {
   const execution = context(
     [{ json: { request: 1 } }, { json: { request: 2 } }],
