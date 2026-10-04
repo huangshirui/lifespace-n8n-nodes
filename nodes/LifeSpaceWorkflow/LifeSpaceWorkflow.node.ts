@@ -5,6 +5,7 @@ import type {
   INodeType,
   INodeTypeDescription,
 } from 'n8n-workflow';
+import { NodeOperationError } from 'n8n-workflow';
 import { LifeSpace } from '../LifeSpace/LifeSpace.node';
 import { restoreLifeSpaceContinueOnFailErrors } from './lifeSpaceErrorProjection';
 import {
@@ -149,6 +150,8 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
   const result: INodeProperties[] = [];
   for (const property of properties) {
     if ([
+      'batchAuthorityMode',
+      'batchPrincipalUserId',
       'dateFields',
       'singleRelations',
       'filters',
@@ -157,6 +160,14 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
       'semanticQueryInput',
       'semanticSort',
     ].includes(property.name)) continue;
+
+    if (property.name === 'batchOperations') {
+      result.push({
+        ...property,
+        description: 'Advanced JSON surface for one atomic mixed/cross-model Service Batch. Update/delete require recordId; version is optional when the current Core Batch contract supports server-resolved concurrency.',
+      });
+      continue;
+    }
 
     if (property.name === 'fields') {
       result.push(
@@ -221,6 +232,8 @@ function canonicalOnlyExecutionContext(context: IExecuteFunctions): IExecuteFunc
     get(target, property, receiver) {
       if (property !== 'getNodeParameter') return Reflect.get(target, property, receiver);
       return (name: string, itemIndex: number, fallback?: unknown, options?: unknown) => {
+        if (name === 'batchAuthorityMode') return 'service';
+        if (name === 'batchPrincipalUserId' || name === 'batchDelegationId') return '';
         if (name === 'queryMode') {
           const operation = String(context.getNodeParameter('operation', itemIndex, '') ?? '');
           if (operation === 'list') return 'canonical';
@@ -229,6 +242,19 @@ function canonicalOnlyExecutionContext(context: IExecuteFunctions): IExecuteFunc
       };
     },
   });
+}
+
+function assertNoLegacyDelegatedWorkflowBatch(context: IExecuteFunctions): void {
+  const items = context.getInputData();
+  if (!items.length) return;
+  const resource = String(context.getNodeParameter('resource', 0, '') ?? '');
+  if (resource !== 'batchMutation') return;
+  const legacyMode = String(context.getNodeParameter('batchAuthorityMode', 0, 'service') ?? 'service');
+  if (legacyMode !== 'delegatedAgent') return;
+  throw new NodeOperationError(
+    context.getNode(),
+    'LifeSpace 0.2.0 no longer allows Delegated Agent Authority in the ordinary Workflow node. Move this execution to LifeSpace Agent Tool / User Authorization instead of silently changing the Principal.',
+  );
 }
 
 export class LifeSpaceWorkflow extends LifeSpace {
@@ -242,7 +268,13 @@ export class LifeSpaceWorkflow extends LifeSpace {
         light: 'file:lifespace.svg',
         dark: 'file:lifespace.dark.svg',
       },
-      description: 'Use LifeSpace in human-authored n8n workflows',
+      description: 'Use LifeSpace with Service Authority in human-authored n8n workflows',
+      credentials: [
+        {
+          name: 'lifeSpaceApi',
+          required: true,
+        },
+      ],
       properties: humanProperties(description.properties),
     };
 
@@ -268,6 +300,7 @@ export class LifeSpaceWorkflow extends LifeSpace {
   }
 
   async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
+    assertNoLegacyDelegatedWorkflowBatch(this);
     const executions = await LifeSpace.prototype.execute.call(canonicalOnlyExecutionContext(this));
     return restoreLifeSpaceContinueOnFailErrors(executions);
   }
