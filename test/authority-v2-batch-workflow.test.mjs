@@ -87,6 +87,14 @@ function context(parameters, mode, inputData = [{ json: {} }]) {
   };
 }
 
+test('human Workflow node exposes only Service API credential and no Agent authority controls', () => {
+  const node = new LifeSpaceWorkflow();
+  assert.deepEqual(node.description.credentials, [{ name: 'lifeSpaceApi', required: true }]);
+  assert.equal(node.description.properties.some((entry) => entry.name === 'batchAuthorityMode'), false);
+  assert.equal(node.description.properties.some((entry) => entry.name === 'batchPrincipalUserId'), false);
+  assert.equal(node.description.usableAsTool, undefined);
+});
+
 test('human Service Batch sends exactly one atomic Core mutation request', async () => {
   const operations = [
     { operation: 'create', modelKey: 'task', data: { name: 'One' } },
@@ -109,7 +117,7 @@ test('human Service Batch sends exactly one atomic Core mutation request', async
   assert.deepEqual(business[0].options.body, { operations });
 });
 
-test('human delegated Batch uses Authority v3 Agent JWT, per-item selectors and no Service PAT', async () => {
+test('legacy human delegated Batch fails explicitly instead of silently changing Principal', async () => {
   const operations = [
     {
       operation: 'update',
@@ -118,13 +126,6 @@ test('human delegated Batch uses Authority v3 Agent JWT, per-item selectors and 
       version: 7,
       data: { name: 'Updated' },
       delegationId: 'dlg_update',
-    },
-    {
-      operation: 'delete',
-      modelKey: 'event',
-      recordId: 'rec_event',
-      version: 4,
-      delegationId: 'dlg_delete',
     },
   ];
   const execution = context({
@@ -135,27 +136,11 @@ test('human delegated Batch uses Authority v3 Agent JWT, per-item selectors and 
     batchOperations: JSON.stringify(operations),
   }, 'delegatedAgent');
 
-  await new LifeSpaceWorkflow().execute.call(execution);
-
-  const identity = execution.calls.filter((call) => call.credentialName === 'lifeSpaceAgentExecutionApi');
-  const core = execution.calls.filter((call) => call.transport === 'direct');
-  assert.equal(identity.length, 1);
-  assert.deepEqual(identity[0].options.body, {
-    principalType: 'user',
-    principalId: 'usr_test',
-    agentId: 'agt_test',
-    scopes: ['resources:read', 'resources:write'],
-  });
-  assert.equal(core.length, 1);
-  assert.equal(core[0].options.method, 'POST');
-  assert.equal(core[0].options.url, `${CORE_BASE}/spaces/spc_test/models/batch`);
-  assert.equal(core[0].options.headers.Authorization, 'Bearer agent.jwt.batch');
-  assert.equal(core[0].options.headers['X-LifeSpace-Delegation-Id'], undefined);
-  assert.deepEqual(core[0].options.body, { operations });
-  assert.equal(
-    execution.calls.some((call) => call.credentialName === 'lifeSpaceApi'),
-    false,
+  await assert.rejects(
+    () => new LifeSpaceWorkflow().execute.call(execution),
+    /no longer allows Delegated Agent Authority/u,
   );
+  assert.equal(execution.calls.length, 0);
 });
 
 test('human Batch rejects more than 20 operations before any network call', async () => {
