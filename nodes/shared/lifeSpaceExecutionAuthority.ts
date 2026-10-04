@@ -109,12 +109,17 @@ export function requestedResourceScopes(requiredAccess: 'read' | 'write' | 'mana
 /**
  * Resolve the Agent execution identity for one request.
  *
- * No Delegation selector means direct Agent execution:
+ * No trusted User context and no Delegation selector means direct Agent execution:
  *   Principal=Agent / Actor=Agent.
  *
  * An explicit Delegation selector means represented User execution:
  *   Principal=User / Actor=Agent.
  * In that profile the trusted workflow context must also supply the User Principal ID.
+ *
+ * The pre-0.2.0 base Tool may also request a represented User token without a global
+ * Delegation when it is constructing a first-class Batch that carries one explicit
+ * Delegation selector per operation. That compatibility path is retained while the
+ * registered 0.2.0 Agent Tool surface is being migrated.
  *
  * `mode: delegatedAgent` is retained as the adapter's internal compatibility discriminator
  * for the current lsa_* + agt_* credential implementation. It no longer means that every
@@ -138,6 +143,12 @@ export async function delegatedAgentAuthority(
   if (delegationValue && !/^dlg_[A-Za-z0-9_-]+$/u.test(delegationValue)) {
     throw new NodeOperationError(context.getNode(), 'Delegation ID must be a valid dlg_* identifier');
   }
+  if (!delegationValue && principalValue && options.requireDelegation !== false) {
+    throw new NodeOperationError(
+      context.getNode(),
+      'Delegation ID is required for delegated Agent execution',
+    );
+  }
 
   const credentials = await context.getCredentials('lifeSpaceAgentExecutionApi', itemIndex);
   const agentId = credentialString(
@@ -149,7 +160,7 @@ export async function delegatedAgentAuthority(
   );
   const baseUrl = identityBaseUrl(context, credentials);
 
-  const representedUser = Boolean(delegationValue);
+  const representedUser = Boolean(delegationValue) || Boolean(principalValue && options.requireDelegation === false);
   let principalUserId: string | null = null;
   if (representedUser) {
     principalUserId = requiredString(
@@ -159,11 +170,6 @@ export async function delegatedAgentAuthority(
       /^usr_[A-Za-z0-9_-]+$/u,
     );
   }
-
-  // `requireDelegation` existed for the pre-0.2.0 represented-only profile. Direct
-  // Agent Authority is now a valid execution profile, so absence of dlg_* deliberately
-  // falls back to Principal=Agent / Actor=Agent instead of failing before Core.
-  void options.requireDelegation;
 
   const body = representedUser
     ? {
