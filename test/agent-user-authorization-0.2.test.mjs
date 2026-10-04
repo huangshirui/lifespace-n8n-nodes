@@ -81,7 +81,11 @@ function snapshot() {
   });
 }
 
-function context({ enableUserAuthorization = false } = {}) {
+function context({
+  enableUserAuthorization = false,
+  coreError = null,
+  parameterOverrides = {},
+} = {}) {
   const calls = [];
   const parameters = {
     authorityMode: 'delegatedAgent',
@@ -98,6 +102,7 @@ function context({ enableUserAuthorization = false } = {}) {
     capabilityQueryKey: '',
     actionKey: '',
     descriptionOverride: '',
+    ...parameterOverrides,
   };
 
   return {
@@ -137,6 +142,7 @@ function context({ enableUserAuthorization = false } = {}) {
       },
       async httpRequest(options) {
         calls.push({ transport: 'direct', options });
+        if (coreError) throw coreError;
         return { data: { id: `rec_${calls.length}`, version: 1 } };
       },
     },
@@ -231,4 +237,31 @@ test('invalid runtime delegationId is rejected before Identity/Core calls', asyn
   assert.equal(result.ok, false);
   assert.equal(result.error.code, 'INVALID_DELEGATION_ID');
   assert.equal(execution.calls.length, 0);
+});
+
+test('insufficient direct Agent Authority returns the exact authorizationRequired Scope for Request Authorization', async () => {
+  const execution = context({
+    enableUserAuthorization: true,
+    coreError: {
+      error: {
+        code: 'PRINCIPAL_AUTHORITY_INSUFFICIENT',
+        message: 'Agent Principal has no write Authority for task',
+      },
+    },
+  });
+  const tool = (await new LifeSpaceAgentTool().supplyData.call(execution, 0)).response;
+  const result = JSON.parse(await tool.invoke({ name: 'Needs user authority' }));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'PRINCIPAL_AUTHORITY_INSUFFICIENT');
+  assert.equal(result.error.nextAction, 'request_authorization');
+  assert.deepEqual(result.authorizationRequired, {
+    spaceId: 'spc_test',
+    scopes: [
+      {
+        target: { type: 'model', id: 'task' },
+        maxAccess: 'write',
+      },
+    ],
+  });
 });
