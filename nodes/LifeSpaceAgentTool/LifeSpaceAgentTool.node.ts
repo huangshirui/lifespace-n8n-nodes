@@ -4,6 +4,7 @@ import type {
   ISupplyDataFunctions,
   SupplyData,
 } from 'n8n-workflow';
+import { decodeAgentToolSemanticSnapshot } from '../agent/lifeSpaceToolSnapshot';
 import { LifeSpaceTool } from '../LifeSpaceTool/LifeSpaceTool.node';
 
 type StructuralAiTool = {
@@ -19,12 +20,24 @@ type StructuralAiTool = {
   invoke: (query: unknown) => Promise<string>;
 };
 
+type AuthorizationScope = {
+  target: { type: 'model' | 'record'; id: string };
+  maxAccess: 'read' | 'write' | 'manage';
+};
+
 const LEGACY_AUTH_PARAMETERS = new Set([
   'authorityMode',
   'principalUserId',
   'delegationId',
   'readDelegationId',
   'batchDelegationIds',
+]);
+
+const USER_AUTH_RECOVERABLE_CODES = new Set([
+  'DELEGATION_REQUIRED',
+  'DELEGATION_INVALID',
+  'DELEGATION_SCOPE_INSUFFICIENT',
+  'PRINCIPAL_AUTHORITY_INSUFFICIENT',
 ]);
 
 function internalOnly(property: INodeProperties): INodeProperties {
@@ -116,6 +129,78 @@ function invalidDelegationOutput(): string {
   });
 }
 
+function requiredAccess(
+  operation: string,
+  actionKey: string,
+  snapshot: ReturnType<typeof decodeAgentToolSemanticSnapshot>,
+): AuthorizationScope['maxAccess'] | null {
+  if (operation === 'query') return 'read';
+  if (['create', 'batchCreate', 'update', 'delete'].includes(operation)) return 'write';
+  if (operation !== 'action' || !snapshot) return null;
+  const access = snapshot.model.actions.find((action) => action.key === actionKey)?.access;
+  return access === 'read' || access === 'write' || access === 'manage' ? access : null;
+}
+
+function authorizationScope(
+  context: ISupplyDataFunctions,
+  itemIndex: number,
+  semantic: unknown,
+): { spaceId: string; scopes: AuthorizationScope[] } | null {
+  const spaceId = String(context.getNodeParameter('spaceId', itemIndex, '') ?? '').trim();
+  const snapshot = decodeAgentToolSemanticSnapshot(
+    context.getNodeParameter('recordType', itemIndex, ''),
+  );
+  if (!spaceId || !snapshot) return null;
+
+  const operation = String(context.getNodeParameter('operation', itemIndex, '') ?? '');
+  const actionKey = String(context.getNodeParameter('actionKey', itemIndex, '') ?? '').trim();
+  const access = requiredAccess(operation, actionKey, snapshot);
+  if (!access) return null;
+
+  const input = semantic && typeof semantic === 'object' && !Array.isArray(semantic)
+    ? semantic as Record<string, unknown>
+    : {};
+  const recordId = String(input.recordId ?? '').trim();
+  const recordScoped = ['update', 'delete', 'action'].includes(operation)
+    && /^rec_[A-Za-z0-9_-]+$/u.test(recordId);
+  const scope: AuthorizationScope = recordScoped
+    ? { target: { type: 'record', id: recordId }, maxAccess: access }
+    : { target: { type: 'model', id: snapshot.model.key }, maxAccess: access };
+
+  return { spaceId, scopes: [scope] };
+}
+
+function withAuthorizationRequired(
+  output: string,
+  required: { spaceId: string; scopes: AuthorizationScope[] } | null,
+): string {
+  if (!required) return output;
+  let value: unknown;
+  try {
+    value = JSON.parse(output) as unknown;
+  } catch {
+    return output;
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return output;
+  const result = value as Record<string, unknown>;
+  const error = result.error;
+  if (!error || typeof error !== 'object' || Array.isArray(error)) return output;
+  const errorRecord = error as Record<string, unknown>;
+  const code = String(errorRecord.code ?? '');
+  if (!USER_AUTH_RECOVERABLE_CODES.has(code)) return output;
+
+  return JSON.stringify({
+    ...result,
+    error: {
+      ...errorRecord,
+      retryable: false,
+      nextAction: 'request_authorization',
+      instruction: 'Call LifeSpace Request Authorization with authorizationRequired. After confirmation, retry this Tool with the returned dlg_* as delegationId.',
+    },
+    authorizationRequired: required,
+  });
+}
+
 export class LifeSpaceAgentTool extends LifeSpaceTool {
   constructor() {
     super();
@@ -200,7 +285,11 @@ export class LifeSpaceAgentTool extends LifeSpaceTool {
           itemIndex,
         );
         const runtimeTool = runtimeSupply.response as unknown as StructuralAiTool;
-        return await runtimeTool.invoke(semantic as IDataObject);
+        const output = await runtimeTool.invoke(semantic as IDataObject);
+        return withAuthorizationRequired(
+          output,
+          authorizationScope(this, itemIndex, semantic),
+        );
       },
     };
 
