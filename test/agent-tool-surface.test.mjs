@@ -7,6 +7,8 @@ const { LifeSpaceAgentTool } = require('../dist/nodes/LifeSpaceAgentTool/LifeSpa
 const { encodeAgentToolSemanticSnapshot } = require('../dist/nodes/agent/lifeSpaceToolSnapshot.js');
 
 const BASE_URL = 'https://example.invalid/api/v1';
+const IDENTITY_BASE_URL = 'https://identity.example.invalid';
+const AGENT_ID = 'agt_surface_test';
 const MODEL_KEY = 'work_item';
 const MODEL_HASH = 'sha256:work-item-v1';
 
@@ -141,7 +143,18 @@ function context(parameters, onBusiness, input = [{ json: {} }]) {
   };
   return {
     calls,
-    getCredentials: async () => ({ baseUrl: BASE_URL }),
+    getCredentials: async (name) => {
+      if (name === 'lifeSpaceAgentExecutionApi') {
+        return {
+          coreBaseUrl: BASE_URL,
+          identityBaseUrl: IDENTITY_BASE_URL,
+          applicationSecret: 'lsa_surface_test',
+          agentId: AGENT_ID,
+        };
+      }
+      if (name === 'lifeSpaceApi') return { baseUrl: BASE_URL };
+      throw new Error(`unexpected credential ${name}`);
+    },
     getNodeParameter(name, _itemIndex, defaultValue) {
       return Object.hasOwn(effectiveParameters, name) ? effectiveParameters[name] : defaultValue;
     },
@@ -151,10 +164,28 @@ function context(parameters, onBusiness, input = [{ json: {} }]) {
     addInputData: () => ({ index: 0 }),
     addOutputData: () => undefined,
     helpers: {
-      async httpRequestWithAuthentication(_credentialName, options) {
+      async httpRequestWithAuthentication(credentialName, options) {
         calls.push(options);
+        if (credentialName === 'lifeSpaceAgentExecutionApi'
+          && options.url === `${IDENTITY_BASE_URL}/internal/v1/agent-execution-tokens`) {
+          return {
+            data: {
+              accessToken: 'agent.surface.jwt',
+              principalType: 'agent',
+              principalId: AGENT_ID,
+              actor: { type: 'agent', id: AGENT_ID },
+              applicationId: 'app_surface_test',
+              purpose: 'agent_execution',
+            },
+          };
+        }
         if (options.url === `${BASE_URL}/me/_discovery/inventory`) return inventory();
         if (options.url === `${BASE_URL}/spaces/spc_test/_discovery/models/${MODEL_KEY}`) return detail();
+        if (onBusiness) return onBusiness(options);
+        return { data: { items: [], nextCursor: null } };
+      },
+      async httpRequest(options) {
+        calls.push(options);
         if (onBusiness) return onBusiness(options);
         return { data: { items: [], nextCursor: null } };
       },
@@ -212,6 +243,7 @@ test('registered Agent Tool exposes and executes Canonical Query', async () => {
 
   assert.equal(requested.method, 'POST');
   assert.equal(requested.url, `${BASE_URL}/spaces/spc_test/models/${MODEL_KEY}/records/query`);
+  assert.equal(requested.headers.Authorization, 'Bearer agent.surface.jwt');
   assert.equal(execution.calls.some((call) => call.url.includes('/_discovery')), false);
   assert.deepEqual(requested.body, {
     search: { text: 'milk' },
@@ -298,7 +330,7 @@ test('registered Agent Tool execute path still validates semantic arguments afte
   assert.ok(Array.isArray(failure.error.allowedFields));
 });
 
-test('registered Agent Tool delegates Create while preserving omission semantics', async () => {
+test('registered Agent Tool uses direct Agent Authority for Create while preserving omission semantics', async () => {
   let requested;
   const execution = context({ ...baseParameters, operation: 'create' }, (options) => {
     requested = options;
@@ -311,6 +343,8 @@ test('registered Agent Tool delegates Create while preserving omission semantics
 
   await tool.invoke({ name: 'Buy milk' });
   assert.equal(requested.method, 'POST');
+  assert.equal(requested.headers.Authorization, 'Bearer agent.surface.jwt');
+  assert.equal(requested.headers['X-LifeSpace-Delegation-Id'], undefined);
   assert.deepEqual(requested.body, { name: 'Buy milk' });
   assert.equal(Object.hasOwn(requested.body, 'status'), false);
 });
