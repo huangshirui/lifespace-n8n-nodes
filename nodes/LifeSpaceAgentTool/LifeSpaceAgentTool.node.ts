@@ -57,7 +57,7 @@ function authorizationProperties(): INodeProperties[] {
       type: 'boolean',
       default: false,
       noDataExpression: true,
-      description: 'Allow the Agent to optionally execute this Tool as a User Principal by supplying a runtime Delegation ID. When disabled, the Tool always uses the Agent\'s own Authority.',
+      description: 'Whether the Agent may optionally execute this Tool as a User Principal by supplying a runtime Delegation ID. When disabled, the Tool always uses the Agent\'s own Authority.',
     },
     {
       displayName: 'Principal User ID',
