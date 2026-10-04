@@ -148,7 +148,7 @@ async function issueUserToken(
 
 export class LifeSpaceDelegation implements INodeType {
   description: INodeTypeDescription = {
-    displayName: 'LifeSpace Delegation',
+    displayName: 'LifeSpace Create Delegation',
     name: 'lifeSpaceDelegation',
     icon: {
       light: 'file:lifespace.svg',
@@ -156,10 +156,10 @@ export class LifeSpaceDelegation implements INodeType {
     },
     group: ['transform'],
     version: 1,
-    subtitle: 'Create Delegation',
-    description: 'Create a bounded LifeSpace User → Agent Delegation after the application has confirmed user authorization',
+    subtitle: 'Advanced · Direct Delegation Issuance',
+    description: 'Advanced primitive for directly issuing a bounded LifeSpace Delegation after a trusted application has already obtained explicit user authorization proof',
     defaults: {
-      name: 'LifeSpace Delegation',
+      name: 'LifeSpace Create Delegation',
     },
     inputs: [NodeConnectionTypes.Main],
     outputs: [NodeConnectionTypes.Main],
