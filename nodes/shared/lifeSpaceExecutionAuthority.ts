@@ -14,7 +14,9 @@ export type LifeSpaceExecutionAuthority =
   | {
       mode: 'delegatedAgent';
       accessToken: string;
-      principalUserId: string;
+      principalType: 'agent' | 'user';
+      principalId: string;
+      principalUserId: string | null;
       agentId: string;
       delegationId: string | null;
     };
@@ -104,6 +106,20 @@ export function requestedResourceScopes(requiredAccess: 'read' | 'write' | 'mana
   return ['resources:read', 'resources:write', 'resources:manage'];
 }
 
+/**
+ * Resolve the Agent execution identity for one request.
+ *
+ * No Delegation selector means direct Agent execution:
+ *   Principal=Agent / Actor=Agent.
+ *
+ * An explicit Delegation selector means represented User execution:
+ *   Principal=User / Actor=Agent.
+ * In that profile the trusted workflow context must also supply the User Principal ID.
+ *
+ * `mode: delegatedAgent` is retained as the adapter's internal compatibility discriminator
+ * for the current lsa_* + agt_* credential implementation. It no longer means that every
+ * Agent request is necessarily delegated.
+ */
 export async function delegatedAgentAuthority(
   context: LifeSpaceRuntimeContext,
   itemIndex: number,
@@ -116,19 +132,9 @@ export async function delegatedAgentAuthority(
 ): Promise<LifeSpaceExecutionAuthority> {
   const principalParameter = options.principalParameter ?? 'principalUserId';
   const delegationParameter = options.delegationParameter ?? 'delegationId';
-  const principalUserId = requiredString(
-    context,
-    nodeParameter(context, principalParameter, itemIndex, ''),
-    'Principal User ID',
-    /^usr_[A-Za-z0-9_-]+$/u,
-  );
+  const principalValue = String(nodeParameter(context, principalParameter, itemIndex, '') ?? '').trim();
   const delegationValue = String(nodeParameter(context, delegationParameter, itemIndex, '') ?? '').trim();
-  if (options.requireDelegation !== false && !/^dlg_[A-Za-z0-9_-]+$/u.test(delegationValue)) {
-    throw new NodeOperationError(
-      context.getNode(),
-      'Delegation ID is required for delegated Agent execution',
-    );
-  }
+
   if (delegationValue && !/^dlg_[A-Za-z0-9_-]+$/u.test(delegationValue)) {
     throw new NodeOperationError(context.getNode(), 'Delegation ID must be a valid dlg_* identifier');
   }
@@ -143,18 +149,41 @@ export async function delegatedAgentAuthority(
   );
   const baseUrl = identityBaseUrl(context, credentials);
 
+  const representedUser = Boolean(delegationValue);
+  let principalUserId: string | null = null;
+  if (representedUser) {
+    principalUserId = requiredString(
+      context,
+      principalValue,
+      'Principal User ID',
+      /^usr_[A-Za-z0-9_-]+$/u,
+    );
+  }
+
+  // `requireDelegation` existed for the pre-0.2.0 represented-only profile. Direct
+  // Agent Authority is now a valid execution profile, so absence of dlg_* deliberately
+  // falls back to Principal=Agent / Actor=Agent instead of failing before Core.
+  void options.requireDelegation;
+
+  const body = representedUser
+    ? {
+        principalType: 'user' as const,
+        principalId: principalUserId!,
+        agentId,
+        scopes: [...new Set(scopes)],
+      }
+    : {
+        agentId,
+        scopes: [...new Set(scopes)],
+      };
+
   const response = await context.helpers.httpRequestWithAuthentication.call(
     context,
     'lifeSpaceAgentExecutionApi',
     {
       method: 'POST',
       url: `${baseUrl}/internal/v1/agent-execution-tokens`,
-      body: {
-        principalType: 'user',
-        principalId: principalUserId,
-        agentId,
-        scopes: [...new Set(scopes)],
-      },
+      body,
       json: true,
     },
   ) as AgentTokenResponse;
@@ -165,9 +194,11 @@ export async function delegatedAgentAuthority(
     data?.accessToken,
     'Agent execution access token',
   );
+  const expectedPrincipalType = representedUser ? 'user' : 'agent';
+  const expectedPrincipalId = representedUser ? principalUserId! : agentId;
   if (
-    data?.principalId !== principalUserId
-    || data?.principalType !== 'user'
+    data?.principalId !== expectedPrincipalId
+    || data?.principalType !== expectedPrincipalType
     || data?.actor?.type !== 'agent'
     || data?.actor?.id !== agentId
     || data?.purpose !== 'agent_execution'
@@ -181,6 +212,8 @@ export async function delegatedAgentAuthority(
   return {
     mode: 'delegatedAgent',
     accessToken,
+    principalType: expectedPrincipalType,
+    principalId: expectedPrincipalId,
     principalUserId,
     agentId,
     delegationId: delegationValue || null,
