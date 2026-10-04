@@ -3,7 +3,7 @@ import type { ICredentialType, INodeProperties } from 'n8n-workflow';
 export class LifeSpaceWebhookApi implements ICredentialType {
   name = 'lifeSpaceWebhookApi';
 
-  displayName = 'LifeSpace Webhook API';
+  displayName = 'LifeSpace Webhook Signing';
 
   icon = {
     light: 'file:lifespace.svg',
