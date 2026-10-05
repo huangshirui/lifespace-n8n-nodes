@@ -230,9 +230,8 @@ export class LifeSpaceAgentTool extends LifeSpaceTool {
       : '';
 
     // Build the visible Tool contract under direct Agent Authority. Runtime calls below
-    // create a fresh base Tool context so the short-lived execution token is bound to
-    // the delegationId selected for that individual AI Tool call rather than cached
-    // across calls with different Principals.
+    // create a fresh base Tool context so the optional dlg_* selector is bound only to
+    // that individual AI Tool call and never leaks into a later direct-Agent call.
     const directContext = agentExecutionContext(this, itemIndex, '', '');
     const supplied = await LifeSpaceTool.prototype.supplyData.call(directContext, itemIndex);
     if (!enableUserAuthorization) return supplied;
