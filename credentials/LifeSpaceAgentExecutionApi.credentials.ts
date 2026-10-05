@@ -1,5 +1,6 @@
 import type {
   IAuthenticateGeneric,
+  ICredentialTestRequest,
   ICredentialType,
   INodeProperties,
 } from 'n8n-workflow';
@@ -28,7 +29,7 @@ export class LifeSpaceAgentExecutionApi implements ICredentialType {
     },
     {
       displayName: 'Agent API Credential',
-      name: 'agentApiCredential',
+      name: 'agentSecret',
       type: 'string',
       typeOptions: { password: true },
       default: '',
@@ -42,8 +43,16 @@ export class LifeSpaceAgentExecutionApi implements ICredentialType {
     type: 'generic',
     properties: {
       headers: {
-        Authorization: '=Bearer {{$credentials.agentApiCredential}}',
+        Authorization: '=Bearer {{$credentials.agentSecret}}',
       },
+    },
+  };
+
+  test: ICredentialTestRequest = {
+    request: {
+      baseURL: '={{$credentials.coreBaseUrl.replace(/\\/$/, "")}}',
+      url: '/status',
+      method: 'GET',
     },
   };
 }
