@@ -18,7 +18,8 @@ This repository contains the official n8n community-node adapter for LifeSpace.
 
 ## Authentication
 
-- For owner-controlled n8n, prefer LifeSpace opaque Service API Tokens (`lsp_pat_*`) sent as `Authorization: Bearer ...` to Core.
+- For owner-controlled n8n, prefer LifeSpace opaque Service API Tokens (`lsp_svc_*`; legacy `lsp_pat_*` is accepted only for migration) sent as `Authorization: Bearer ...` to Core.
+- Use the first-class opaque Agent API credential (`lsp_agt_*`) for Agent execution; it authenticates the Application + Agent Actor and does not itself grant user Authority.
 - OAuth `client_credentials` may be added when required by third-party or policy-controlled integrations.
 - Never commit credentials, tokens, workflow exports containing secrets, user data or production identifiers.
 
@@ -51,7 +52,7 @@ For every npm release:
 2. verify these three values are identical before opening/merging the release change:
    - `package.json.version`
    - top-level `package-lock.json.version`
-   - `package-lock.json.packages[""].version`;
+   - `package-lock.json.packages[""] .version`;
 3. merge the version bump to `main` and wait for the `main` CI run to pass;
 4. only after that, create/push the matching release tag on the exact verified `main` commit;
 5. the release tag and package version must be identical (for example, tag `0.1.19` requires package version `0.1.19`).
@@ -71,4 +72,3 @@ git rev-parse <version>
 Before pushing the tag, verify that `git rev-parse <version>` equals the exact verified `origin/main` SHA and that `package.json.version` at that commit equals the tag name. If either check differs, do not push the tag.
 
 Before assisting with any publish/release request, re-read the current `main` package version, the target tag state, and the tag target commit instead of assuming the next version or the local HEAD.
-
