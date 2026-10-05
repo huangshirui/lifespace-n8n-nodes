@@ -23,6 +23,7 @@ jobs:
         run: |
           python3 scripts/closeout_020.py
           python3 scripts/fix_020_lint.py
+          python3 scripts/fix_020_tests.py
       - name: Update version metadata
         run: npm version 0.2.0 --no-git-tag-version
       - name: Install dependencies
