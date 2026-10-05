@@ -56,3 +56,14 @@ for file_name, subtitle in TOOL_NODES.items():
     path = Path(file_name)
     source = add_subtitle(path.read_text(), subtitle)
     path.write_text(source)
+
+# A newly-created 0.2.0 node stores the UI default (Batch Processing=true).
+# An existing 0.1.x workflow has no batchProcessing field at all and must keep
+# its previous per-item execution behavior unless the retired batchMode was true.
+record_node = Path('nodes/LifeSpace/LifeSpace.node.ts')
+record_source = record_node.read_text()
+record_source = record_source.replace(
+    'batchProcessing: legacyAtomicBatch || options.batchProcessing !== false,',
+    'batchProcessing: legacyAtomicBatch || options.batchProcessing === true,',
+)
+record_node.write_text(record_source)
