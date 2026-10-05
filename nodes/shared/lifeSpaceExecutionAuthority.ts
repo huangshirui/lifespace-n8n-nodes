@@ -110,8 +110,8 @@ export async function delegatedAgentAuthority(
 
   const credentials = await context.getCredentials('lifeSpaceAgentExecutionApi', itemIndex);
   requiredString(context, credentials.coreBaseUrl, 'LifeSpace Core API Base URL');
-  const agentCredential = requiredString(context, credentials.agentApiCredential, 'LifeSpace Agent API Credential');
-  if (!/^lsp_agt_[A-Za-z0-9_-]+$/u.test(agentCredential)) {
+  const agentSecret = requiredString(context, credentials.agentSecret, 'LifeSpace Agent API Credential');
+  if (!/^lsp_agt_[A-Za-z0-9_-]+$/u.test(agentSecret)) {
     throw new NodeOperationError(context.getNode(), 'LifeSpace Agent API Credential must be a valid lsp_agt_* credential');
   }
 
