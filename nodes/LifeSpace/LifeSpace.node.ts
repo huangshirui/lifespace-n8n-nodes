@@ -728,12 +728,19 @@ async function mutationVersion(
     ?? currentRecordVersion(context, itemIndex, baseUrl, recordPath);
 }
 
-function recordBatchMode(
+type RecordBatchSettings = { batchProcessing: boolean; atomicConsistency: boolean };
+
+function recordBatchSettings(
   context: IExecuteFunctions,
   itemIndex: number,
-): boolean {
+): RecordBatchSettings {
   const options = context.getNodeParameter('recordOptions', itemIndex, {}) as IDataObject;
-  return options.batchMode === true;
+  // 0.1.x compatibility: the retired Batch Mode flag meant atomic batching.
+  const legacyAtomicBatch = options.batchMode === true;
+  return {
+    batchProcessing: legacyAtomicBatch || options.batchProcessing === true,
+    atomicConsistency: legacyAtomicBatch || options.atomicConsistency === true,
+  };
 }
 
 function configuredRecordModelKey(
@@ -756,12 +763,13 @@ function configuredRecordModelKey(
 async function executeNativeRecordBatch(
   context: IExecuteFunctions,
   items: INodeExecutionData[],
+  atomicConsistency: boolean,
 ): Promise<INodeExecutionData[]> {
   if (items.length < 1) return [];
   if (items.length > 20) {
     throw new NodeOperationError(
       context.getNode(),
-      'LifeSpace Batch Mode accepts at most 20 input items and never auto-chunks an atomic Batch',
+      'LifeSpace Batch Processing accepts at most 20 input items per request',
     );
   }
 
@@ -769,7 +777,7 @@ async function executeNativeRecordBatch(
   if (!['create', 'update', 'delete'].includes(operation)) {
     throw new NodeOperationError(
       context.getNode(),
-      'LifeSpace Batch Mode is available only for Create, Update, or Delete',
+      'LifeSpace Batch Processing is available only for Create, Update, or Delete',
     );
   }
 
@@ -782,14 +790,14 @@ async function executeNativeRecordBatch(
     if (itemOperation !== operation) {
       throw new NodeOperationError(
         context.getNode(),
-        'All input items in LifeSpace Batch Mode must use the same operation',
+        'All input items in LifeSpace Batch Processing must use the same operation',
         { itemIndex },
       );
     }
 
     const rawSpaceId = String(context.getNodeParameter('spaceId', itemIndex, '') ?? '').trim();
     if (!rawSpaceId) {
-      throw new NodeOperationError(context.getNode(), 'LifeSpace Batch Mode requires a Space ID', { itemIndex });
+      throw new NodeOperationError(context.getNode(), 'LifeSpace Batch Processing requires a Space ID', { itemIndex });
     }
     const modelKey = configuredRecordModelKey(context, itemIndex);
 
@@ -798,17 +806,13 @@ async function executeNativeRecordBatch(
     if (rawSpaceId !== sourceSpaceId || modelKey !== sourceModelKey) {
       throw new NodeOperationError(
         context.getNode(),
-        'All input items in LifeSpace Batch Mode must resolve to the same Space and Record Type',
+        'All input items in LifeSpace Batch Processing must resolve to the same Space and Record Type',
         { itemIndex },
       );
     }
 
     if (operation === 'create') {
-      operations.push({
-        operation: 'create',
-        modelKey,
-        data: mutationMappedValues(context, itemIndex),
-      });
+      operations.push({ operation: 'create', modelKey, data: mutationMappedValues(context, itemIndex) });
       continue;
     }
 
@@ -816,7 +820,7 @@ async function executeNativeRecordBatch(
     if (!/^rec_[A-Za-z0-9_-]+$/u.test(recordId)) {
       throw new NodeOperationError(
         context.getNode(),
-        'Record ID must be a valid rec_* identifier in Batch Mode',
+        'Record ID must be a valid rec_* identifier in Batch Processing',
         { itemIndex },
       );
     }
@@ -847,36 +851,42 @@ async function executeNativeRecordBatch(
     'lifeSpaceApi',
     {
       method: 'POST',
-      url: `${baseUrl}/spaces/${encodeURIComponent(sourceSpaceId)}/models/batch`,
+      url: `${baseUrl}/spaces/${encodeURIComponent(sourceSpaceId)}/models/${atomicConsistency ? 'batch' : 'bulk'}`,
       body: { operations } as unknown as IDataObject,
       json: true,
     },
-  ) as { data?: { changeSetId?: unknown; items?: unknown } };
+  ) as { data?: { changeSetId?: unknown; bulkId?: unknown; items?: unknown } };
 
-  const changeSetId = String(response?.data?.changeSetId ?? '').trim();
   const results = response?.data?.items;
-  if (!/^cgs_[A-Za-z0-9_-]+$/u.test(changeSetId) || !Array.isArray(results) || results.length !== items.length) {
+  if (!Array.isArray(results) || results.length !== items.length) {
     throw new NodeOperationError(
       context.getNode(),
-      'LifeSpace Batch response did not match the input item count or ChangeSet contract',
+      `LifeSpace ${atomicConsistency ? 'Batch' : 'Bulk'} response did not match the input item count`,
     );
   }
 
+  if (!atomicConsistency) {
+    const bulkId = String(response?.data?.bulkId ?? '').trim();
+    if (!/^blk_[A-Za-z0-9_-]+$/u.test(bulkId)) {
+      throw new NodeOperationError(context.getNode(), 'LifeSpace Bulk response did not expose a valid bulkId');
+    }
+    return results.map((result, itemIndex) => {
+      if (!result || typeof result !== 'object' || Array.isArray(result)) {
+        throw new NodeOperationError(context.getNode(), `LifeSpace Bulk result ${itemIndex} is invalid`, { itemIndex });
+      }
+      return { json: { ...(result as IDataObject), bulkId }, pairedItem: { item: itemIndex } };
+    });
+  }
+
+  const changeSetId = String(response?.data?.changeSetId ?? '').trim();
+  if (!/^cgs_[A-Za-z0-9_-]+$/u.test(changeSetId)) {
+    throw new NodeOperationError(context.getNode(), 'LifeSpace Batch response did not expose a valid changeSetId');
+  }
   return results.map((result, itemIndex) => {
     if (!result || typeof result !== 'object' || Array.isArray(result)) {
-      throw new NodeOperationError(
-        context.getNode(),
-        `LifeSpace Batch result ${itemIndex} is invalid`,
-        { itemIndex },
-      );
+      throw new NodeOperationError(context.getNode(), `LifeSpace Batch result ${itemIndex} is invalid`, { itemIndex });
     }
-    return {
-      json: {
-        ...(result as IDataObject),
-        changeSetId,
-      },
-      pairedItem: { item: itemIndex },
-    };
+    return { json: { ...(result as IDataObject), changeSetId }, pairedItem: { item: itemIndex } };
   });
 }
 
@@ -1111,13 +1121,22 @@ export class LifeSpace implements INodeType {
         default: {},
         noDataExpression: true,
         displayOptions: { show: { resource: ['modelRecord'], operation: ['create', 'update', 'delete'] } },
-        options: [{
-          displayName: 'Batch Mode',
-          name: 'batchMode',
-          type: 'boolean',
-          default: false,
-          description: 'Whether to send all incoming n8n items as one atomic LifeSpace Batch. Limited to 20 items in one Space and Record Type; the node never auto-chunks because that would weaken atomic semantics.',
-        }],
+        options: [
+          {
+            displayName: 'Batch Processing',
+            name: 'batchProcessing',
+            type: 'boolean',
+            default: true,
+            description: 'Whether to group incoming n8n items into one LifeSpace request. When enabled without Atomic Consistency, items succeed or fail independently and partial success is preserved.',
+          },
+          {
+            displayName: 'Atomic Consistency',
+            name: 'atomicConsistency',
+            type: 'boolean',
+            default: false,
+            description: 'Whether the grouped mutation must commit all items or roll back the whole request. Enable only when the business operation requires all-or-none semantics.',
+          },
+        ],
       },
       {
         displayName: 'Space Name or ID', name: 'spaceId', type: 'options',
@@ -1327,7 +1346,7 @@ export class LifeSpace implements INodeType {
       {
         displayName: 'Concurrency Options', name: 'mutationOptions', type: 'collection', placeholder: 'Add Option', default: {},
         displayOptions: { show: { resource: ['modelRecord'], operation: ['update', 'delete'] } },
-        options: [{ displayName: 'Version', name: 'version', type: 'number', typeOptions: { minValue: 1, numberPrecision: 0 }, default: 1, description: 'Optional known record version. In single mode, omission makes the node read the current version immediately before mutation. In Batch Mode, omission is sent to Core for set-wise current-version resolution before atomic commit.' }],
+        options: [{ displayName: 'Version', name: 'version', type: 'number', typeOptions: { minValue: 1, numberPrecision: 0 }, default: 1, description: 'Optional known record version. In single mode, omission makes the node read the current version immediately before mutation. In Batch Processing, omission is sent to Core for set-wise current-version resolution before commit.' }],
       },
       {
         displayName: 'Action Name or ID', name: 'actionKey', type: 'options', noDataExpression: true,
@@ -1570,13 +1589,14 @@ export class LifeSpace implements INodeType {
     if (items.length > 0) {
       const resource = this.getNodeParameter('resource', 0) as string;
       const operation = this.getNodeParameter('operation', 0, '') as string;
+      const batchSettings = recordBatchSettings(this, 0);
       if (
         resource === 'modelRecord'
         && ['create', 'update', 'delete'].includes(operation)
-        && recordBatchMode(this, 0)
+        && batchSettings.batchProcessing
       ) {
         try {
-          return [await executeNativeRecordBatch(this, items)];
+          return [await executeNativeRecordBatch(this, items, batchSettings.atomicConsistency)];
         } catch (error) {
           if (this.continueOnFail()) {
             return [items.map((_item, itemIndex) => ({

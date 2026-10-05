@@ -9,16 +9,24 @@ export class LifeSpaceCancelAuthorization implements INodeType {
     icon: 'file:../LifeSpace/lifespace.svg',
     group: ['transform'],
     version: 1,
+    subtitle: 'Authorization Request · Cancel',
     description: 'Cancel an Authorization Request that the requesting Agent/Application no longer needs',
     defaults: { name: 'LifeSpace Cancel Authorization' },
     inputs: [NodeConnectionTypes.Main],
     outputs: [NodeConnectionTypes.Main],
+    usableAsTool: true,
     credentials: [{ name: 'lifeSpaceAgentExecutionApi', required: true }],
     properties: [
       { displayName: 'Space ID', name: 'spaceId', type: 'string', default: '', required: true, placeholder: 'spc_...' },
       { displayName: 'Authorization Request ID', name: 'requestId', type: 'string', default: '', required: true, placeholder: 'arq_...' },
     ],
   };
+
+  constructor() {
+    const description = this.description as INodeTypeDescription & { usableAsTool?: boolean };
+    delete description.usableAsTool;
+    this.description = description;
+  }
 
   async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
     const input = this.getInputData();

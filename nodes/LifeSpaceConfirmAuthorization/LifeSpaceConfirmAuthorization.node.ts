@@ -9,18 +9,26 @@ export class LifeSpaceConfirmAuthorization implements INodeType {
     icon: 'file:../LifeSpace/lifespace.svg',
     group: ['transform'],
     version: 1,
+    subtitle: 'Authorization Request · Confirm',
     description: 'Confirm a pending LifeSpace Authorization Request from a trusted workflow user context',
     defaults: { name: 'LifeSpace Confirm Authorization' },
     inputs: [NodeConnectionTypes.Main],
     outputs: [NodeConnectionTypes.Main],
+    usableAsTool: true,
     credentials: [{ name: 'lifeSpaceAgentExecutionApi', required: true }],
     properties: [
-      { displayName: 'Principal User ID', name: 'principalUserId', type: 'string', default: '', required: true, placeholder: 'usr_...', description: 'Trusted user mapping for the person who confirmed this request.' },
+      { displayName: 'Principal User ID', name: 'principalUserId', type: 'string', default: '', required: true, placeholder: 'usr_...', description: 'Trusted user mapping for the person who confirmed this request' },
       { displayName: 'Space ID', name: 'spaceId', type: 'string', default: '', required: true, placeholder: 'spc_...' },
       { displayName: 'Authorization Request ID', name: 'requestId', type: 'string', default: '', required: true, placeholder: 'arq_...' },
       { displayName: 'Confirmation', name: 'confirmation', type: 'json', default: '', description: 'Optional canonical confirmation object. Supply it for AI-mediated display paths; deterministic trusted workflows may leave it empty.' },
     ],
   };
+
+  constructor() {
+    const description = this.description as INodeTypeDescription & { usableAsTool?: boolean };
+    delete description.usableAsTool;
+    this.description = description;
+  }
 
   async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
     const input = this.getInputData();

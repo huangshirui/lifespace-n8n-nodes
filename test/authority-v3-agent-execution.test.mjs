@@ -124,9 +124,7 @@ function context(runtimeModel, business, overrides = {}) {
       if (name === 'lifeSpaceAgentExecutionApi') {
         return {
           coreBaseUrl: CORE_BASE,
-          identityBaseUrl: IDENTITY_BASE,
-          applicationSecret: 'lsa_test',
-          agentId: AGENT,
+          agentSecret: 'lsp_agt_test',
         };
       }
       throw new Error(`unexpected credential ${name}`);
@@ -142,23 +140,7 @@ function context(runtimeModel, business, overrides = {}) {
       async httpRequestWithAuthentication(credentialName, options) {
         calls.push({ transport: 'credential', credentialName, options });
         assert.equal(credentialName, 'lifeSpaceAgentExecutionApi');
-        assert.equal(options.url, `${IDENTITY_BASE}/internal/v1/agent-execution-tokens`);
-        assert.deepEqual(options.body, {
-          principalType: 'user',
-          principalId: PRINCIPAL,
-          agentId: AGENT,
-          scopes: ['resources:read', 'resources:write'],
-        });
-        return {
-          data: {
-            accessToken: 'agent.jwt.test',
-            principalId: PRINCIPAL,
-            principalType: 'user',
-            actor: { type: 'agent', id: AGENT },
-            applicationId: 'app_test',
-            purpose: 'agent_execution',
-          },
-        };
+        return business(options);
       },
       async httpRequest(options) {
         calls.push({ transport: 'direct', options });
@@ -168,7 +150,7 @@ function context(runtimeModel, business, overrides = {}) {
   };
 }
 
-test('Authority v3 Agent token mint is lazy and reused inside one Tool runtime', async () => {
+test('opaque Agent credential is reused as transport inside one Tool runtime', async () => {
   const execution = context(
     model(),
     () => ({ data: { id: 'rec_lazy', version: 1 } }),
@@ -180,11 +162,11 @@ test('Authority v3 Agent token mint is lazy and reused inside one Tool runtime',
   await tool.invoke({ name: 'One' });
   await tool.invoke({ name: 'Two' });
 
-  assert.equal(execution.calls.filter((call) => call.transport === 'credential').length, 1);
-  assert.equal(execution.calls.filter((call) => call.transport === 'direct').length, 2);
+  assert.equal(execution.calls.filter((call) => call.transport === 'credential').length, 2);
+  assert.equal(execution.calls.filter((call) => call.transport === 'direct').length, 0);
 });
 
-test('delegated Agent business execution uses Authority v3 token plus explicit Delegation selector', async () => {
+test('delegated Agent business execution uses opaque Agent credential plus explicit Delegation selector', async () => {
   let posted;
   const execution = context(model(), (options) => {
     posted = options;
@@ -199,7 +181,6 @@ test('delegated Agent business execution uses Authority v3 token plus explicit D
 
   assert.equal(posted.method, 'POST');
   assert.equal(posted.url, `${CORE_BASE}/spaces/spc_test/models/task/records`);
-  assert.equal(posted.headers.Authorization, 'Bearer agent.jwt.test');
   assert.equal(posted.headers['X-LifeSpace-Delegation-Id'], DELEGATION);
   assert.equal(execution.calls.some((call) => call.credentialName === 'lifeSpaceApi'), false);
 });
@@ -243,21 +224,22 @@ test('delegated Update uses Read Delegation for version lookup and business Dele
   assert.equal(coreCalls[1].body.version, 7);
 });
 
-test('missing business Delegation remains a deterministic request_authorization result', async () => {
+test('missing business Delegation selects direct Agent Authority', async () => {
+  let posted;
   const execution = context(
     model(),
-    () => {
-      throw new Error('Core must not be called when business Delegation is missing');
+    (options) => {
+      posted = options;
+      return { data: { id: 'rec_direct_agent', version: 1 } };
     },
     { delegationId: '', readDelegationId: '' },
   );
   const tool = (await new LifeSpaceTool().supplyData.call(execution, 0)).response;
-  const result = JSON.parse(await tool.invoke({ name: 'Must not execute' }));
+  const result = JSON.parse(await tool.invoke({ name: 'Direct Agent execution' }));
 
-  assert.equal(result.ok, false);
-  assert.equal(result.error.code, 'DELEGATION_REQUIRED');
-  assert.equal(result.error.retryable, false);
-  assert.equal(result.error.nextAction, 'request_authorization');
+  assert.equal(result.data.id, 'rec_direct_agent');
+  assert.equal(posted.headers?.['X-LifeSpace-Delegation-Id'], undefined);
+  assert.equal(execution.calls.filter((call) => call.transport === 'credential').length, 1);
   assert.equal(execution.calls.filter((call) => call.transport === 'direct').length, 0);
 });
 

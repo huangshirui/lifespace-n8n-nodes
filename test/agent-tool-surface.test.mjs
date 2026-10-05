@@ -147,9 +147,7 @@ function context(parameters, onBusiness, input = [{ json: {} }]) {
       if (name === 'lifeSpaceAgentExecutionApi') {
         return {
           coreBaseUrl: BASE_URL,
-          identityBaseUrl: IDENTITY_BASE_URL,
-          applicationSecret: 'lsa_surface_test',
-          agentId: AGENT_ID,
+          agentSecret: 'lsp_agt_surface_test',
         };
       }
       if (name === 'lifeSpaceApi') return { baseUrl: BASE_URL };
@@ -166,19 +164,7 @@ function context(parameters, onBusiness, input = [{ json: {} }]) {
     helpers: {
       async httpRequestWithAuthentication(credentialName, options) {
         calls.push(options);
-        if (credentialName === 'lifeSpaceAgentExecutionApi'
-          && options.url === `${IDENTITY_BASE_URL}/internal/v1/agent-execution-tokens`) {
-          return {
-            data: {
-              accessToken: 'agent.surface.jwt',
-              principalType: 'agent',
-              principalId: AGENT_ID,
-              actor: { type: 'agent', id: AGENT_ID },
-              applicationId: 'app_surface_test',
-              purpose: 'agent_execution',
-            },
-          };
-        }
+        assert.ok(['lifeSpaceAgentExecutionApi', 'lifeSpaceApi'].includes(credentialName));
         if (options.url === `${BASE_URL}/me/_discovery/inventory`) return inventory();
         if (options.url === `${BASE_URL}/spaces/spc_test/_discovery/models/${MODEL_KEY}`) return detail();
         if (onBusiness) return onBusiness(options);
@@ -243,7 +229,6 @@ test('registered Agent Tool exposes and executes Canonical Query', async () => {
 
   assert.equal(requested.method, 'POST');
   assert.equal(requested.url, `${BASE_URL}/spaces/spc_test/models/${MODEL_KEY}/records/query`);
-  assert.equal(requested.headers.Authorization, 'Bearer agent.surface.jwt');
   assert.equal(execution.calls.some((call) => call.url.includes('/_discovery')), false);
   assert.deepEqual(requested.body, {
     search: { text: 'milk' },
@@ -343,8 +328,7 @@ test('registered Agent Tool uses direct Agent Authority for Create while preserv
 
   await tool.invoke({ name: 'Buy milk' });
   assert.equal(requested.method, 'POST');
-  assert.equal(requested.headers.Authorization, 'Bearer agent.surface.jwt');
-  assert.equal(requested.headers['X-LifeSpace-Delegation-Id'], undefined);
+  assert.equal(requested.headers?.['X-LifeSpace-Delegation-Id'], undefined);
   assert.deepEqual(requested.body, { name: 'Buy milk' });
   assert.equal(Object.hasOwn(requested.body, 'status'), false);
 });

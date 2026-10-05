@@ -17,6 +17,7 @@ export class LifeSpaceConfirmAuthorizationTool implements INodeType {
     icon: 'file:../LifeSpace/lifespace.svg',
     group: ['transform'],
     version: 1,
+    subtitle: 'Authorization Request · Confirm Tool',
     description: 'Confirm a pending Authorization Request after human review in an AI-mediated flow',
     defaults: { name: 'LifeSpace Confirm Authorization' },
     inputs: [],

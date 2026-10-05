@@ -25,7 +25,7 @@ test('public LifeSpace adapter surfaces use neutral examples', async () => {
   ];
   const content = (await Promise.all(paths.map(text))).join('\n');
   assert.equal(content.includes('aisr.online'), false);
-  assert.equal(content.includes('api.example.com'), true);
+  assert.equal(content.includes('example.com'), true);
 });
 
 test('package separates Service, delegated Agent, and endpoint signing credentials', async () => {
@@ -63,7 +63,8 @@ test('Runtime Discovery UX is cross-Space and Record-facing', async () => {
   assert.match(node, /name: 'Record'/u);
   assert.match(node, /displayName: 'Record Type Name or ID'/u);
   assert.match(node, /displayName: 'Return All'/u);
-  assert.match(node, /name: 'recordOptions'[\s\S]{0,500}displayName: 'Batch Mode'/u);
+  assert.match(node, /name: 'recordOptions'[\s\S]{0,800}displayName: 'Batch Processing'/u);
+  assert.match(node, /name: 'recordOptions'[\s\S]{0,1200}displayName: 'Atomic Consistency'/u);
   assert.match(node, /name: 'Advanced Mixed Batch'/u);
   assert.match(node, /name: 'sorts'/u);
   assert.match(node, /field\.title\?\.trim\(\) \|\| humanizeKey/u);

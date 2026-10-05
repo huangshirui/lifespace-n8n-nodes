@@ -112,6 +112,12 @@ test('workflow node is a human-only projection with Discovery-driven Create fiel
     'dist/nodes/LifeSpaceDelegation/LifeSpaceDelegation.node.js',
     'dist/nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.js',
     'dist/nodes/LifeSpaceAgentTool/LifeSpaceAgentTool.node.js',
+    'dist/nodes/LifeSpaceRequestAuthorization/LifeSpaceRequestAuthorization.node.js',
+    'dist/nodes/LifeSpaceConfirmAuthorization/LifeSpaceConfirmAuthorization.node.js',
+    'dist/nodes/LifeSpaceConfirmAuthorizationTool/LifeSpaceConfirmAuthorizationTool.node.js',
+    'dist/nodes/LifeSpaceDenyAuthorization/LifeSpaceDenyAuthorization.node.js',
+    'dist/nodes/LifeSpaceCancelAuthorization/LifeSpaceCancelAuthorization.node.js',
+    'dist/nodes/LifeSpaceCancelAuthorizationTool/LifeSpaceCancelAuthorizationTool.node.js',
   ]);
 });
 

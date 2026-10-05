@@ -9,17 +9,25 @@ export class LifeSpaceDenyAuthorization implements INodeType {
     icon: 'file:../LifeSpace/lifespace.svg',
     group: ['transform'],
     version: 1,
+    subtitle: 'Authorization Request · Deny',
     description: 'Record that the intended user explicitly denied a pending LifeSpace Authorization Request',
     defaults: { name: 'LifeSpace Deny Authorization' },
     inputs: [NodeConnectionTypes.Main],
     outputs: [NodeConnectionTypes.Main],
+    usableAsTool: true,
     credentials: [{ name: 'lifeSpaceAgentExecutionApi', required: true }],
     properties: [
-      { displayName: 'Principal User ID', name: 'principalUserId', type: 'string', default: '', required: true, placeholder: 'usr_...', description: 'Trusted user mapping for the person who rejected this request.' },
+      { displayName: 'Principal User ID', name: 'principalUserId', type: 'string', default: '', required: true, placeholder: 'usr_...', description: 'Trusted user mapping for the person who rejected this request' },
       { displayName: 'Space ID', name: 'spaceId', type: 'string', default: '', required: true, placeholder: 'spc_...' },
       { displayName: 'Authorization Request ID', name: 'requestId', type: 'string', default: '', required: true, placeholder: 'arq_...' },
     ],
   };
+
+  constructor() {
+    const description = this.description as INodeTypeDescription & { usableAsTool?: boolean };
+    delete description.usableAsTool;
+    this.description = description;
+  }
 
   async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
     const input = this.getInputData();

@@ -111,9 +111,7 @@ function context({
       assert.equal(name, 'lifeSpaceAgentExecutionApi');
       return {
         coreBaseUrl: CORE_BASE,
-        identityBaseUrl: IDENTITY_BASE,
-        applicationSecret: 'lsa_test',
-        agentId: AGENT,
+        agentSecret: 'lsp_agt_test',
       };
     },
     getNodeParameter(name, _itemIndex, defaultValue) {
@@ -126,19 +124,9 @@ function context({
     helpers: {
       async httpRequestWithAuthentication(credentialName, options) {
         assert.equal(credentialName, 'lifeSpaceAgentExecutionApi');
-        calls.push({ transport: 'credential', options });
-        const principalType = options.body.principalType ?? 'agent';
-        const principalId = options.body.principalId ?? AGENT;
-        return {
-          data: {
-            accessToken: `agent.jwt.${principalType}.${principalId}`,
-            principalType,
-            principalId,
-            actor: { type: 'agent', id: AGENT },
-            applicationId: 'app_test',
-            purpose: 'agent_execution',
-          },
-        };
+        calls.push({ transport: 'credential', credentialName, options });
+        if (coreError) throw coreError;
+        return { data: { id: `rec_${calls.length}`, version: 1 } };
       },
       async httpRequest(options) {
         calls.push({ transport: 'direct', options });
@@ -169,15 +157,9 @@ test('User Authorization OFF executes as Principal=Agent / Actor=Agent without a
   assert.equal(Object.hasOwn(tool.schema.properties, 'delegationId'), false);
   await tool.invoke({ name: 'Direct Agent task' });
 
-  const identity = execution.calls.find((call) => call.transport === 'credential');
-  assert.deepEqual(identity.options.body, {
-    agentId: AGENT,
-    scopes: ['resources:read', 'resources:write'],
-  });
-
-  const core = execution.calls.find((call) => call.transport === 'direct');
-  assert.equal(core.options.headers.Authorization, `Bearer agent.jwt.agent.${AGENT}`);
-  assert.equal(core.options.headers['X-LifeSpace-Delegation-Id'], undefined);
+  const core = execution.calls.find((call) => call.transport === 'credential');
+  assert.ok(core);
+  assert.equal(core.options.headers?.['X-LifeSpace-Delegation-Id'], undefined);
 });
 
 test('User Authorization ON exposes only runtime delegationId while User identity stays trusted workflow context', async () => {
@@ -190,16 +172,8 @@ test('User Authorization ON exposes only runtime delegationId while User identit
 
   await tool.invoke({ name: 'Delegated task', delegationId: 'dlg_test' });
 
-  const identity = execution.calls.find((call) => call.transport === 'credential');
-  assert.deepEqual(identity.options.body, {
-    principalType: 'user',
-    principalId: USER,
-    agentId: AGENT,
-    scopes: ['resources:read', 'resources:write'],
-  });
-
-  const core = execution.calls.find((call) => call.transport === 'direct');
-  assert.equal(core.options.headers.Authorization, `Bearer agent.jwt.user.${USER}`);
+  const core = execution.calls.find((call) => call.transport === 'credential');
+  assert.ok(core);
   assert.equal(core.options.headers['X-LifeSpace-Delegation-Id'], 'dlg_test');
   assert.deepEqual(core.options.body, { name: 'Delegated task' });
 });
@@ -211,21 +185,9 @@ test('one Tool may use direct Agent Authority and a later User Delegation withou
   await tool.invoke({ name: 'Direct first' });
   await tool.invoke({ name: 'Represented second', delegationId: 'dlg_second' });
 
-  const identityCalls = execution.calls.filter((call) => call.transport === 'credential');
-  assert.equal(identityCalls.length, 2);
-  assert.deepEqual(identityCalls[0].options.body, {
-    agentId: AGENT,
-    scopes: ['resources:read', 'resources:write'],
-  });
-  assert.deepEqual(identityCalls[1].options.body, {
-    principalType: 'user',
-    principalId: USER,
-    agentId: AGENT,
-    scopes: ['resources:read', 'resources:write'],
-  });
-
-  const coreCalls = execution.calls.filter((call) => call.transport === 'direct');
-  assert.equal(coreCalls[0].options.headers['X-LifeSpace-Delegation-Id'], undefined);
+  const coreCalls = execution.calls.filter((call) => call.transport === 'credential');
+  assert.equal(coreCalls.length, 2);
+  assert.equal(coreCalls[0].options.headers?.['X-LifeSpace-Delegation-Id'], undefined);
   assert.equal(coreCalls[1].options.headers['X-LifeSpace-Delegation-Id'], 'dlg_second');
 });
 

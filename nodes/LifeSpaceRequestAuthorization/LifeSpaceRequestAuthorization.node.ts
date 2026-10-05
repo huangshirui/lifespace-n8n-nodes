@@ -33,6 +33,7 @@ export class LifeSpaceRequestAuthorization implements INodeType {
     icon: 'file:../LifeSpace/lifespace.svg',
     group: ['transform'],
     version: 1,
+    subtitle: 'Authorization Request · Request',
     description: 'Request bounded LifeSpace user authorization from an AI Agent without granting Authority yet',
     defaults: { name: 'LifeSpace Request Authorization' },
     inputs: [],
