@@ -152,6 +152,7 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
     if ([
       'batchAuthorityMode',
       'batchPrincipalUserId',
+      'batchOperations',
       'dateFields',
       'singleRelations',
       'filters',
@@ -161,10 +162,10 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
       'semanticSort',
     ].includes(property.name)) continue;
 
-    if (property.name === 'batchOperations') {
+    if (property.name === 'resource') {
       result.push({
         ...property,
-        description: 'Advanced JSON surface for one atomic mixed/cross-model Service Batch. Update/delete require recordId; version is optional when the current Core Batch contract supports server-resolved concurrency.',
+        options: (property.options ?? []).filter((option) => option.value !== 'batchMutation'),
       });
       continue;
     }
