@@ -1,6 +1,5 @@
 import type {
   IAuthenticateGeneric,
-  ICredentialTestRequest,
   ICredentialType,
   INodeProperties,
 } from 'n8n-workflow';
@@ -8,52 +7,34 @@ import type {
 export class LifeSpaceAgentExecutionApi implements ICredentialType {
   name = 'lifeSpaceAgentExecutionApi';
 
-  displayName = 'LifeSpace Agent Execution API';
+  displayName = 'LifeSpace Agent API';
 
   icon = {
     light: 'file:lifespace.svg',
     dark: 'file:lifespace.dark.svg',
   } as const;
 
-  documentationUrl = 'https://github.com/huangshirui/LifeSpace/blob/main/docs/application-authentication.md';
+  documentationUrl = 'https://github.com/huangshirui/LifeSpace/blob/main/docs/service-authentication.md';
 
   properties: INodeProperties[] = [
     {
-      displayName: 'Core API Base URL',
+      displayName: 'API Base URL',
       name: 'coreBaseUrl',
       type: 'string',
       default: '',
       placeholder: 'https://core.example.com/api/v1',
       required: true,
-      description: 'LifeSpace Core API root used by Agent business requests and Delegation creation',
+      description: 'LifeSpace Core API root used by Agent requests',
     },
     {
-      displayName: 'Identity API Base URL',
-      name: 'identityBaseUrl',
-      type: 'string',
-      default: '',
-      placeholder: 'https://identity.example.com',
-      required: true,
-      description: 'LifeSpace Identity origin. Do not include an /internal/v1 token route.',
-    },
-    {
-      displayName: 'Application Credential',
-      name: 'applicationSecret',
+      displayName: 'Agent API Credential',
+      name: 'agentApiCredential',
       type: 'string',
       typeOptions: { password: true },
       default: '',
-      placeholder: 'lsa_...',
+      placeholder: 'lsp_agt_...',
       required: true,
-      description: 'Server-only trusted LifeSpace Application credential used to mint short-lived User and Agent execution tokens',
-    },
-    {
-      displayName: 'Agent ID',
-      name: 'agentId',
-      type: 'string',
-      default: '',
-      placeholder: 'agt_...',
-      required: true,
-      description: 'LifeSpace Agent identity bound to this registered Application',
+      description: 'Opaque LifeSpace Agent API credential bound to one Application and Agent identity',
     },
   ];
 
@@ -61,16 +42,8 @@ export class LifeSpaceAgentExecutionApi implements ICredentialType {
     type: 'generic',
     properties: {
       headers: {
-        Authorization: '=Bearer {{$credentials.applicationSecret}}',
+        Authorization: '=Bearer {{$credentials.agentApiCredential}}',
       },
-    },
-  };
-
-  test: ICredentialTestRequest = {
-    request: {
-      baseURL: '={{$credentials.identityBaseUrl.endsWith("/") ? $credentials.identityBaseUrl.slice(0, -1) : $credentials.identityBaseUrl}}',
-      url: '/internal/v1/agents',
-      method: 'GET',
     },
   };
 }
