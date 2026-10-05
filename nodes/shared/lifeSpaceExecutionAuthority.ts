@@ -13,24 +13,8 @@ export type LifeSpaceExecutionAuthority =
   | { mode: 'service' }
   | {
       mode: 'delegatedAgent';
-      accessToken: string;
-      principalType: 'agent' | 'user';
-      principalId: string;
-      principalUserId: string | null;
-      agentId: string;
       delegationId: string | null;
     };
-
-type AgentTokenResponse = {
-  data?: {
-    accessToken?: unknown;
-    principalId?: unknown;
-    principalType?: unknown;
-    applicationId?: unknown;
-    purpose?: unknown;
-    actor?: { type?: unknown; id?: unknown };
-  };
-};
 
 function nodeParameter(
   context: LifeSpaceRuntimeContext,
@@ -65,23 +49,10 @@ function requiredString(
   context: LifeSpaceRuntimeContext,
   value: unknown,
   label: string,
-  pattern?: RegExp,
 ): string {
   const normalized = String(value ?? '').trim();
-  if (!normalized || (pattern && !pattern.test(normalized))) {
-    throw new NodeOperationError(context.getNode(), `${label} is missing or invalid`);
-  }
+  if (!normalized) throw new NodeOperationError(context.getNode(), `${label} is missing or invalid`);
   return normalized;
-}
-
-function credentialString(
-  context: LifeSpaceRuntimeContext,
-  credentials: ICredentialDataDecryptedObject,
-  key: string,
-  label: string,
-  pattern?: RegExp,
-): string {
-  return requiredString(context, credentials[key], label, pattern);
 }
 
 export function delegatedAgentCoreBaseUrl(
@@ -92,14 +63,6 @@ export function delegatedAgentCoreBaseUrl(
     .replace(/\/+$/u, '');
 }
 
-function identityBaseUrl(
-  context: LifeSpaceRuntimeContext,
-  credentials: ICredentialDataDecryptedObject,
-): string {
-  return requiredString(context, credentials.identityBaseUrl, 'LifeSpace Identity Base URL')
-    .replace(/\/+$/u, '');
-}
-
 export function requestedResourceScopes(requiredAccess: 'read' | 'write' | 'manage'): string[] {
   if (requiredAccess === 'read') return ['resources:read'];
   if (requiredAccess === 'write') return ['resources:read', 'resources:write'];
@@ -107,121 +70,53 @@ export function requestedResourceScopes(requiredAccess: 'read' | 'write' | 'mana
 }
 
 /**
- * Resolve the Agent execution identity for one request.
+ * Resolve Agent execution for one Core request.
  *
- * No trusted User context and no Delegation selector means direct Agent execution:
+ * LifeSpace Agent API credentials (`lsp_agt_*`) authenticate the Application + Agent
+ * directly at Core. No Identity token minting is required by the adapter.
+ *
+ * No Delegation selector means direct Agent execution:
  *   Principal=Agent / Actor=Agent.
  *
- * An explicit Delegation selector means represented User execution:
- *   Principal=User / Actor=Agent.
- * In that profile the trusted workflow context must also supply the User Principal ID.
+ * An explicit `dlg_*` selector means represented execution:
+ *   Principal is resolved by Core from the current Delegation chain / Actor=Agent.
+ * The adapter never authenticates represented execution from a caller-supplied `usr_*`.
  *
- * The pre-0.2.0 base Tool may also request a represented User token without a global
- * Delegation when it is constructing a first-class Batch that carries one explicit
- * Delegation selector per operation. That compatibility path is retained while the
- * registered 0.2.0 Agent Tool surface is being migrated.
- *
- * `mode: delegatedAgent` is retained as the adapter's internal compatibility discriminator
- * for the current lsa_* + agt_* credential implementation. It no longer means that every
- * Agent request is necessarily delegated.
+ * `principalUserId` remains available to Authorization Request nodes as trusted workflow
+ * context only; it is not an execution credential and is deliberately ignored here.
  */
 export async function delegatedAgentAuthority(
   context: LifeSpaceRuntimeContext,
   itemIndex: number,
-  scopes: string[],
+  _scopes: string[],
   options: {
     requireDelegation?: boolean;
     principalParameter?: string;
     delegationParameter?: string;
   } = {},
 ): Promise<LifeSpaceExecutionAuthority> {
-  const principalParameter = options.principalParameter ?? 'principalUserId';
   const delegationParameter = options.delegationParameter ?? 'delegationId';
-  const principalValue = String(nodeParameter(context, principalParameter, itemIndex, '') ?? '').trim();
   const delegationValue = String(nodeParameter(context, delegationParameter, itemIndex, '') ?? '').trim();
 
   if (delegationValue && !/^dlg_[A-Za-z0-9_-]+$/u.test(delegationValue)) {
     throw new NodeOperationError(context.getNode(), 'Delegation ID must be a valid dlg_* identifier');
   }
-  if (!delegationValue && principalValue && options.requireDelegation !== false) {
+  if (!delegationValue && options.requireDelegation === true) {
     throw new NodeOperationError(
       context.getNode(),
-      'Delegation ID is required for delegated Agent execution',
+      'Delegation ID is required for represented Agent execution',
     );
   }
 
   const credentials = await context.getCredentials('lifeSpaceAgentExecutionApi', itemIndex);
-  const agentId = credentialString(
-    context,
-    credentials,
-    'agentId',
-    'LifeSpace Agent ID',
-    /^agt_[A-Za-z0-9_-]+$/u,
-  );
-  const baseUrl = identityBaseUrl(context, credentials);
-
-  const representedUser = Boolean(delegationValue) || Boolean(principalValue && options.requireDelegation === false);
-  let principalUserId: string | null = null;
-  if (representedUser) {
-    principalUserId = requiredString(
-      context,
-      principalValue,
-      'Principal User ID',
-      /^usr_[A-Za-z0-9_-]+$/u,
-    );
-  }
-
-  const body = representedUser
-    ? {
-        principalType: 'user' as const,
-        principalId: principalUserId!,
-        agentId,
-        scopes: [...new Set(scopes)],
-      }
-    : {
-        agentId,
-        scopes: [...new Set(scopes)],
-      };
-
-  const response = await context.helpers.httpRequestWithAuthentication.call(
-    context,
-    'lifeSpaceAgentExecutionApi',
-    {
-      method: 'POST',
-      url: `${baseUrl}/internal/v1/agent-execution-tokens`,
-      body,
-      json: true,
-    },
-  ) as AgentTokenResponse;
-
-  const data = response?.data;
-  const accessToken = requiredString(
-    context,
-    data?.accessToken,
-    'Agent execution access token',
-  );
-  const expectedPrincipalType = representedUser ? 'user' : 'agent';
-  const expectedPrincipalId = representedUser ? principalUserId! : agentId;
-  if (
-    data?.principalId !== expectedPrincipalId
-    || data?.principalType !== expectedPrincipalType
-    || data?.actor?.type !== 'agent'
-    || data?.actor?.id !== agentId
-    || data?.purpose !== 'agent_execution'
-  ) {
-    throw new NodeOperationError(
-      context.getNode(),
-      'LifeSpace Identity returned an Agent execution token for a different execution context',
-    );
+  requiredString(context, credentials.coreBaseUrl, 'LifeSpace Core API Base URL');
+  const agentCredential = requiredString(context, credentials.agentApiCredential, 'LifeSpace Agent API Credential');
+  if (!/^lsp_agt_[A-Za-z0-9_-]+$/u.test(agentCredential)) {
+    throw new NodeOperationError(context.getNode(), 'LifeSpace Agent API Credential must be a valid lsp_agt_* credential');
   }
 
   return {
     mode: 'delegatedAgent',
-    accessToken,
-    principalType: expectedPrincipalType,
-    principalId: expectedPrincipalId,
-    principalUserId,
-    agentId,
     delegationId: delegationValue || null,
   };
 }
@@ -266,13 +161,13 @@ export async function lifeSpaceRequest(
 
   const headers = {
     ...(options.headers ?? {}),
-    Authorization: `Bearer ${authority.accessToken}`,
     ...(authority.delegationId
       ? { 'X-LifeSpace-Delegation-Id': authority.delegationId }
       : {}),
   };
-  return await context.helpers.httpRequest.call(context, {
-    ...options,
-    headers,
-  });
+  return await context.helpers.httpRequestWithAuthentication.call(
+    context,
+    'lifeSpaceAgentExecutionApi',
+    { ...options, headers },
+  );
 }
