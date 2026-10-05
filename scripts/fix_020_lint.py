@@ -49,6 +49,7 @@ for file_name, subtitle in WORKFLOW_NODES.items():
     source = make_workflow_only_lint_compatible(source)
     source = source.replace('who confirmed this request.', 'who confirmed this request')
     source = source.replace('who denied this request.', 'who denied this request')
+    source = source.replace('who rejected this request.', 'who rejected this request')
     path.write_text(source)
 
 for file_name, subtitle in TOOL_NODES.items():
