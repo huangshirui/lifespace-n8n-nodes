@@ -278,7 +278,7 @@ async function runtimeAuthority(
       context,
       runtime.itemIndex,
       runtime.requiredAccess,
-      { requireDelegation: runtime.config.operation !== 'batchCreate' },
+      { requireDelegation: false },
     ).catch((error) => {
       runtime.authorityPromise = undefined;
       throw error;

@@ -8,7 +8,7 @@ import type {
 export class LifeSpaceApi implements ICredentialType {
   name = 'lifeSpaceApi';
 
-  displayName = 'LifeSpace API';
+  displayName = 'LifeSpace Service API';
 
   icon = {
     light: 'file:lifespace.svg',
@@ -23,7 +23,7 @@ export class LifeSpaceApi implements ICredentialType {
       name: 'baseUrl',
       type: 'string',
       default: '',
-      placeholder: 'https://api.example.com/api/v1',
+      placeholder: 'https://core.example.com/api/v1',
       required: true,
       description: 'LifeSpace Core API root. Do not include a Space or Record Type path.',
     },
@@ -33,9 +33,9 @@ export class LifeSpaceApi implements ICredentialType {
       type: 'string',
       typeOptions: { password: true },
       default: '',
-      placeholder: 'lsp_pat_...',
+      placeholder: 'lsp_svc_...',
       required: true,
-      description: 'Opaque LifeSpace Service API Token used by n8n for API calls and Runtime Discovery',
+      description: 'Opaque LifeSpace Service API Token used by n8n for API calls and Runtime Discovery. Legacy lsp_pat_* tokens remain accepted by LifeSpace during migration.',
     },
   ];
 

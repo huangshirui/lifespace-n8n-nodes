@@ -1,0 +1,53 @@
+import type { IDataObject, IExecuteFunctions, INodeExecutionData, INodeType, INodeTypeDescription } from 'n8n-workflow';
+import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
+import { agentAuthorizationRequest, requiredIdentifier, responseJson, trustedPrincipalUserId } from '../authorization/lifeSpaceAuthorizationRequest';
+
+export class LifeSpaceDenyAuthorization implements INodeType {
+  description: INodeTypeDescription = {
+    displayName: 'LifeSpace Deny Authorization',
+    name: 'lifeSpaceDenyAuthorization',
+    icon: 'file:../LifeSpace/lifespace.svg',
+    group: ['transform'],
+    version: 1,
+    subtitle: 'Authorization Request · Deny',
+    description: 'Record that the intended user explicitly denied a pending LifeSpace Authorization Request',
+    defaults: { name: 'LifeSpace Deny Authorization' },
+    inputs: [NodeConnectionTypes.Main],
+    outputs: [NodeConnectionTypes.Main],
+    usableAsTool: true,
+    credentials: [{ name: 'lifeSpaceAgentExecutionApi', required: true }],
+    properties: [
+      { displayName: 'Principal User ID', name: 'principalUserId', type: 'string', default: '', required: true, placeholder: 'usr_...', description: 'Trusted user mapping for the person who rejected this request' },
+      { displayName: 'Space ID', name: 'spaceId', type: 'string', default: '', required: true, placeholder: 'spc_...' },
+      { displayName: 'Authorization Request ID', name: 'requestId', type: 'string', default: '', required: true, placeholder: 'arq_...' },
+    ],
+  };
+
+  constructor() {
+    const description = this.description as INodeTypeDescription & { usableAsTool?: boolean };
+    delete description.usableAsTool;
+    this.description = description;
+  }
+
+  async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
+    const input = this.getInputData();
+    const output: INodeExecutionData[] = [];
+    for (let itemIndex = 0; itemIndex < input.length; itemIndex += 1) {
+      try {
+        const principalUserId = trustedPrincipalUserId(this, itemIndex);
+        const spaceId = requiredIdentifier(this, this.getNodeParameter('spaceId', itemIndex), 'Space ID', /^spc_[A-Za-z0-9_-]+$/u);
+        const requestId = requiredIdentifier(this, this.getNodeParameter('requestId', itemIndex), 'Authorization Request ID', /^arq_[A-Za-z0-9_-]+$/u);
+        const response = await agentAuthorizationRequest(this, itemIndex, {
+          method: 'POST',
+          url: `/spaces/${encodeURIComponent(spaceId)}/authorization-requests/${encodeURIComponent(requestId)}/deny`,
+          body: { principalUserId } as IDataObject,
+        });
+        output.push({ json: responseJson(response), pairedItem: { item: itemIndex } });
+      } catch (error) {
+        if (!this.continueOnFail()) throw new NodeOperationError(this.getNode(), error as Error, { itemIndex });
+        output.push({ json: { error: error instanceof Error ? error.message : String(error) }, pairedItem: { item: itemIndex } });
+      }
+    }
+    return [output];
+  }
+}

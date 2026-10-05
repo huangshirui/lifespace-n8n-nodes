@@ -3,7 +3,9 @@ import type { ICredentialType, INodeProperties } from 'n8n-workflow';
 export class LifeSpaceWebhookApi implements ICredentialType {
   name = 'lifeSpaceWebhookApi';
 
-  displayName = 'LifeSpace Webhook API';
+  // Product UX deliberately distinguishes the HMAC signing secret from an API credential.
+  // eslint-disable-next-line n8n-nodes-base/cred-class-field-display-name-missing-api
+  displayName = 'LifeSpace Webhook Signing';
 
   icon = {
     light: 'file:lifespace.svg',
