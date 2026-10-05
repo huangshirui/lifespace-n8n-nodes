@@ -165,7 +165,9 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
     if (property.name === 'resource') {
       result.push({
         ...property,
-        options: (property.options ?? []).filter((option) => option.value !== 'batchMutation'),
+        options: (property.options ?? []).filter(
+          (option) => !('value' in option) || option.value !== 'batchMutation',
+        ),
       });
       continue;
     }
