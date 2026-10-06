@@ -29,7 +29,7 @@ You must be an n8n instance Owner or Admin.
 To pin a release, use for example:
 
 ```text
-n8n-nodes-lifespace@0.1.0
+n8n-nodes-lifespace@0.1.25
 ```
 
 ### Self-hosted n8n: manual npm installation
@@ -44,26 +44,53 @@ Restart n8n afterwards. In queue mode, install the package anywhere that may exe
 
 ## Quick start
 
-LifeSpace has two explicit execution modes in n8n.
+LifeSpace exposes separate Service, Agent, and Webhook-signing credentials in n8n.
 
-For **Service Principal（服务主体）automation**, create a **LifeSpace API** credential with the Core **API Base URL** and an opaque `lsp_pat_*` **Service API Token**. This remains the default for scheduled/system workflows where `Principal = Actor = Service`.
+For ordinary owner-controlled automation, create a **LifeSpace Service API** credential containing:
 
-For a user-initiated **Delegated Agent（委托智能体）** Tool or Batch, create a separate **LifeSpace Delegated Agent API** credential containing:
+- **API Base URL** — the LifeSpace Core API root;
+- **Service API Token** — an opaque `lsp_svc_*` token.
 
-- **Core API Base URL**;
-- **Identity API Base URL**;
-- the server-only Application credential `lsa_*`;
-- the registered LifeSpace `agt_*` Agent ID.
+This is the normal scheduled/system workflow mode where `Principal = Actor = Service`. Existing `lsp_pat_*` tokens remain accepted by LifeSpace only as migration credentials until they are rotated or revoked.
 
-Delegated mode does **not** require or fall back to a Service PAT. The adapter uses the Application credential only to mint a short-lived `User Principal → Agent Actor` execution token from LifeSpace Identity, then calls Core with that token plus explicit Delegation selectors.
+For AI Agent execution, create a **LifeSpace Agent API** credential containing only:
 
-`Principal User ID`, `Delegation ID`, `Read Delegation ID` and per-item Batch Delegation IDs are execution/control context, never LLM Tool arguments. `Read Delegation ID` is intentionally separate: it covers delegated design-time Discovery and only the runtime calls that actually need relation-name lookup or optimistic-concurrency pre-reads, so those helper reads cannot accidentally consume a single-use Delegation reserved for the actual query/mutation/action. A pure runtime mutation with no helper read does not exercise the Read Delegation.
+- **API Base URL** — the LifeSpace Core API root;
+- **Agent API Credential** — an opaque `lsp_agt_*` credential.
 
-Credentials are secrets. Store them only in n8n credentials; do not put `lsp_pat_*`, `lsa_*`, Agent JWTs or other secrets in workflow fields, URLs, source files or workflow exports.
+The adapter no longer asks for an Identity API URL, an `lsa_*` Application credential, or a separate `agt_*` Agent ID. The `lsp_agt_*` credential already authenticates the current Application + Agent Actor to Core.
 
-A **LifeSpace Trigger** additionally uses a **LifeSpace Webhook Signing** credential containing the endpoint-scoped HMAC signing secret. This is deliberately separate from the API credential: the Service API Token authenticates outbound n8n → LifeSpace calls, while the signing secret verifies inbound LifeSpace → n8n deliveries and rotates with its Webhook Endpoint. The Trigger still reuses the LifeSpace API credential for Space/Record Type discovery, so API context is not duplicated.
+Agent execution has two authority profiles:
 
-Runtime Discovery determines which Spaces, Record Types, fields, queries, Actions and relation lookup capabilities the current execution context can use. Service mode uses the Service PAT. Delegated Agent mode uses the short-lived Agent token; progressive semantic detail uses the configured Read Delegation selector. Relation target lookup remains lazy and field-scoped. Execution authorization is always enforced by LifeSpace from verified Application / Principal / Actor, credential scope, Application × Model Access, current Space/Data Grant authority and the explicitly selected Delegation when Principal and Actor differ.
+```text
+Direct Agent
+  lsp_agt_* -> Principal=Agent / Actor=Agent
+  -> uses only the Agent's own current Data Grant / model authority
+
+User Delegation
+  lsp_agt_* + explicit dlg_*
+  -> Principal=User / Actor=Agent
+  -> Core resolves and rechecks the current Delegation chain
+```
+
+An Agent API credential never grants User authority by itself. When a LifeSpace Agent Tool lacks sufficient direct Agent authority, it returns a structured `authorizationRequired` scope. **LifeSpace Request Authorization** can create or reuse a pending `arq_*` request from that exact scope. Confirming the request issues the required independent `dlg_*` Delegation(s) atomically after current User authority is rechecked.
+
+The authorization node surface is:
+
+- **LifeSpace Request Authorization** — AI Tool; creates/reuses a pending request but grants no authority;
+- **LifeSpace Confirm Authorization** — workflow node;
+- **LifeSpace Confirm Authorization Tool** — AI Tool for Human Review flows;
+- **LifeSpace Deny Authorization** — workflow node for an explicit user rejection;
+- **LifeSpace Cancel Authorization** — workflow node;
+- **LifeSpace Cancel Authorization Tool** — AI Tool when the Agent no longer needs the request.
+
+The trusted `Principal User ID` on Request Authorization is workflow configuration and is never exposed as an AI Tool argument. Runtime represented execution uses the explicit `dlg_*`; the adapter does not send an arbitrary `principalUserId` to Core.
+
+Credentials are secrets. Store them only in n8n credentials; do not put `lsp_svc_*`, legacy `lsp_pat_*`, `lsp_agt_*`, `lsa_*`, Agent JWTs, or signing secrets in workflow fields, URLs, source files, or workflow exports.
+
+A **LifeSpace Trigger** additionally uses a **LifeSpace Webhook Signing** credential containing the endpoint-scoped HMAC signing secret. This is deliberately separate from the Service API credential: the Service API Token authenticates outbound n8n → LifeSpace API calls and Runtime Discovery, while the signing secret verifies inbound LifeSpace → n8n deliveries and rotates with its Webhook Endpoint.
+
+Runtime Discovery determines which Spaces, Record Types, fields, queries, Actions, and relation lookup capabilities the current execution context can use. Human workflow nodes use the Service API credential. Agent nodes use the Agent API credential. Execution authorization is always enforced by LifeSpace from verified Application / Principal / Actor context, credential scope, Application × Model Access, current Space/Data Grant authority, published model semantics, and the explicitly selected Delegation when represented User authority is used.
 
 ## Generated Record UX
 
@@ -80,8 +107,6 @@ Agent-facing TemporalRange values deliberately use Human end semantics: `{ "kind
 
 For Update/Delete/Action, the Agent Tool still requires a stable `recordId`. If it is not already known, the Agent should call the matching Query Tool first; the mutation Tool does not guess which record the user meant.
 
-
-
 The node displays the authorized human-readable `spaceName` when present while continuing to submit the stable `spc_*` ID.
 
 For the human **LifeSpace** workflow node and Trigger composition, Record Type is the LifeSpace `modelKey` (for example `task`). Design-time options, expressions, Trigger output and downstream Record nodes use that plain value. CRUD calls go directly to `/spaces/{spaceId}/models/{modelKey}/records/...`, so execution adds no Discovery request and the adapter maintains no modelKey-to-route mapping. Existing `lsrt1...` workflow values are decoded only as a deprecated read-compatibility path and are never emitted or written by new configuration. The native **LifeSpace Agent Tool** deliberately treats Record Type as a structural design-time choice and stores a private pinned semantic snapshot behind that selection; the user-facing choice still displays the LifeSpace Record Type.
@@ -90,7 +115,9 @@ Current Calendar models expose the canonical `capabilityBindings.calendar.rangeF
 
 ## LifeSpace contract compatibility
 
-This package follows the current LifeSpace Core Kernel `0.40.0` contract family. Integration/Eventing is independently versioned at `0.3.0`. Authority v2 requires an explicit Delegation selector whenever `Principal != Actor`, and Model Contracts expose the first-class atomic Generic Runtime Batch surface.
+This package follows the current LifeSpace Core Kernel `0.46.0` contract family on `main`. Integration/Eventing is independently versioned at `0.3.0`.
+
+The current authority model separates verified Application / Principal / Actor context, supports Agent-as-Principal and bounded Delegation chains, and requires an explicit current `dlg_*` whenever an Agent executes under represented User authority. The adapter consumes the platform contract; it does not mint its own represented-user tokens or maintain a second authorization state.
 
 The UX depends on these Kernel capabilities:
 
@@ -107,13 +134,17 @@ The UX depends on these Kernel capabilities:
 - `0.28.0`: bounded batch Reference Resolution for relation IDs;
 - `0.29.0`: canonical ordinary-record `referenceLabel` semantics plus `record` / `record_list` lookup and resolution;
 - `0.30.0`: explicit paginated Change History collection and Model Control Plane ownership split;
-- `0.31.0`: Integration/Eventing wire representation moves to the independent Integration/Eventing `0.1.0` contract while Core remains the Runtime authority.
-- `0.32.0`: `modelKey` becomes the sole Runtime address and canonical CRUD/Action paths move under `/models/{modelKey}/records`.
-- `0.33.0`: canonical structural `timeRanges` become available in progressive semantic detail without implying an overlap query API.
-- `0.34.0`: explicit `eq/lt/lte/gt/gte` comparison transports, first-class `createdAt` / `updatedAt` envelope comparisons and Core-owned datetime local-date-window conversion become discoverable.
-- `0.35.0`: grouped `query.capabilityQueries` introduced capability-owned compatibility queries.
-- `0.36.0`: `query.canonical` unifies Search, typed Boolean Filter, multi-Sort and cursor Pagination behind `POST .../records/query`; Runtime Discovery also exposes canonical `instant`, `range<date>`, `range<instant>`, `temporal_range` field types and the Calendar `rangeField` binding. The human Workflow node consumes those current semantics while retaining historical Discovery spellings only for compatibility.
-- `0.40.0`: Authority v2 separates verified Application / Principal / Actor from the explicit opaque Delegation selector; one Delegation has one Space/Model/Record scope; first-class `POST /spaces/{spaceId}/models/batch` atomically commits 1-20 create/update/delete operations and returns one `changeSetId`.
+- `0.31.0`: Integration/Eventing wire representation moves to the independent Integration/Eventing `0.1.0` contract while Core remains the Runtime authority;
+- `0.32.0`: `modelKey` becomes the sole Runtime address and canonical CRUD/Action paths move under `/models/{modelKey}/records`;
+- `0.33.0`: canonical structural `timeRanges` become available in progressive semantic detail without implying an overlap query API;
+- `0.34.0`: explicit `eq/lt/lte/gt/gte` comparison transports, first-class `createdAt` / `updatedAt` envelope comparisons and Core-owned datetime local-date-window conversion become discoverable;
+- `0.35.0`: grouped `query.capabilityQueries` introduced capability-owned compatibility queries;
+- `0.36.0`: `query.canonical` unifies Search, typed Boolean Filter, multi-Sort and cursor Pagination behind `POST .../records/query`; Runtime Discovery also exposes canonical `instant`, `range<date>`, `range<instant>`, `temporal_range` field types and the Calendar `rangeField` binding;
+- `0.40.0`: Authority v2 separates verified Application / Principal / Actor from the explicit opaque Delegation selector and adds first-class atomic `POST /spaces/{spaceId}/models/batch` for 1-20 create/update/delete operations;
+- `0.43.0`: atomic `POST /spaces/{spaceId}/delegations/batch` materializes 1-20 independent Delegations for one confirmed business intent;
+- `0.44.0`: first-class opaque `lsp_agt_*` Agent API credentials authenticate Application + Agent Actor directly at Core;
+- `0.45.0`: transport-independent `arq_*` Authorization Request lifecycle with request/confirm/deny/cancel and atomic Delegation materialization;
+- `0.46.0`: first-class non-atomic `POST /spaces/{spaceId}/models/bulk` with independent per-item outcomes and `blk_*` correlation, while `/models/batch` remains the atomic `cgs_*` ChangeSet profile.
 
 The adapter prefers the `0.27+` progressive flow while configuring a node:
 
@@ -138,7 +169,7 @@ Ordinary Record CRUD/Action routes remain model-contract surfaces derived from p
 New Workflow and Agent configurations expose one query model:
 
 - **Search** is a top-level retrieval facet when the selected Record Type publishes searchable fields.
-- **Filters** expose only Filter Groups. Each group has its own **Match: All / Any** and vertically stacked **Field**, **Operator**, and string/expression **Value** controls; multiple groups compose with AND. Field choices come from Discovery, and Operator choices reload from the selected field using n8n's row-relative dynamic-option dependency.
+- **Filters** expose Filter Groups. Each group has its own **Match: All / Any** and vertically stacked **Field**, **Operator**, and string/expression **Value** controls; multiple groups compose with AND. Field choices come from Discovery, and Operator choices reload from the selected field using n8n's row-relative dynamic-option dependency.
 - Temporal range **Overlaps** is projected for human workflows as paired **Overlaps Start** + **Overlaps End** conditions in the same group. The adapter validates the pair and lowers it to one canonical `overlaps` range predicate. Date pairs use the current n8n workflow timezone unless **Options → Viewing Timezone** overrides it.
 - **Sorts** come from `query.canonical.sort.fields` and preserve user priority.
 - **Return All**, **Limit**, and the optional opaque **Cursor** use canonical cursor pagination.
@@ -183,13 +214,19 @@ Credentials are intentionally static secure configuration and are not workflow-e
 
 The normal n8n-facing resource is **Record**. LifeSpace still owns **Model** semantics internally; the adapter uses **Record Type** for the workflow-facing selection.
 
-Supported human Workflow operations include ordinary Record CRUD/Query/Action. **Create / Update / Delete expose an optional Batch Mode under Record Options, default Off.** When enabled, the node consumes the incoming n8n `items[]` directly, requires 1-20 items resolving to one Space and one Record Type, and sends exactly one atomic Core Batch request. The response is expanded back to one n8n output item per input item with preserved pairing and a shared `changeSetId`.
+Supported human Workflow operations include ordinary Record CRUD/Query/Action.
 
-Update/Delete `Version` remains optional in both modes. In single mode, omission keeps the historical behavior of reading the current record immediately before mutation. In Batch Mode, omission is delegated to the LifeSpace Batch contract: Core resolves current versions set-wise during Batch preparation and still commits conditionally, so there is no N-read HTTP waterfall and no blind write.
+For **Create / Update / Delete**, **Batch Processing** is an independent transport/performance option under Record Options and defaults **On**:
 
-**Advanced Mixed Batch** remains available for workflows that deliberately need mixed create/update/delete or cross-Record-Type operations in one atomic ChangeSet. It uses the explicit JSON operations surface and is not the primary Batch UX.
+- **Batch Processing = On, Atomic Consistency = Off** — the default. The node sends one bounded non-atomic LifeSpace Bulk request for 1-20 input items. Each item has an independent result, so valid items may succeed while invalid/stale/unauthorized items fail.
+- **Batch Processing = On, Atomic Consistency = On** — the node sends one atomic LifeSpace Batch request. The whole batch commits or rolls back together and successful commit returns one shared `changeSetId`.
+- **Batch Processing = Off** — the node returns to per-item execution.
 
-The native Agent Tool supports Query/Create/Update/Delete/Action plus **Create Records (Batch)** for 1-20 records of its pinned Record Type. Agent Batch Update/Delete are not exposed by this workflow-UX change; they can be added separately against the same upstream optional-version Batch semantics without reintroducing N pre-read HTTP calls.
+The human Record node is structurally pinned to one Space and one Record Type, so its Batch Processing surface batches incoming items for that selected model. It does not expose a separate mixed-model JSON Batch UI in 0.2.0.
+
+Update/Delete `Version` remains optional in all modes. In per-item mode, omission keeps the historical behavior of reading the current record immediately before mutation. In Bulk/Batch Processing, omission is sent to Core for set-wise current-version resolution, avoiding an N-read HTTP waterfall.
+
+The native Agent Tool supports Query/Create/Update/Delete/Action plus **Create Records (Batch)** for 1-20 records of its pinned Record Type. Agent Batch Create remains atomic; Agent Update/Delete are ordinary single-record Tool operations in this release.
 
 Ordinary Record operations remain:
 
@@ -242,9 +279,11 @@ At execution time Create uses the already-configured Record Type selector and se
 
 LifeSpace uses optimistic concurrency.
 
-By default the node reads the current Record version immediately before Update/Delete and sends that version with the mutation. This keeps the ordinary n8n UI free from mandatory internal `version` entry while preserving stale-write protection for the actual mutation race.
+By default the node reads the current Record version immediately before Update/Delete when executing per item and sends that version with the mutation. This keeps the ordinary n8n UI free from mandatory internal `version` entry while preserving stale-write protection for the actual mutation race.
 
-Update does not add a Runtime Discovery request before the mutation. When no explicit version is configured, the current-record read is for optimistic concurrency rather than semantic discovery. Core validates Calendar and other Capability semantics against the resulting mutation.
+When Batch Processing is enabled and no explicit version is configured, Core resolves current versions set-wise as part of Bulk/Batch preparation rather than forcing one HTTP pre-read per item.
+
+Update does not add a Runtime Discovery request before the mutation. Core validates Calendar and other Capability semantics against the resulting mutation.
 
 If a workflow intentionally needs to bind a known version, add **Concurrency Options → Version**.
 
@@ -253,14 +292,13 @@ If a workflow intentionally needs to bind a known version, add **Concurrency Opt
 List / Query exposes the single LifeSpace Canonical Query model:
 
 - optional **Search** over fields published as searchable;
-- grouped **Filters** generated from the selected Record Type's canonical targets and operators;
-- top-level **Match All / Match Any** plus one nested Condition Group level for Boolean composition;
-- string/expression values that are parsed back to canonical scalar values, with canonical JSON text for structured Range/TemporalRange/`within` operands;
+- **Filter Groups**, where each group chooses **Match All / Match Any** and groups compose with AND;
+- Discovery-backed **Field** and **Operator** selectors plus string/expression **Value** controls that are parsed back to canonical typed values;
 - ordered **Sorts** generated from canonical sortable fields;
 - optional **Viewing Timezone** context when sorting a `temporal_range` field;
 - **Return All**, **Limit**, and an optional opaque **Cursor**.
 
-The node sends one structured `POST .../records/query` request per page. Top-level and nested All/Any settings lower to canonical `and`/`or` groups. Relation membership still uses canonical `contains`; Core remains responsible for final contract validation, timezone/DST conversion, authorization, null-last ordering and cursor identity. Stored workflows using the previous Resource Mapper and Time Window controls remain execution-compatible through hidden adapter fallbacks.
+The node sends one structured `POST .../records/query` request per page. Core remains responsible for final contract validation, timezone/DST conversion, authorization, null-last ordering and cursor identity. Stored workflows using previous query controls remain execution-compatible through hidden adapter fallbacks.
 
 New configurations do not expose Standard Query or Capability Query. Stored workflows that explicitly selected the previous Capability Query remain executable through a hidden compatibility path.
 
@@ -290,7 +328,9 @@ Use normal Record operations when possible because they benefit from Runtime Dis
 
 Use **LifeSpace Agent Tool** when connecting LifeSpace to an n8n AI Agent. This is a separate native AiTool surface rather than the human workflow node running through `usableAsTool`.
 
-Configure the Tool's structural scope — Space, Record Type and operation — in the node. Selecting the Record Type loads the current LifeSpace semantic detail and pins the model version, `schemaHash`, fields/query/action semantics and Space label into the workflow. At runtime the Tool derives its model-facing name, description and input schema from that saved snapshot, so `supplyData()` performs zero Runtime Discovery requests. Reselect Record Type to refresh the pinned contract after a LifeSpace model change.
+Attach a **LifeSpace Agent API** credential. Configure the Tool's structural scope — Space, Record Type and operation — in the node. Selecting the Record Type loads the current LifeSpace semantic detail and pins the model version, `schemaHash`, fields/query/action semantics and Space label into the workflow. At runtime the Tool derives its model-facing name, description and input schema from that saved snapshot, so `supplyData()` performs zero Runtime Discovery requests. Reselect Record Type to refresh the pinned contract after a LifeSpace model change.
+
+Direct Agent calls use the Agent's own current authority. The Tool schema also accepts `delegationId` for represented User execution. If direct authority is insufficient and no valid represented delegation was supplied, the Tool returns the exact `authorizationRequired` scope that can be passed to **LifeSpace Request Authorization**.
 
 For Canonical Query, the model receives semantic inputs such as:
 
@@ -310,6 +350,35 @@ The adapter validates fields and operators against `query.canonical` and compile
 
 Create/Update schemas are generated from writable model fields. Optional fields that the model does not provide are omitted rather than synthesized as empty values. Actions remain metadata-driven, and adding a future Record Type does not require a model-specific `create_*` or `query_*` node implementation.
 
+## Use LifeSpace Authorization Request nodes
+
+The Authorization Request flow keeps LifeSpace as the authority source of truth across AI, n8n Chat, and deterministic workflow transports.
+
+A typical Agent flow is:
+
+```text
+LifeSpace Agent Tool
+  -> insufficient direct Agent authority
+  -> returns authorizationRequired
+
+LifeSpace Request Authorization
+  -> creates/reuses pending arq_*
+  -> returns canonical confirmation projection
+  -> grants no authority
+
+Human review / trusted workflow decision
+  -> Confirm / Deny
+
+Confirm
+  -> rechecks current User authority
+  -> atomically creates required independent dlg_*
+  -> Agent retries business operation with explicit delegationId
+```
+
+For AI-mediated Human Review, the confirmation projection displayed to the user must come from the canonical Authorization Request response and is validated again on confirmation. Deterministic trusted workflow transports may use the `arq_*` request identity directly according to the LifeSpace contract.
+
+`denied` means the intended User explicitly rejected the request. `cancelled` means the requesting Agent/Application no longer needs the pending request. They are intentionally different lifecycle outcomes.
+
 ## Use the LifeSpace Trigger
 
 The **LifeSpace Trigger** receives signed LifeSpace Domain Event webhooks.
@@ -324,7 +393,7 @@ One Webhook Endpoint can therefore carry events for multiple Record Types throug
 ### Trigger setup
 
 1. Add a **LifeSpace Trigger** node.
-2. Attach a **LifeSpace API** credential. The Trigger uses it only for Runtime Discovery and normal LifeSpace API context.
+2. Attach a **LifeSpace Service API** credential. The Trigger uses it only for Runtime Discovery and normal LifeSpace API context.
 3. Attach a **LifeSpace Webhook Signing** credential containing the signing secret for this Webhook Endpoint.
 4. Choose the **Space** from Runtime Discovery.
 5. Choose one or more **Record Types**.
@@ -343,15 +412,16 @@ Webhook Endpoint / Event Subscription creation is intentionally not performed by
 
 ## What the package provides
 
-- **LifeSpace API** credential for Service Principal authentication and Runtime Discovery;
-- **LifeSpace Delegated Agent API** credential for server-only Application authentication, short-lived Agent token minting, and delegated Core execution without a Service PAT;
+- **LifeSpace Service API** credential for Service Principal authentication and Runtime Discovery using canonical `lsp_svc_*` tokens, with legacy `lsp_pat_*` accepted only by LifeSpace during migration;
+- **LifeSpace Agent API** credential using one opaque `lsp_agt_*` secret for direct Agent and represented User/Agent execution;
 - **LifeSpace Webhook Signing** credential for endpoint-scoped inbound HMAC verification;
-- **LifeSpace** human workflow node with Discovery-driven Record operations, first-class 1-20 atomic Batch create/update/delete, plus advanced API Request;
-- **LifeSpace Agent Tool** native AiTool with Discovery-driven semantic schemas and bounded same-model Batch Create;
+- **LifeSpace** human workflow node with Discovery-driven Record operations, default non-atomic Bulk Processing, optional Atomic Consistency, and Advanced API Request;
+- **LifeSpace Agent Tool** native AiTool with Discovery-driven semantic schemas, direct Agent authority, explicit represented-user Delegation selection, and bounded same-model atomic Batch Create;
+- **LifeSpace Request/Confirm/Deny/Cancel Authorization** nodes and Tools for the `arq_*` user-confirmation lifecycle;
 - **LifeSpace Trigger** with signed multi-Record-Type Domain Event filtering;
 - shared thin adapter projection from LifeSpace Runtime Discovery into human n8n controls and model-facing Tool schemas.
 
-The human Batch surface is the generic cross-model atomic transport. The Agent Tool deliberately exposes only same-model Batch Create in this release: Agent Update/Delete continue to resolve optimistic concurrency through a read before mutation, and the adapter does not turn multiple such reads into an N+1 pseudo-Batch. Cross-model or mutation-mixed Agent Batch should be added only when its full input contract can remain deterministic and bounded without reintroducing per-item Runtime round trips.
+The human Record node uses one selected Space and Record Type. With Batch Processing enabled it groups 1-20 incoming items into one LifeSpace request: non-atomic `/models/bulk` by default, or atomic `/models/batch` when Atomic Consistency is enabled. It does not emulate Bulk by issuing N HTTP mutation calls.
 
 LifeSpace remains authoritative for validation, authorization, defaults, Mutation Authority, Action semantics, query/time semantics, relation semantics and event contracts. Runtime Discovery and Relation Target Lookup are current capability/reference projections, not execution-authorization proofs.
 
