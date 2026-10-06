@@ -297,7 +297,7 @@ function personProperties(): INodeProperties[] {
           { displayName: 'To', name: 'to', type: 'string', default: '', required: true },
         ],
       }],
-      description: 'Rename active alternate names without exposing alias rows as independent resources.',
+      description: 'Rename active alternate names without exposing alias rows as independent resources',
     },
     {
       displayName: 'Search',
@@ -583,7 +583,8 @@ async function executePersonWorkflow(context: IExecuteFunctions): Promise<INodeE
           throw new NodeOperationError(context.getNode(), 'Person Limit must be an integer between 1 and 100', { itemIndex });
         }
         const seenCursors = new Set<string>();
-        do {
+        let hasNextPage = true;
+        while (hasNextPage) {
           const qs: IDataObject = {
             limit: returnAll ? 100 : configuredLimit,
             ...(search ? { q: search } : {}),
@@ -601,13 +602,14 @@ async function executePersonWorkflow(context: IExecuteFunctions): Promise<INodeE
             output.push({ json: person as IDataObject, pairedItem: { item: itemIndex } });
           }
           const nextCursor = typeof page.nextCursor === 'string' ? page.nextCursor.trim() : '';
-          if (!returnAll || !nextCursor) break;
+          hasNextPage = returnAll && Boolean(nextCursor);
+          if (!hasNextPage) break;
           if (seenCursors.has(nextCursor)) {
             throw new NodeOperationError(context.getNode(), 'LifeSpace Person Directory repeated a cursor while Return All was enabled', { itemIndex });
           }
           seenCursors.add(nextCursor);
           cursor = nextCursor;
-        } while (true);
+        }
         continue;
       }
 
