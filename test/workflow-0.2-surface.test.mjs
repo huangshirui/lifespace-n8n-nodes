@@ -30,17 +30,24 @@ test('0.2.0 ordinary Workflow exposes Record, Person, and API Request with Servi
   assert.equal(property(node, 'batchOperations'), undefined);
 });
 
-test('0.2.0 Query and mutation concurrency UX keep the accepted independent options', () => {
+test('0.2.0 Record mutations use one bottom Options collection', () => {
   const node = new LifeSpaceWorkflow();
 
   const queryOptions = property(node, 'options');
   assert.ok(queryOptions.options.some((option) => option.name === 'cursor'));
   assert.ok(queryOptions.options.some((option) => option.name === 'viewingTimezone'));
 
-  const mutationOptions = property(node, 'mutationOptions');
-  const version = mutationOptions.options.find((option) => option.name === 'version');
+  const recordOptions = property(node, 'recordOptions');
+  assert.ok(recordOptions.options.some((option) => option.name === 'batchProcessing'));
+  assert.ok(recordOptions.options.some((option) => option.name === 'atomicConsistency'));
+  const version = recordOptions.options.find((option) => option.name === 'version');
   assert.ok(version);
   assert.match(version.description, /Optional known record version/u);
+  assert.deepEqual(version.displayOptions.show['/operation'], ['update', 'delete']);
+  assert.equal(property(node, 'mutationOptions'), undefined);
+
+  const properties = node.description.properties;
+  assert.ok(properties.findIndex((entry) => entry.name === 'recordOptions') > properties.findIndex((entry) => entry.name === 'actionInput'));
 
   const action = property(node, 'actionKey');
   assert.ok(action);
