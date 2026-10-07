@@ -285,7 +285,7 @@ When Batch Processing is enabled and no explicit version is configured, Core res
 
 Update does not add a Runtime Discovery request before the mutation. Core validates Calendar and other Capability semantics against the resulting mutation.
 
-If a workflow intentionally needs to bind a known version, add **Concurrency Options → Version**.
+If a workflow intentionally needs to bind a known version, add **Options → Version**.
 
 ### List / Query
 

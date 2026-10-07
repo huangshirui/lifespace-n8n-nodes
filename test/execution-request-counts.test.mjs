@@ -184,7 +184,7 @@ test('Update with an explicit version is one business mutation and zero Discover
   const calls = await execute({
     operation: 'update',
     recordId: 'rec_update_explicit',
-    mutationOptions: { version: 5 },
+    recordOptions: { version: 5 },
     'fields.value': { name: 'Update' },
   });
   assert.deepEqual(requestShape(calls), [
@@ -210,7 +210,7 @@ test('Delete with an explicit version is one business mutation and zero Discover
   const calls = await execute({
     operation: 'delete',
     recordId: 'rec_delete_explicit',
-    mutationOptions: { version: 5 },
+    recordOptions: { version: 5 },
   });
   assert.deepEqual(requestShape(calls), [
     ['DELETE', `${BASE_URL}/spaces/spc_test/models/task/records/rec_delete_explicit`],

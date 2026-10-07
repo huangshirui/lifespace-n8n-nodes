@@ -65,6 +65,8 @@ test('Runtime Discovery UX is cross-Space and Record-facing', async () => {
   assert.match(node, /displayName: 'Return All'/u);
   assert.match(node, /name: 'recordOptions'[\s\S]{0,800}displayName: 'Batch Processing'/u);
   assert.match(node, /name: 'recordOptions'[\s\S]{0,1200}displayName: 'Atomic Consistency'/u);
+  assert.match(node, /name: 'recordOptions'[\s\S]{0,1800}displayName: 'Version'/u);
+  assert.doesNotMatch(node, /displayName: 'Concurrency Options'/u);
   assert.match(node, /name: 'Advanced Mixed Batch'/u);
   assert.match(node, /name: 'sorts'/u);
   assert.match(node, /field\.title\?\.trim\(\) \|\| humanizeKey/u);

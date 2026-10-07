@@ -703,8 +703,9 @@ function configuredMutationVersion(
   context: IExecuteFunctions,
   itemIndex: number,
 ): number | undefined {
-  const options = context.getNodeParameter('mutationOptions', itemIndex, {}) as IDataObject;
-  const configuredVersion = options.version;
+  const options = context.getNodeParameter('recordOptions', itemIndex, {}) as IDataObject;
+  const legacyOptions = context.getNodeParameter('mutationOptions', itemIndex, {}) as IDataObject;
+  const configuredVersion = options.version ?? legacyOptions.version;
   if (configuredVersion === undefined || configuredVersion === null || configuredVersion === '') {
     return undefined;
   }
@@ -1114,31 +1115,6 @@ export class LifeSpace implements INodeType {
         default: 'list',
       },
       {
-        displayName: 'Options',
-        name: 'recordOptions',
-        type: 'collection',
-        placeholder: 'Add Option',
-        default: {},
-        noDataExpression: true,
-        displayOptions: { show: { resource: ['modelRecord'], operation: ['create', 'update', 'delete'] } },
-        options: [
-          {
-            displayName: 'Batch Processing',
-            name: 'batchProcessing',
-            type: 'boolean',
-            default: true,
-            description: 'Whether to group incoming n8n items into one LifeSpace request. When enabled without Atomic Consistency, items succeed or fail independently and partial success is preserved.',
-          },
-          {
-            displayName: 'Atomic Consistency',
-            name: 'atomicConsistency',
-            type: 'boolean',
-            default: false,
-            description: 'Whether the grouped mutation must commit all items or roll back the whole request. Enable only when the business operation requires all-or-none semantics.',
-          },
-        ],
-      },
-      {
         displayName: 'Space Name or ID', name: 'spaceId', type: 'options',
         typeOptions: { loadOptionsMethod: 'getSpaces' }, options: [], default: '', required: true,
         displayOptions: { show: { resource: ['modelRecord', 'batchMutation'] } },
@@ -1344,11 +1320,6 @@ export class LifeSpace implements INodeType {
         options: [{ displayName: 'Cursor', name: 'cursor', type: 'string', default: '', description: 'Advanced manual pagination. Normally leave empty and use Return All or Limit.' }],
       },
       {
-        displayName: 'Concurrency Options', name: 'mutationOptions', type: 'collection', placeholder: 'Add Option', default: {},
-        displayOptions: { show: { resource: ['modelRecord'], operation: ['update', 'delete'] } },
-        options: [{ displayName: 'Version', name: 'version', type: 'number', typeOptions: { minValue: 1, numberPrecision: 0 }, default: 1, description: 'Optional known record version. In single mode, omission makes the node read the current version immediately before mutation. In Batch Processing, omission is sent to Core for set-wise current-version resolution before commit.' }],
-      },
-      {
         displayName: 'Action Name or ID', name: 'actionKey', type: 'options', noDataExpression: true,
         typeOptions: { loadOptionsMethod: 'getActions', loadOptionsDependsOn: ['spaceId', 'recordType'] },
         options: [], default: '', required: true,
@@ -1366,6 +1337,40 @@ export class LifeSpace implements INodeType {
         },
         displayOptions: { show: { resource: ['modelRecord'], operation: ['executeAction'] } },
         description: 'Only semantic/domain inputs from Runtime Discovery are shown. Concurrency metadata is resolved automatically.',
+      },
+      {
+        displayName: 'Options',
+        name: 'recordOptions',
+        type: 'collection',
+        placeholder: 'Add Option',
+        default: {},
+        noDataExpression: true,
+        displayOptions: { show: { resource: ['modelRecord'], operation: ['create', 'update', 'delete'] } },
+        options: [
+          {
+            displayName: 'Batch Processing',
+            name: 'batchProcessing',
+            type: 'boolean',
+            default: true,
+            description: 'Whether to group incoming n8n items into one LifeSpace request. When enabled without Atomic Consistency, items succeed or fail independently and partial success is preserved.',
+          },
+          {
+            displayName: 'Atomic Consistency',
+            name: 'atomicConsistency',
+            type: 'boolean',
+            default: false,
+            description: 'Whether the grouped mutation must commit all items or roll back the whole request. Enable only when the business operation requires all-or-none semantics.',
+          },
+          {
+            displayName: 'Version',
+            name: 'version',
+            type: 'number',
+            typeOptions: { minValue: 1, numberPrecision: 0 },
+            default: 1,
+            displayOptions: { show: { '/operation': ['update', 'delete'] } },
+            description: 'Optional known record version. In single mode, omission makes the node read the current version immediately before mutation. In Batch Processing, omission is sent to Core for set-wise current-version resolution before commit.',
+          },
+        ],
       },
       {
         displayName: 'Operation', name: 'operation', type: 'options', noDataExpression: true,
