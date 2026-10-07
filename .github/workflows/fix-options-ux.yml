@@ -1,0 +1,37 @@
+name: Fix options UX
+
+on:
+  push:
+    branches:
+      - fix/options-ux
+
+permissions:
+  contents: write
+
+jobs:
+  transform:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/options-ux
+          fetch-depth: 0
+
+      - name: Apply UX transform
+        run: node scripts/fix-options-ux.mjs
+
+      - name: Remove temporary transformer
+        run: rm scripts/fix-options-ux.mjs .github/workflows/fix-options-ux.yml
+
+      - name: Verify diff
+        run: git diff --check
+
+      - name: Commit transformed files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: simplify Record options UX"
+          git push origin HEAD:fix/options-ux
