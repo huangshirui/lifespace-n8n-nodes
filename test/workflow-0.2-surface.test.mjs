@@ -9,14 +9,21 @@ function property(node, name) {
   return node.description.properties.find((entry) => entry.name === name);
 }
 
-test('0.2.0 ordinary Workflow exposes only Record and API Request with Service credential', () => {
+test('0.2.0 ordinary Workflow exposes Record, Person, and API Request with Service credential', () => {
   const node = new LifeSpaceWorkflow();
 
   assert.deepEqual(node.description.credentials, [{ name: 'lifeSpaceApi', required: true }]);
 
   const resource = property(node, 'resource');
   assert.ok(resource);
-  assert.deepEqual(resource.options.map((option) => option.value), ['modelRecord', 'apiRequest']);
+  assert.deepEqual(resource.options.map((option) => option.value), ['modelRecord', 'person', 'apiRequest']);
+
+  const personOperation = property(node, 'personOperation');
+  assert.ok(personOperation);
+  assert.deepEqual(personOperation.options.map((option) => option.value), ['create', 'delete', 'get', 'list', 'update']);
+
+  const space = property(node, 'spaceId');
+  assert.ok(space.displayOptions.show.resource.includes('person'));
 
   assert.equal(property(node, 'batchAuthorityMode'), undefined);
   assert.equal(property(node, 'batchPrincipalUserId'), undefined);
