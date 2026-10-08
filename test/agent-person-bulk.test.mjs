@@ -189,6 +189,15 @@ test('Person authorization recovery requests a Space scope rather than a fake mo
   });
 });
 
+test('Batch Processing off keeps Bulk and Atomic guidance out of the Tool contract', async () => {
+  const execution = context({ operation: 'create', recordOptions: { batchProcessing: false } }, () => {
+    throw new Error('single-mode contract generation must not call Core');
+  });
+  const tool = (await new LifeSpaceAgentTool().supplyData.call(execution, 0)).response;
+  assert.doesNotMatch(tool.description, /\bBulk\b|Atomic Batch|Atomic Consistency/u);
+  assert.equal(Object.hasOwn(tool.schema.properties, 'items'), false);
+});
+
 test('Record Create defaults to non-atomic Bulk and direct Agent Authority', async () => {
   const execution = context({ operation: 'create', recordOptions: {} }, (options) => {
     assert.equal(options.method, 'POST');
@@ -204,8 +213,8 @@ test('Record Create defaults to non-atomic Bulk and direct Agent Authority', asy
       data: {
         bulkId: 'blk_test',
         items: [
-          { ok: true, recordId: 'rec_1', version: 1 },
-          { ok: false, error: { code: 'VALIDATION_FAILED' } },
+          { index: 0, operation: 'create', modelKey: 'task', status: 'succeeded', recordId: 'rec_1', version: 1 },
+          { index: 1, operation: 'create', modelKey: 'task', status: 'failed', error: { code: 'VALIDATION_FAILED' } },
         ],
       },
     };
@@ -214,9 +223,12 @@ test('Record Create defaults to non-atomic Bulk and direct Agent Authority', asy
   await emitAgentToolContract('record-bulk-create.json', tool);
   assert.equal(tool.metadata.lifeSpaceMutationMode, 'bulk');
   assert.equal(tool.schema.properties.items.maxItems, 20);
+  assert.match(tool.description, /Do not use when the user requires all-or-none/u);
+  assert.match(tool.description, /retry only failed items; never resend succeeded items/u);
+  assert.doesNotMatch(tool.description, /Atomicity never spans/u);
   const result = JSON.parse(await tool.invoke({ items: [{ name: 'One' }, { name: 'Two', status: 'open' }] }));
   assert.equal(result.data.bulkId, 'blk_test');
-  assert.equal(result.data.items[1].ok, false);
+  assert.equal(result.data.items[1].status, 'failed');
 });
 
 test('Record Atomic Batch Update relies on Core set-wise version resolution', async () => {
@@ -241,6 +253,8 @@ test('Record Atomic Batch Update relies on Core set-wise version resolution', as
   });
   const tool = (await new LifeSpaceAgentTool().supplyData.call(execution, 0)).response;
   await emitAgentToolContract('record-atomic-update.json', tool);
+  assert.match(tool.description, /Atomicity never spans Tool calls, operations, models, or Spaces/u);
+  assert.doesNotMatch(tool.description, /partial failure|retry only failed items/u);
   const result = JSON.parse(await tool.invoke({
     items: [
       { recordId: 'rec_1', status: 'done' },
@@ -260,7 +274,12 @@ test('n8n $fromAI Atomic Consistency becomes a documented boolean Tool argument 
     assert.equal(options.method, 'POST');
     if (index === 0) {
       assert.equal(options.url, `${BASE_URL}/spaces/spc_test/models/bulk`);
-      return { data: { bulkId: 'blk_ai', items: [{ ok: true, recordId: 'rec_bulk', version: 1 }] } };
+      return {
+        data: {
+          bulkId: 'blk_ai',
+          items: [{ index: 0, operation: 'create', modelKey: 'task', status: 'succeeded', recordId: 'rec_bulk', version: 1 }],
+        },
+      };
     }
     assert.equal(options.url, `${BASE_URL}/spaces/spc_test/models/batch`);
     return { data: { changeSetId: 'cgs_ai', items: [{ recordId: 'rec_atomic', version: 1 }] } };
@@ -271,8 +290,10 @@ test('n8n $fromAI Atomic Consistency becomes a documented boolean Tool argument 
   assert.equal(tool.metadata.lifeSpaceAtomicConsistencyArgument, 'atomicConsistency');
   assert.equal(tool.schema.properties.atomicConsistency.type, 'boolean');
   assert.equal(tool.schema.properties.atomicConsistency.default, false);
-  assert.match(tool.schema.properties.atomicConsistency.description, /indivisible business change/u);
-  assert.match(tool.description, /Do not choose atomic merely because multiple items are present/u);
+  assert.match(tool.schema.properties.atomicConsistency.description, /All-or-none for this Tool call/u);
+  assert.match(tool.description, /Item count alone is not a reason/u);
+  assert.match(tool.description, /Atomicity never spans Tool calls, operations, models, or Spaces/u);
+  assert.match(tool.description, /retry only failed items; never resend succeeded items/u);
 
   const bulk = JSON.parse(await tool.invoke({ items: [{ name: 'Default bulk' }] }));
   assert.equal(bulk.data.bulkId, 'blk_ai');
@@ -295,7 +316,15 @@ test('represented Agent multi-mutation puts Delegation on each operation, not th
         { operation: 'delete', modelKey: 'task', recordId: 'rec_2', delegationId: 'dlg_bulk' },
       ],
     });
-    return { data: { bulkId: 'blk_delete', items: [{ ok: true }, { ok: true }] } };
+    return {
+      data: {
+        bulkId: 'blk_delete',
+        items: [
+          { index: 0, operation: 'delete', modelKey: 'task', status: 'succeeded', recordId: 'rec_1', version: 2 },
+          { index: 1, operation: 'delete', modelKey: 'task', status: 'succeeded', recordId: 'rec_2', version: 2 },
+        ],
+      },
+    };
   });
   const tool = (await new LifeSpaceAgentTool().supplyData.call(execution, 0)).response;
   const result = JSON.parse(await tool.invoke({

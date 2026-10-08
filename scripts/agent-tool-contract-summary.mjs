@@ -17,6 +17,11 @@ const [directory] = process.argv.slice(2);
 const tokenEncoding = getEncoding('cl100k_base');
 const EVENT_QUERY_TOKEN_BUDGET = 1200;
 const EVENT_TOTAL_TOKEN_BUDGET = 1800;
+const MUTATION_TOKEN_BUDGETS = new Map([
+  ['record-bulk-create.openai.json', 220],
+  ['record-atomic-update.openai.json', 230],
+  ['record-agent-controlled-atomic.openai.json', 330],
+]);
 
 if (!directory) {
   throw new Error('Usage: node scripts/agent-tool-contract-summary.mjs <openai-contract-dir>');
@@ -96,6 +101,22 @@ if (eventContracts.length) {
     budgetViolations.push(`Event contracts use ${eventTotal} tokens total; budget is ${EVENT_TOTAL_TOKEN_BUDGET}`);
   }
   console.log(`- Budget status: ${budgetViolations.length ? '**FAILED**' : '**PASS**'}`);
+  console.log('');
+}
+
+const mutationContracts = contracts.filter(({ file }) => MUTATION_TOKEN_BUDGETS.has(file));
+if (mutationContracts.length) {
+  console.log('## Mutation Tool Token Budget');
+  console.log('');
+  const mutationViolationsBefore = budgetViolations.length;
+  for (const { file, referenceTokens, compactChars } of mutationContracts) {
+    const budget = MUTATION_TOKEN_BUDGETS.get(file);
+    console.log(`- ${file}: **${referenceTokens} / ${budget} tokens** (cl100k_base reference; ${compactChars} compact JSON chars)`);
+    if (referenceTokens > budget) {
+      budgetViolations.push(`${file} uses ${referenceTokens} tokens; budget is ${budget}`);
+    }
+  }
+  console.log(`- Budget status: ${budgetViolations.length === mutationViolationsBefore ? '**PASS**' : '**FAILED**'}`);
   console.log('');
 }
 

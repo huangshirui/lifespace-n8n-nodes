@@ -570,8 +570,11 @@ function dynamicAtomicDescription(
   const plural = model.display.plural?.trim() || `${model.display.singular?.trim() || model.key}s`;
   const verb = operation === 'create' ? 'Create' : operation === 'update' ? 'Update' : 'Delete';
   const base = config.descriptionOverride?.trim()
-    || `${verb} 1-20 ${plural} in Space "${config.spaceName?.trim() || config.spaceId}". By default LifeSpace uses non-atomic Bulk, so each item succeeds or fails independently and partial success is preserved.`;
-  return `${base} The boolean Tool argument "${key}" controls Atomic Consistency for this call. Omit it or set false for normal Bulk. Set it true only when the user's intent requires the entire set to be one indivisible business change: all items must commit together or all must roll back. Do not choose atomic merely because multiple items are present. Update/Delete versions are resolved set-wise by LifeSpace Core when omitted. Use stable record IDs; never guess them.`;
+    || `${verb} 1-20 ${plural} in Space "${config.spaceName?.trim() || config.spaceId}".`;
+  const recordGuidance = operation === 'create'
+    ? ''
+    : ' Versions are resolved when omitted. Use stable record IDs; never guess them.';
+  return `${base} "${key}" defaults false: non-atomic Bulk; items commit independently and partial success is possible. Set true only when the user requires all items in this Tool call to commit or roll back together. Item count alone is not a reason to choose atomic. Atomicity never spans Tool calls, operations, models, or Spaces. After Bulk partial failure, retry only failed items; never resend succeeded items.${recordGuidance}`;
 }
 
 async function multiRuntime(
@@ -618,7 +621,7 @@ async function multiRuntime(
         [atomicFromAiKey]: {
           type: 'boolean',
           default: false,
-          description: 'Set true only when the user intends all mutation items to form one indivisible business change that must all succeed or all roll back. Leave false or omit for normal Bulk with independent per-item outcomes.',
+          description: 'All-or-none for this Tool call. Defaults false. Set true only when the user requires every item to commit together; item count alone does not imply atomicity.',
         },
       },
     } satisfies AgentToolSchema
