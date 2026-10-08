@@ -10,17 +10,32 @@ Create / Update / Delete use the same mutation concepts as the ordinary LifeSpac
 
 Batch Processing is a workflow/Tool design choice and defaults **On**. It is deliberately not exposed as an AI-controlled parameter. Atomic Consistency defaults **Off** because multiple items alone do not imply one indivisible business change.
 
+## Provider-facing guidance is projected from the selected mode
+
+The Agent receives only guidance that can affect the configured Tool:
+
+- **Batch Processing Off** — no Bulk or Atomic guidance is added; the ordinary single-record Tool contract is used.
+- **Bulk fixed** — only non-atomic semantics are described, including that partial success is possible, an all-or-none user request must not use this Tool, and after partial failure only failed items may be retried. Already-succeeded items must never be resent.
+- **Atomic fixed** — only all-or-none semantics are described. Atomicity is limited to the items in the current Tool call and never spans Tool calls, operations, models, or Spaces.
+- **Atomic controlled by `$fromAI(...)`** — both choices are necessarily described because the model must choose per call, but the explanation stays bounded to the decision rule and the two execution consequences.
+
+Create contracts omit Update/Delete-only version and stable-ID guidance. Update/Delete contracts include it. This keeps provider-facing context proportional to the configured behavior rather than accumulating every available option.
+
+CI generates the actual OpenAI-compatible function contracts and enforces hard `cl100k_base` reference-token budgets for the representative Bulk, fixed Atomic, and Agent-controlled Atomic mutation contracts. The budgets are guardrails against prompt growth, not a claim that every provider uses the same tokenizer.
+
 ## Let the model decide Atomic Consistency
 
 The workflow owner may keep Atomic Consistency fixed, or use n8n's native **Let the model define this parameter** control (`$fromAI(...)`) on Atomic Consistency. When it is delegated to the model, the LifeSpace Agent Tool projects the generated `$fromAI` key into the provider-facing Tool schema as an optional boolean with default `false`.
 
-The Tool contract explicitly tells the Agent:
+The Tool contract tells the Agent:
 
 - omit the argument or use `false` for normal non-atomic Bulk;
-- use `true` only when the user's intent requires the whole mutation set to succeed or roll back together;
-- do not choose Atomic merely because the call contains multiple items.
+- use `true` only when the user requires every item in the current Tool call to commit or roll back together;
+- item count alone is not a reason to choose Atomic;
+- Atomic never spans Tool calls, operations, models, or Spaces;
+- after a Bulk partial failure, retry only failed items and never resend succeeded items.
 
-This means the model learns the decision rule from the actual function schema and Tool description it receives. The adapter then removes that control argument from semantic record data and selects `/models/bulk` or `/models/batch` for the current call.
+The adapter removes the control argument from semantic record data and selects `/models/bulk` or `/models/batch` for the current call.
 
 The retired Agent `batchCreate` operation is not supported. New and saved workflows must use Create / Update / Delete plus the Options above.
 
