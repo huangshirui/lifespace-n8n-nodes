@@ -94,7 +94,7 @@ function context(parameters, responder) {
     spaceId: 'spc_test',
     recordType: recordType(),
     operation: 'create',
-    mutationMode: 'single',
+    recordOptions: { batchProcessing: true },
     personOperation: 'list',
     actionKey: '',
     descriptionOverride: '',
@@ -111,7 +111,7 @@ function context(parameters, responder) {
     getNodeParameter(name, _itemIndex, defaultValue) {
       return Object.hasOwn(effective, name) ? effective[name] : defaultValue;
     },
-    getNode: () => ({ name: 'LifeSpace Agent Tool', typeVersion: 1 }),
+    getNode: () => ({ name: 'LifeSpace Agent Tool', typeVersion: 1, parameters: effective }),
     getTimezone: () => 'Asia/Shanghai',
     addInputData: () => ({ index: 0 }),
     addOutputData: () => undefined,
@@ -189,8 +189,8 @@ test('Person authorization recovery requests a Space scope rather than a fake mo
   });
 });
 
-test('Record Bulk Create uses non-atomic /models/bulk and direct Agent Authority', async () => {
-  const execution = context({ operation: 'create', mutationMode: 'bulk' }, (options) => {
+test('Record Create defaults to non-atomic Bulk and direct Agent Authority', async () => {
+  const execution = context({ operation: 'create', recordOptions: {} }, (options) => {
     assert.equal(options.method, 'POST');
     assert.equal(options.url, `${BASE_URL}/spaces/spc_test/models/bulk`);
     assert.equal(options.headers?.['X-LifeSpace-Delegation-Id'], undefined);
@@ -220,7 +220,7 @@ test('Record Bulk Create uses non-atomic /models/bulk and direct Agent Authority
 });
 
 test('Record Atomic Batch Update relies on Core set-wise version resolution', async () => {
-  const execution = context({ operation: 'update', mutationMode: 'atomic' }, (options) => {
+  const execution = context({ operation: 'update', recordOptions: { batchProcessing: true, atomicConsistency: true } }, (options) => {
     assert.equal(options.method, 'POST');
     assert.equal(options.url, `${BASE_URL}/spaces/spc_test/models/batch`);
     assert.deepEqual(options.body, {
@@ -251,10 +251,40 @@ test('Record Atomic Batch Update relies on Core set-wise version resolution', as
   assert.equal(execution.calls.length, 1);
 });
 
+test('n8n $fromAI Atomic Consistency becomes a documented boolean Tool argument and controls transport per call', async () => {
+  const expression = "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('atomicConsistency', `Use true only for one indivisible business change`, 'boolean', false) }}";
+  const execution = context({
+    operation: 'create',
+    recordOptions: { batchProcessing: true, atomicConsistency: expression },
+  }, (options, index) => {
+    assert.equal(options.method, 'POST');
+    if (index === 0) {
+      assert.equal(options.url, `${BASE_URL}/spaces/spc_test/models/bulk`);
+      return { data: { bulkId: 'blk_ai', items: [{ ok: true, recordId: 'rec_bulk', version: 1 }] } };
+    }
+    assert.equal(options.url, `${BASE_URL}/spaces/spc_test/models/batch`);
+    return { data: { changeSetId: 'cgs_ai', items: [{ recordId: 'rec_atomic', version: 1 }] } };
+  });
+  const tool = (await new LifeSpaceAgentTool().supplyData.call(execution, 0)).response;
+  await emitAgentToolContract('record-agent-controlled-atomic.json', tool);
+  assert.equal(tool.metadata.lifeSpaceMutationMode, 'agent-controlled');
+  assert.equal(tool.metadata.lifeSpaceAtomicConsistencyArgument, 'atomicConsistency');
+  assert.equal(tool.schema.properties.atomicConsistency.type, 'boolean');
+  assert.equal(tool.schema.properties.atomicConsistency.default, false);
+  assert.match(tool.schema.properties.atomicConsistency.description, /indivisible business change/u);
+  assert.match(tool.description, /Do not choose atomic merely because multiple items are present/u);
+
+  const bulk = JSON.parse(await tool.invoke({ items: [{ name: 'Default bulk' }] }));
+  assert.equal(bulk.data.bulkId, 'blk_ai');
+  const atomic = JSON.parse(await tool.invoke({ atomicConsistency: true, items: [{ name: 'All or none' }] }));
+  assert.equal(atomic.data.changeSetId, 'cgs_ai');
+  assert.equal(execution.calls[1].body.operations[0].data.atomicConsistency, undefined);
+});
+
 test('represented Agent multi-mutation puts Delegation on each operation, not the request header', async () => {
   const execution = context({
     operation: 'delete',
-    mutationMode: 'bulk',
+    recordOptions: { batchProcessing: true },
     enableUserAuthorization: true,
     authorizationPrincipalUserId: 'usr_test',
   }, (options) => {
