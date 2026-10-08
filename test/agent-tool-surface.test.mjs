@@ -156,7 +156,7 @@ function context(parameters, onBusiness, input = [{ json: {} }]) {
     getNodeParameter(name, _itemIndex, defaultValue) {
       return Object.hasOwn(effectiveParameters, name) ? effectiveParameters[name] : defaultValue;
     },
-    getNode: () => ({ name: 'LifeSpace AI Tool', typeVersion: 1 }),
+    getNode: () => ({ name: 'LifeSpace AI Tool', typeVersion: 1, parameters: effectiveParameters }),
     getTimezone: () => 'Asia/Shanghai',
     getInputData: () => input,
     addInputData: () => ({ index: 0 }),
@@ -315,9 +315,13 @@ test('registered Agent Tool execute path still validates semantic arguments afte
   assert.ok(Array.isArray(failure.error.allowedFields));
 });
 
-test('registered Agent Tool uses direct Agent Authority for Create while preserving omission semantics', async () => {
+test('registered Agent Tool uses direct Agent Authority for single Create while preserving omission semantics', async () => {
   let requested;
-  const execution = context({ ...baseParameters, operation: 'create' }, (options) => {
+  const execution = context({
+    ...baseParameters,
+    operation: 'create',
+    recordOptions: { batchProcessing: false },
+  }, (options) => {
     requested = options;
     return { data: { id: 'rec_1', version: 1, data: options.body } };
   });

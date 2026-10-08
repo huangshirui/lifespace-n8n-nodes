@@ -70,6 +70,22 @@ function context(parameters, mode, inputData = [{ json: {} }]) {
               },
             };
           }
+          if (options.url.endsWith('/models/bulk')) {
+            const operations = options.body?.operations ?? [];
+            return {
+              data: {
+                bulkId: 'blk_service',
+                items: operations.map((operation, index) => ({
+                  index,
+                  ok: true,
+                  operation: operation.operation,
+                  modelKey: operation.modelKey,
+                  recordId: operation.recordId ?? `rec_bulk_${index}`,
+                  version: 1,
+                })),
+              },
+            };
+          }
           return { data: { id: 'rec_single', version: 6 } };
         }
         throw new Error(`unexpected authenticated request ${credentialName}`);
@@ -208,6 +224,32 @@ test('Record Batch Mode maps incoming n8n items to one Core Batch and preserves 
   );
 });
 
+test('Record mutations default to non-atomic Bulk when Batch Processing is omitted', async () => {
+  const inputData = [{ json: { source: 1 } }, { json: { source: 2 } }];
+  const execution = context({
+    resource: 'modelRecord',
+    operation: 'create',
+    spaceId: 'spc_test',
+    recordType: 'task',
+    'fields.value': (itemIndex) => ({ name: itemIndex === 0 ? 'One' : 'Two' }),
+  }, 'service', inputData);
+
+  const [output] = await new LifeSpaceWorkflow().execute.call(execution);
+
+  const business = execution.calls.filter((call) => call.credentialName === 'lifeSpaceApi');
+  assert.equal(business.length, 1);
+  assert.equal(business[0].options.method, 'POST');
+  assert.equal(business[0].options.url, `${CORE_BASE}/spaces/spc_test/models/bulk`);
+  assert.deepEqual(business[0].options.body, {
+    operations: [
+      { operation: 'create', modelKey: 'task', data: { name: 'One' } },
+      { operation: 'create', modelKey: 'task', data: { name: 'Two' } },
+    ],
+  });
+  assert.deepEqual(output.map((item) => item.json.bulkId), ['blk_service', 'blk_service']);
+  assert.deepEqual(output.map((item) => item.pairedItem), [{ item: 0 }, { item: 1 }]);
+});
+
 test('Record Batch Mode rejects more than 20 input items without auto-chunking', async () => {
   const execution = context({
     resource: 'modelRecord',
@@ -243,11 +285,11 @@ test('Record Batch Mode rejects mixed resolved Space before mutation', async () 
   assert.equal(execution.calls.length, 0);
 });
 
-test('Record single Update keeps Version optional and pre-reads when Batch Mode is off', async () => {
+test('Record single Update keeps Version optional and pre-reads when Batch Processing is off', async () => {
   const execution = context({
     resource: 'modelRecord',
     operation: 'update',
-    recordOptions: { batchMode: false },
+    recordOptions: { batchProcessing: false },
     spaceId: 'spc_test',
     recordType: 'task',
     recordId: 'rec_single',
