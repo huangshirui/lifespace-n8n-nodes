@@ -2,6 +2,7 @@ import {
   validateAgentToolInput,
   type AgentToolRequest,
   type AgentToolSchema,
+  type JsonSchema,
 } from './lifeSpaceToolFactory';
 
 export type PersonToolOperation = 'list' | 'get' | 'create' | 'update' | 'delete';
@@ -23,15 +24,15 @@ function stableHash(value: string): string {
   return hash.toString(36);
 }
 
-function personIdSchema() {
+function personIdSchema(): JsonSchema {
   return {
     type: 'string',
     minLength: 1,
     description: 'Stable LifeSpace Space Person ID (per_*). If unknown, use the Person List / Search Tool first; never guess it.',
-  } as const;
+  };
 }
 
-function alternateNamesPatchSchema() {
+function alternateNamesPatchSchema(): JsonSchema {
   return {
     type: 'object',
     properties: {
@@ -69,7 +70,7 @@ function alternateNamesPatchSchema() {
     },
     additionalProperties: false,
     description: 'Aggregate alternate-name mutation. Use set alone, or one or more of add/remove/rename.',
-  } as const;
+  };
 }
 
 function schemaFor(operation: PersonToolOperation): AgentToolSchema {
