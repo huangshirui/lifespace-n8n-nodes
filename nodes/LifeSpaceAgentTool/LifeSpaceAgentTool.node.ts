@@ -162,7 +162,7 @@ function mutationModeProperty(): INodeProperties {
       {
         name: 'Single',
         value: 'single',
-        description: 'Mutate one record.',
+        description: 'Mutate one record',
       },
       {
         name: 'Bulk',
