@@ -1,0 +1,53 @@
+name: Repair 0.2.1 Tag Once
+
+on:
+  push:
+    branches:
+      - 'release/0.2.1'
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    env:
+      TARGET_SHA: 782b2bdf3360bf2b0f72896b08bf2e6812efb8ea
+      OLD_TAG_SHA: 87933fcd2af8293ed3316fd42b1701af6d359596
+      RELEASE_TAG: 0.2.1
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout with tags
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Verify exact validated main commit and package metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_main="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          test "$remote_main" = "$TARGET_SHA" || { echo "main moved: expected $TARGET_SHA, got $remote_main" >&2; exit 1; }
+          git show "$TARGET_SHA:package.json" > /tmp/package.json
+          git show "$TARGET_SHA:package-lock.json" > /tmp/package-lock.json
+          test "$(node -p "require('/tmp/package.json').version")" = "$RELEASE_TAG"
+          test "$(node -p "require('/tmp/package-lock.json').version")" = "$RELEASE_TAG"
+          test "$(node -p "require('/tmp/package-lock.json').packages[''].version")" = "$RELEASE_TAG"
+
+      - name: Replace premature tag with validated main commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          current_tag="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+          test "$current_tag" = "$OLD_TAG_SHA" || { echo "Refusing to move unexpected tag $RELEASE_TAG at $current_tag" >&2; exit 1; }
+          git tag -f "$RELEASE_TAG" "$TARGET_SHA"
+          git push --force origin "refs/tags/$RELEASE_TAG"
+
+      - name: Trigger fresh Publish workflow on corrected tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run publish.yml --ref "$RELEASE_TAG"
