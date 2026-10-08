@@ -238,6 +238,7 @@ test('Create execution lowers direct When controls into the canonical mutation b
   const parameters = {
     resource: 'modelRecord',
     operation: 'create',
+    recordOptions: { batchProcessing: false },
     spaceId: 'spc_test',
     recordType: 'event',
     modelRoute: '',
