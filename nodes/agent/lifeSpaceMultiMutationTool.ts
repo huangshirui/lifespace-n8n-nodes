@@ -144,6 +144,12 @@ function itemSchema(
   return buildAgentToolDefinition(model, singleConfig(config, operation)).schema;
 }
 
+function mutationInputGuidance(operation: AgentMutationOperation): string {
+  return operation === 'create'
+    ? ''
+    : ' Versions are resolved when omitted. Use stable record IDs; never guess them.';
+}
+
 export function buildMultiMutationDefinition(
   model: DiscoveryModel,
   config: AgentToolConfig,
@@ -154,10 +160,10 @@ export function buildMultiMutationDefinition(
   const plural = model.display.plural?.trim() || `${model.display.singular?.trim() || model.key}s`;
   const verb = operation === 'create' ? 'Create' : operation === 'update' ? 'Update' : 'Delete';
   const modeDescription = mode === 'bulk'
-    ? 'Each item succeeds or fails independently; partial success is preserved and LifeSpace returns one blk_* correlation.'
-    : 'All items commit together or roll back together in one cgs_* ChangeSet.';
+    ? 'Items commit independently; partial success is possible. Do not use when the user requires all-or-none. After partial failure, retry only failed items; never resend succeeded items.'
+    : 'All items in this Tool call commit or roll back together. Atomicity never spans Tool calls, operations, models, or Spaces.';
   const description = config.descriptionOverride?.trim()
-    || `${verb} 1-20 ${plural} in Space "${config.spaceName?.trim() || config.spaceId}" using LifeSpace ${mode === 'bulk' ? 'non-atomic Bulk' : 'Atomic Batch'}. ${modeDescription} Update/Delete versions are resolved set-wise by LifeSpace Core when omitted. Use stable record IDs; never guess them.`;
+    || `${verb} 1-20 ${plural} in Space "${config.spaceName?.trim() || config.spaceId}" using LifeSpace ${mode === 'bulk' ? 'non-atomic Bulk' : 'Atomic Batch'}. ${modeDescription}${mutationInputGuidance(operation)}`;
   return {
     name: `${single.name}_${mode}`,
     description,
