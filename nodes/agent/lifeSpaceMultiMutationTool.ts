@@ -11,7 +11,6 @@ import {
   buildAgentToolRequest,
   validateAgentToolInput,
   type AgentToolConfig,
-  type AgentToolOperation,
   type AgentToolSchema,
 } from './lifeSpaceToolFactory';
 
