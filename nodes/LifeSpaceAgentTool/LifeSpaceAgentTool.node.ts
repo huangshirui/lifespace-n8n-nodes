@@ -647,6 +647,7 @@ async function multiRuntime(
 }
 
 function selectedMultiMode(
+  context: AgentRuntimeContext,
   runtime: Awaited<ReturnType<typeof multiRuntime>>,
   semantic: unknown,
 ): { mode: Exclude<AgentMutationMode, 'single'>; semantic: unknown } {
@@ -659,7 +660,7 @@ function selectedMultiMode(
   delete input[runtime.atomicFromAiKey];
   if (rawAtomic !== undefined && typeof rawAtomic !== 'boolean') {
     throw new NodeOperationError(
-      (runtime as unknown as { context?: AgentRuntimeContext }).context?.getNode?.() ?? { name: 'LifeSpace Agent Tool' } as never,
+      context.getNode(),
       `LifeSpace Atomic Consistency Tool argument ${runtime.atomicFromAiKey} must be boolean`,
     );
   }
@@ -673,7 +674,7 @@ async function invokeMulti(
   delegationId: string,
 ): Promise<string> {
   const runtime = await multiRuntime(context, itemIndex);
-  const selected = selectedMultiMode(runtime, semantic);
+  const selected = selectedMultiMode(context, runtime, semantic);
   const executionContext = agentExecutionContext(context, itemIndex, '', delegationId);
   const authority = await executionAuthority(executionContext, itemIndex, 'write', { requireDelegation: false });
   const requester = async (options: IHttpRequestOptions) => lifeSpaceRequest(executionContext, authority, options);
