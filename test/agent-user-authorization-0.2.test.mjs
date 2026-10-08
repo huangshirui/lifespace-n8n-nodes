@@ -98,6 +98,7 @@ function context({
     spaceId: 'spc_test',
     recordType: snapshot(),
     operation: 'create',
+    recordOptions: { batchProcessing: false },
     queryMode: 'generic',
     capabilityQueryKey: '',
     actionKey: '',
