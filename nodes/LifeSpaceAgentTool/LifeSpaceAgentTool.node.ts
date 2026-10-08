@@ -65,7 +65,6 @@ const LEGACY_AUTH_PARAMETERS = new Set([
   'principalUserId',
   'delegationId',
   'readDelegationId',
-  'batchDelegationIds',
 ]);
 
 const USER_AUTH_RECOVERABLE_CODES = new Set([
@@ -163,7 +162,7 @@ function mutationModeProperty(): INodeProperties {
       {
         name: 'Single',
         value: 'single',
-        description: 'Mutate one record. This is the backward-compatible behavior for existing Agent Tools.',
+        description: 'Mutate one record.',
       },
       {
         name: 'Bulk',
@@ -204,7 +203,7 @@ function withRecordOnly(property: INodeProperties): INodeProperties {
 
 function agentProperties(properties: INodeProperties[]): INodeProperties[] {
   const projected = properties
-    .filter((property) => property.name !== 'queryMode' && property.name !== 'capabilityQueryKey')
+    .filter((property) => !['queryMode', 'capabilityQueryKey', 'batchDelegationIds'].includes(property.name))
     .map(internalOnly)
     .map(withRecordOnly);
 
@@ -233,7 +232,6 @@ function agentExecutionContext<T extends AgentRuntimeContext>(
         if (name === 'authorityMode') return 'delegatedAgent';
         if (name === 'principalUserId') return delegationId ? principalUserId : '';
         if (name === 'delegationId' || name === 'readDelegationId') return delegationId;
-        if (name === 'batchDelegationIds') return '[]';
         return target.getNodeParameter(
           name,
           requestedItemIndex ?? itemIndex,
@@ -273,10 +271,24 @@ function requiredAccess(
   snapshot: ReturnType<typeof decodeAgentToolSemanticSnapshot>,
 ): AuthorizationScope['maxAccess'] | null {
   if (operation === 'query') return 'read';
-  if (['create', 'batchCreate', 'update', 'delete'].includes(operation)) return 'write';
+  if (['create', 'update', 'delete'].includes(operation)) return 'write';
   if (operation !== 'action' || !snapshot) return null;
   const access = snapshot.model.actions.find((action) => action.key === actionKey)?.access;
   return access === 'read' || access === 'write' || access === 'manage' ? access : null;
+}
+
+function currentRecordOperation(
+  context: AgentRuntimeContext,
+  itemIndex: number,
+): string {
+  const operation = String(context.getNodeParameter('operation', itemIndex, 'query') ?? 'query');
+  if (operation === 'batchCreate') {
+    throw new NodeOperationError(
+      context.getNode(),
+      'Legacy Agent Tool operation batchCreate is no longer supported. Select Create and choose Bulk or Atomic Batch in Mutation Mode.',
+    );
+  }
+  return operation;
 }
 
 function authorizationScope(
@@ -300,7 +312,7 @@ function authorizationScope(
 
   const snapshot = decodeAgentToolSemanticSnapshot(context.getNodeParameter('recordType', itemIndex, ''));
   if (!snapshot) return null;
-  const operation = String(context.getNodeParameter('operation', itemIndex, '') ?? '');
+  const operation = currentRecordOperation(context, itemIndex);
   const actionKey = String(context.getNodeParameter('actionKey', itemIndex, '') ?? '').trim();
   const access = requiredAccess(operation, actionKey, snapshot);
   if (!access) return null;
@@ -522,7 +534,7 @@ async function multiRuntime(
   if (!snapshot || snapshot.spaceId !== spaceId) {
     throw new NodeOperationError(context.getNode(), 'This LifeSpace Agent Tool has no valid saved semantic contract. Reselect Record Type and save the workflow.');
   }
-  const operation = String(context.getNodeParameter('operation', itemIndex, 'create') ?? 'create') as AgentMutationOperation;
+  const operation = currentRecordOperation(context, itemIndex) as AgentMutationOperation;
   if (!['create', 'update', 'delete'].includes(operation)) {
     throw new NodeOperationError(context.getNode(), 'Mutation Mode is supported only for create/update/delete');
   }
@@ -738,7 +750,7 @@ export class LifeSpaceAgentTool extends LifeSpaceTool {
       };
     }
 
-    const operation = String(this.getNodeParameter('operation', itemIndex, 'query') ?? 'query');
+    const operation = currentRecordOperation(this, itemIndex);
     const mutationMode = String(this.getNodeParameter('mutationMode', itemIndex, 'single') ?? 'single');
     if (['create', 'update', 'delete'].includes(operation) && mutationMode !== 'single') {
       const runtime = await multiRuntime(this, itemIndex);
@@ -784,7 +796,7 @@ export class LifeSpaceAgentTool extends LifeSpaceTool {
     const items = this.getInputData();
     if (!items.length) return [[]];
     const resource = String(this.getNodeParameter('toolResource', 0, 'record') ?? 'record');
-    const operation = String(this.getNodeParameter('operation', 0, 'query') ?? 'query');
+    const operation = resource === 'person' ? 'query' : currentRecordOperation(this, 0);
     const mutationMode = String(this.getNodeParameter('mutationMode', 0, 'single') ?? 'single');
     const custom = resource === 'person'
       || (['create', 'update', 'delete'].includes(operation) && mutationMode !== 'single');
