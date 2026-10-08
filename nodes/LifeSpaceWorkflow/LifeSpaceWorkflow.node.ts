@@ -416,6 +416,14 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
       continue;
     }
 
+    if (property.name === 'recordOptions') {
+      result.push({
+        ...property,
+        default: { batchProcessing: true },
+      });
+      continue;
+    }
+
     if (property.name === 'options') {
       result.push({
         ...property,
@@ -440,6 +448,19 @@ function canonicalOnlyExecutionContext(context: IExecuteFunctions): IExecuteFunc
         if (name === 'queryMode') {
           const operation = String(context.getNodeParameter('operation', itemIndex, '') ?? '');
           if (operation === 'list') return 'canonical';
+        }
+        if (name === 'recordOptions') {
+          const configured = target.getNodeParameter(name, itemIndex, fallback as never, options as never) as IDataObject;
+          const resource = String(context.getNodeParameter('resource', itemIndex, '') ?? '');
+          const operation = String(context.getNodeParameter('operation', itemIndex, '') ?? '');
+          if (
+            resource === 'modelRecord'
+            && ['create', 'update', 'delete'].includes(operation)
+            && configured.batchProcessing === undefined
+          ) {
+            return { ...configured, batchProcessing: true };
+          }
+          return configured;
         }
         return target.getNodeParameter(name, itemIndex, fallback as never, options as never);
       };
