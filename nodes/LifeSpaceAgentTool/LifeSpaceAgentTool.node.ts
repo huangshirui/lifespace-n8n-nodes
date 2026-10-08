@@ -9,6 +9,7 @@ import type {
 } from 'n8n-workflow';
 import {
   NodeConnectionTypes,
+  NodeOperationError,
   nodeNameToToolName,
 } from 'n8n-workflow';
 import {
@@ -419,15 +420,15 @@ function requestOptions(baseUrl: string, request: AgentToolRequest): IHttpReques
 
 function currentVersion(context: AgentRuntimeContext, response: unknown): number {
   if (!response || typeof response !== 'object' || Array.isArray(response)) {
-    throw new Error('LifeSpace current-resource lookup returned an invalid response');
+    throw new NodeOperationError(context.getNode(), 'LifeSpace current-resource lookup returned an invalid response');
   }
   const data = (response as { data?: unknown }).data;
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    throw new Error('LifeSpace current-resource lookup returned an invalid data envelope');
+    throw new NodeOperationError(context.getNode(), 'LifeSpace current-resource lookup returned an invalid data envelope');
   }
   const version = (data as { version?: unknown }).version;
   if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
-    throw new Error('LifeSpace current-resource lookup did not expose a usable version');
+    throw new NodeOperationError(context.getNode(), 'LifeSpace current-resource lookup did not expose a usable version');
   }
   return version;
 }
@@ -519,12 +520,16 @@ async function multiRuntime(
   const spaceId = String(context.getNodeParameter('spaceId', itemIndex, '') ?? '').trim();
   const snapshot = decodeAgentToolSemanticSnapshot(context.getNodeParameter('recordType', itemIndex, ''));
   if (!snapshot || snapshot.spaceId !== spaceId) {
-    throw new Error('This LifeSpace Agent Tool has no valid saved semantic contract. Reselect Record Type and save the workflow.');
+    throw new NodeOperationError(context.getNode(), 'This LifeSpace Agent Tool has no valid saved semantic contract. Reselect Record Type and save the workflow.');
   }
   const operation = String(context.getNodeParameter('operation', itemIndex, 'create') ?? 'create') as AgentMutationOperation;
-  if (!['create', 'update', 'delete'].includes(operation)) throw new Error('Mutation Mode is supported only for create/update/delete');
+  if (!['create', 'update', 'delete'].includes(operation)) {
+    throw new NodeOperationError(context.getNode(), 'Mutation Mode is supported only for create/update/delete');
+  }
   const mode = String(context.getNodeParameter('mutationMode', itemIndex, 'single') ?? 'single') as AgentMutationMode;
-  if (mode !== 'bulk' && mode !== 'atomic') throw new Error('LifeSpace multi-mutation requires Bulk or Atomic Batch mode');
+  if (mode !== 'bulk' && mode !== 'atomic') {
+    throw new NodeOperationError(context.getNode(), 'LifeSpace multi-mutation requires Bulk or Atomic Batch mode');
+  }
   const config: AgentToolConfig = {
     spaceId,
     spaceName: snapshot.spaceName,
