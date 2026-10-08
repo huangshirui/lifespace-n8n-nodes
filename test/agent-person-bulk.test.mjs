@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { join } from 'node:path';
 import test from 'node:test';
 
 const require = createRequire(import.meta.url);
@@ -7,6 +9,30 @@ const { LifeSpaceAgentTool } = require('../dist/nodes/LifeSpaceAgentTool/LifeSpa
 const { encodeAgentToolSemanticSnapshot } = require('../dist/nodes/agent/lifeSpaceToolSnapshot.js');
 
 const BASE_URL = 'https://core.example.invalid/api/v1';
+
+async function emitAgentToolContract(fileName, tool) {
+  const directory = process.env.LIFESPACE_AGENT_TOOL_CONTRACT_DIR?.trim();
+  if (!directory) return;
+  await mkdir(directory, { recursive: true });
+  const structuralTool = {
+    name: tool.name,
+    description: tool.description,
+    schema: tool.schema,
+  };
+  const openAiFunctionTool = {
+    type: 'function',
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.schema,
+    },
+  };
+  await writeFile(
+    join(directory, fileName),
+    JSON.stringify({ structuralTool, openAiFunctionTool }, null, 2) + '\n',
+    'utf8',
+  );
+}
 
 function runtimeModel() {
   return {
@@ -111,6 +137,7 @@ test('Agent Tool exposes Person as a first-class resource and performs bounded s
     return { data: { items: [{ id: 'per_1', displayName: '王老师', alternateNames: ['班主任'], version: 1 }], nextCursor: null } };
   });
   const tool = (await node.supplyData.call(execution, 0)).response;
+  await emitAgentToolContract('person-list.json', tool);
   assert.equal(tool.metadata.lifeSpaceResource, 'person');
   assert.ok(tool.schema.properties.search);
   const result = JSON.parse(await tool.invoke({ search: '王', limit: 20 }));
@@ -184,6 +211,7 @@ test('Record Bulk Create uses non-atomic /models/bulk and direct Agent Authority
     };
   });
   const tool = (await new LifeSpaceAgentTool().supplyData.call(execution, 0)).response;
+  await emitAgentToolContract('record-bulk-create.json', tool);
   assert.equal(tool.metadata.lifeSpaceMutationMode, 'bulk');
   assert.equal(tool.schema.properties.items.maxItems, 20);
   const result = JSON.parse(await tool.invoke({ items: [{ name: 'One' }, { name: 'Two', status: 'open' }] }));
@@ -212,6 +240,7 @@ test('Record Atomic Batch Update relies on Core set-wise version resolution', as
     };
   });
   const tool = (await new LifeSpaceAgentTool().supplyData.call(execution, 0)).response;
+  await emitAgentToolContract('record-atomic-update.json', tool);
   const result = JSON.parse(await tool.invoke({
     items: [
       { recordId: 'rec_1', status: 'done' },
