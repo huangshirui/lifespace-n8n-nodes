@@ -683,7 +683,12 @@ function wrapOptionalAuthorization(
           },
         });
       }
-      const output = await invokeWithDelegation(semantic, delegationId);
+      let output: string;
+      try {
+        output = await invokeWithDelegation(semantic, delegationId);
+      } catch (error) {
+        output = structuredFailure(error);
+      }
       return withAuthorizationRequired(output, authorizationScope(context, itemIndex, semantic));
     },
   };
