@@ -60,6 +60,12 @@ type CustomToolRuntime = {
   requiredAccess: 'read' | 'write';
 };
 
+type AgentRecordBatchSettings = {
+  batchProcessing: boolean;
+  atomicConsistency: boolean;
+  atomicFromAiKey: string | null;
+};
+
 const LEGACY_AUTH_PARAMETERS = new Set([
   'authorityMode',
   'principalUserId',
@@ -73,6 +79,8 @@ const USER_AUTH_RECOVERABLE_CODES = new Set([
   'DELEGATION_SCOPE_INSUFFICIENT',
   'PRINCIPAL_AUTHORITY_INSUFFICIENT',
 ]);
+
+const FROM_AI_KEY = /\$fromAI\s*\(\s*(['"])([A-Za-z0-9_-]{1,64})\1/u;
 
 function internalOnly(property: INodeProperties): INodeProperties {
   if (!LEGACY_AUTH_PARAMETERS.has(property.name)) return property;
@@ -146,12 +154,13 @@ function personOperationProperty(): INodeProperties {
   };
 }
 
-function mutationModeProperty(): INodeProperties {
+function recordOptionsProperty(): INodeProperties {
   return {
-    displayName: 'Mutation Mode',
-    name: 'mutationMode',
-    type: 'options',
-    noDataExpression: true,
+    displayName: 'Options',
+    name: 'recordOptions',
+    type: 'collection',
+    placeholder: 'Add Option',
+    default: { batchProcessing: true },
     displayOptions: {
       show: {
         toolResource: ['record'],
@@ -160,22 +169,21 @@ function mutationModeProperty(): INodeProperties {
     },
     options: [
       {
-        name: 'Single',
-        value: 'single',
-        description: 'Mutate one record',
+        displayName: 'Batch Processing',
+        name: 'batchProcessing',
+        type: 'boolean',
+        default: true,
+        noDataExpression: true,
+        description: 'Whether to group 1-20 Tool items into one LifeSpace request. Defaults on. When enabled without Atomic Consistency, items succeed or fail independently and partial success is preserved.',
       },
       {
-        name: 'Bulk',
-        value: 'bulk',
-        description: 'Mutate 1-20 records in one non-atomic LifeSpace Bulk request. Items succeed or fail independently and partial success is preserved.',
-      },
-      {
-        name: 'Atomic Batch',
-        value: 'atomic',
-        description: 'Mutate 1-20 records in one atomic LifeSpace Batch. All items commit or the whole request rolls back.',
+        displayName: 'Atomic Consistency',
+        name: 'atomicConsistency',
+        type: 'boolean',
+        default: false,
+        description: 'Whether all items must commit together or roll back together. Leave off for normal independent Bulk processing. In an AI Agent workflow, use n8n\'s “Let the model define this parameter” control only when the Agent should decide per Tool call whether the user\'s intent requires all-or-none semantics.',
       },
     ],
-    default: 'single',
   };
 }
 
@@ -214,8 +222,7 @@ function agentProperties(properties: INodeProperties[]): INodeProperties[] {
   const actualSpaceIndex = projected.findIndex((property) => property.name === 'spaceId');
   projected.splice(actualSpaceIndex + 1, 0, personOperationProperty());
 
-  const operationIndex = projected.findIndex((property) => property.name === 'operation');
-  if (operationIndex >= 0) projected.splice(operationIndex + 1, 0, mutationModeProperty());
+  projected.push(recordOptionsProperty());
   return projected;
 }
 
@@ -285,10 +292,42 @@ function currentRecordOperation(
   if (operation === 'batchCreate') {
     throw new NodeOperationError(
       context.getNode(),
-      'Legacy Agent Tool operation batchCreate is no longer supported. Select Create and choose Bulk or Atomic Batch in Mutation Mode.',
+      'Legacy Agent Tool operation batchCreate is no longer supported. Select Create and configure Batch Processing / Atomic Consistency under Options.',
     );
   }
   return operation;
+}
+
+function rawRecordOptions(context: AgentRuntimeContext): Record<string, unknown> {
+  const node = context.getNode() as unknown as { parameters?: Record<string, unknown> };
+  const raw = node.parameters?.recordOptions;
+  return raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? raw as Record<string, unknown>
+    : {};
+}
+
+function fromAiKey(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  return FROM_AI_KEY.exec(value)?.[2] ?? null;
+}
+
+function recordBatchSettings(
+  context: AgentRuntimeContext,
+  itemIndex: number,
+): AgentRecordBatchSettings {
+  const raw = rawRecordOptions(context);
+  const atomicFromAiKey = fromAiKey(raw.atomicConsistency);
+  const evaluated = atomicFromAiKey
+    ? {} as IDataObject
+    : context.getNodeParameter('recordOptions', itemIndex, {}) as IDataObject;
+  const batchValue = raw.batchProcessing ?? evaluated.batchProcessing;
+  return {
+    batchProcessing: batchValue === undefined ? true : batchValue === true,
+    atomicConsistency: atomicFromAiKey
+      ? false
+      : raw.atomicConsistency === true || evaluated.atomicConsistency === true,
+    atomicFromAiKey,
+  };
 }
 
 function authorizationScope(
@@ -316,12 +355,14 @@ function authorizationScope(
   const actionKey = String(context.getNodeParameter('actionKey', itemIndex, '') ?? '').trim();
   const access = requiredAccess(operation, actionKey, snapshot);
   if (!access) return null;
-  const mutationMode = String(context.getNodeParameter('mutationMode', itemIndex, 'single') ?? 'single');
+  const batchProcessing = ['create', 'update', 'delete'].includes(operation)
+    ? recordBatchSettings(context, itemIndex).batchProcessing
+    : false;
   const input = semantic && typeof semantic === 'object' && !Array.isArray(semantic)
     ? semantic as Record<string, unknown>
     : {};
   const recordId = String(input.recordId ?? '').trim();
-  const recordScoped = mutationMode === 'single'
+  const recordScoped = !batchProcessing
     && ['update', 'delete', 'action'].includes(operation)
     && /^rec_[A-Za-z0-9_-]+$/u.test(recordId);
   const scope: AuthorizationScope = recordScoped
@@ -520,6 +561,19 @@ async function personRuntime(
   };
 }
 
+function dynamicAtomicDescription(
+  model: NonNullable<ReturnType<typeof decodeAgentToolSemanticSnapshot>>['model'],
+  config: AgentToolConfig,
+  operation: AgentMutationOperation,
+  key: string,
+): string {
+  const plural = model.display.plural?.trim() || `${model.display.singular?.trim() || model.key}s`;
+  const verb = operation === 'create' ? 'Create' : operation === 'update' ? 'Update' : 'Delete';
+  const base = config.descriptionOverride?.trim()
+    || `${verb} 1-20 ${plural} in Space "${config.spaceName?.trim() || config.spaceId}". By default LifeSpace uses non-atomic Bulk, so each item succeeds or fails independently and partial success is preserved.`;
+  return `${base} The boolean Tool argument "${key}" controls Atomic Consistency for this call. Omit it or set false for normal Bulk. Set it true only when the user's intent requires the entire set to be one indivisible business change: all items must commit together or all must roll back. Do not choose atomic merely because multiple items are present. Update/Delete versions are resolved set-wise by LifeSpace Core when omitted. Use stable record IDs; never guess them.`;
+}
+
 async function multiRuntime(
   context: AgentRuntimeContext,
   itemIndex: number,
@@ -528,6 +582,7 @@ async function multiRuntime(
   config: AgentToolConfig;
   operation: AgentMutationOperation;
   mode: Exclude<AgentMutationMode, 'single'>;
+  atomicFromAiKey: string | null;
 }> {
   const spaceId = String(context.getNodeParameter('spaceId', itemIndex, '') ?? '').trim();
   const snapshot = decodeAgentToolSemanticSnapshot(context.getNodeParameter('recordType', itemIndex, ''));
@@ -536,12 +591,13 @@ async function multiRuntime(
   }
   const operation = currentRecordOperation(context, itemIndex) as AgentMutationOperation;
   if (!['create', 'update', 'delete'].includes(operation)) {
-    throw new NodeOperationError(context.getNode(), 'Mutation Mode is supported only for create/update/delete');
+    throw new NodeOperationError(context.getNode(), 'Batch Processing is supported only for create/update/delete');
   }
-  const mode = String(context.getNodeParameter('mutationMode', itemIndex, 'single') ?? 'single') as AgentMutationMode;
-  if (mode !== 'bulk' && mode !== 'atomic') {
-    throw new NodeOperationError(context.getNode(), 'LifeSpace multi-mutation requires Bulk or Atomic Batch mode');
+  const batchSettings = recordBatchSettings(context, itemIndex);
+  if (!batchSettings.batchProcessing) {
+    throw new NodeOperationError(context.getNode(), 'LifeSpace multi-mutation requires Batch Processing to be enabled');
   }
+  const mode: Exclude<AgentMutationMode, 'single'> = batchSettings.atomicConsistency ? 'atomic' : 'bulk';
   const config: AgentToolConfig = {
     spaceId,
     spaceName: snapshot.spaceName,
@@ -553,23 +609,61 @@ async function multiRuntime(
     viewingTimezone: context.getTimezone(),
   };
   const definition = buildMultiMutationDefinition(snapshot.model, config, operation, mode);
+  const atomicFromAiKey = batchSettings.atomicFromAiKey;
+  const schema = atomicFromAiKey
+    ? {
+      ...definition.schema,
+      properties: {
+        ...definition.schema.properties,
+        [atomicFromAiKey]: {
+          type: 'boolean',
+          default: false,
+          description: 'Set true only when the user intends all mutation items to form one indivisible business change that must all succeed or all roll back. Leave false or omit for normal Bulk with independent per-item outcomes.',
+        },
+      },
+    } satisfies AgentToolSchema
+    : definition.schema;
   return {
     baseUrl: await agentBaseUrl(context, itemIndex),
     spaceId,
-    schema: definition.schema,
+    schema,
     name: definition.name,
-    description: definition.description,
+    description: atomicFromAiKey
+      ? dynamicAtomicDescription(snapshot.model, config, operation, atomicFromAiKey)
+      : definition.description,
     metadata: {
       lifeSpaceModelVersion: snapshot.model.version,
       lifeSpaceSchemaHash: snapshot.model.schemaHash,
-      lifeSpaceMutationMode: mode,
+      lifeSpaceMutationMode: atomicFromAiKey ? 'agent-controlled' : mode,
+      ...(atomicFromAiKey ? { lifeSpaceAtomicConsistencyArgument: atomicFromAiKey } : {}),
     },
     requiredAccess: 'write',
     model: snapshot.model,
     config,
     operation,
     mode,
+    atomicFromAiKey,
   };
+}
+
+function selectedMultiMode(
+  runtime: Awaited<ReturnType<typeof multiRuntime>>,
+  semantic: unknown,
+): { mode: Exclude<AgentMutationMode, 'single'>; semantic: unknown } {
+  if (!runtime.atomicFromAiKey) return { mode: runtime.mode, semantic };
+  if (!semantic || typeof semantic !== 'object' || Array.isArray(semantic)) {
+    return { mode: 'bulk', semantic };
+  }
+  const input = { ...(semantic as Record<string, unknown>) };
+  const rawAtomic = input[runtime.atomicFromAiKey];
+  delete input[runtime.atomicFromAiKey];
+  if (rawAtomic !== undefined && typeof rawAtomic !== 'boolean') {
+    throw new NodeOperationError(
+      (runtime as unknown as { context?: AgentRuntimeContext }).context?.getNode?.() ?? { name: 'LifeSpace Agent Tool' } as never,
+      `LifeSpace Atomic Consistency Tool argument ${runtime.atomicFromAiKey} must be boolean`,
+    );
+  }
+  return { mode: rawAtomic === true ? 'atomic' : 'bulk', semantic: input };
 }
 
 async function invokeMulti(
@@ -579,6 +673,7 @@ async function invokeMulti(
   delegationId: string,
 ): Promise<string> {
   const runtime = await multiRuntime(context, itemIndex);
+  const selected = selectedMultiMode(runtime, semantic);
   const executionContext = agentExecutionContext(context, itemIndex, '', delegationId);
   const authority = await executionAuthority(executionContext, itemIndex, 'write', { requireDelegation: false });
   const requester = async (options: IHttpRequestOptions) => lifeSpaceRequest(executionContext, authority, options);
@@ -589,14 +684,14 @@ async function invokeMulti(
     runtime.config,
     runtime.operation,
     runtime.schema,
-    semantic,
+    selected.semantic,
     requester,
   );
   const request = buildMultiMutationRequest(
     runtime.model,
     runtime.config,
     runtime.operation,
-    runtime.mode,
+    selected.mode,
     prepared,
     authority.mode === 'delegatedAgent' ? authority.delegationId ?? '' : '',
   );
@@ -751,8 +846,10 @@ export class LifeSpaceAgentTool extends LifeSpaceTool {
     }
 
     const operation = currentRecordOperation(this, itemIndex);
-    const mutationMode = String(this.getNodeParameter('mutationMode', itemIndex, 'single') ?? 'single');
-    if (['create', 'update', 'delete'].includes(operation) && mutationMode !== 'single') {
+    const batchSettings = ['create', 'update', 'delete'].includes(operation)
+      ? recordBatchSettings(this, itemIndex)
+      : null;
+    if (batchSettings?.batchProcessing) {
       const runtime = await multiRuntime(this, itemIndex);
       const direct = customTool(
         this,
@@ -797,9 +894,10 @@ export class LifeSpaceAgentTool extends LifeSpaceTool {
     if (!items.length) return [[]];
     const resource = String(this.getNodeParameter('toolResource', 0, 'record') ?? 'record');
     const operation = resource === 'person' ? 'query' : currentRecordOperation(this, 0);
-    const mutationMode = String(this.getNodeParameter('mutationMode', 0, 'single') ?? 'single');
-    const custom = resource === 'person'
-      || (['create', 'update', 'delete'].includes(operation) && mutationMode !== 'single');
+    const batchSettings = resource === 'record' && ['create', 'update', 'delete'].includes(operation)
+      ? recordBatchSettings(this, 0)
+      : null;
+    const custom = resource === 'person' || batchSettings?.batchProcessing === true;
     if (!custom) return await LifeSpaceTool.prototype.execute.call(this);
 
     const output: INodeExecutionData[] = [];
