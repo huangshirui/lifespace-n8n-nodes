@@ -7,11 +7,11 @@ const { LifeSpaceAgentTool } = require('../dist/nodes/LifeSpaceAgentTool/LifeSpa
 
 const CORE_BASE = 'https://core.example.com/api/v1';
 
-function loadOptionsContext() {
+function loadOptionsContext(readDelegationId = '') {
   const calls = [];
   const parameters = {
     authorityMode: 'delegatedAgent',
-    readDelegationId: '',
+    readDelegationId,
     operation: 'query',
     spaceId: '',
     recordType: '',
@@ -60,9 +60,9 @@ function loadOptionsContext() {
   };
 }
 
-test('Agent Tool Space options use direct Agent authority when no read Delegation is configured', async () => {
+async function assertDirectEditorDiscovery(readDelegationId = '') {
   const node = new LifeSpaceAgentTool();
-  const context = loadOptionsContext();
+  const context = loadOptionsContext(readDelegationId);
 
   const options = await node.methods.loadOptions.getSpaces.call(context);
 
@@ -71,4 +71,12 @@ test('Agent Tool Space options use direct Agent authority when no read Delegatio
   assert.equal(context.calls[0].options.method, 'GET');
   assert.equal(context.calls[0].options.url, `${CORE_BASE}/me/_discovery/inventory`);
   assert.equal(context.calls[0].options.headers?.['X-LifeSpace-Delegation-Id'], undefined);
+}
+
+test('Agent Tool Space options use direct Agent authority without a Delegation', async () => {
+  await assertDirectEditorDiscovery();
+});
+
+test('Agent Tool editor Discovery ignores stale read Delegation selectors', async () => {
+  await assertDirectEditorDiscovery('dlg_stale_legacy_value');
 });
