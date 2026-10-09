@@ -103,8 +103,9 @@ export async function delegatedAgentAuthority(
   const delegationParameter = options.delegationParameter ?? 'delegationId';
   const isDesignTime = typeof (context as ILoadOptionsFunctions).getCurrentNodeParameter === 'function';
   const designTimeDiscovery = isDesignTime && delegationParameter === 'readDelegationId';
-  const configuredDelegation = String(nodeParameter(context, delegationParameter, itemIndex, '') ?? '').trim();
-  const delegationValue = designTimeDiscovery ? '' : configuredDelegation;
+  const delegationValue = designTimeDiscovery
+    ? ''
+    : String(nodeParameter(context, delegationParameter, itemIndex, '') ?? '').trim();
 
   if (delegationValue && !/^dlg_[A-Za-z0-9_-]+$/u.test(delegationValue)) {
     throw new NodeOperationError(context.getNode(), 'Delegation ID must be a valid dlg_* identifier');
