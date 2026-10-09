@@ -1,0 +1,40 @@
+name: Prepare 0.2.2 version metadata
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  bump-version:
+    if: github.head_ref == 'fix/agent-discovery-direct-authority'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24.20.0'
+
+      - name: Bump package metadata to 0.2.2
+        run: npm version 0.2.2 --no-git-tag-version --allow-same-version
+
+      - name: Remove one-shot workflow and commit
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/prepare-0.2.2.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "chore(release): prepare 0.2.2"
+          git push origin "HEAD:${HEAD_REF}"
