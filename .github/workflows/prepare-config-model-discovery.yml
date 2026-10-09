@@ -49,6 +49,41 @@ jobs:
       - name: Apply deterministic patch
         run: node scripts/prepare-config-model-discovery.mjs
 
+      - name: Preserve legacy batchCreate rejection ordering
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('nodes/LifeSpaceAgentTool/LifeSpaceAgentTool.node.ts')
+          content = path.read_text()
+          old_supply = """    const resource = String(this.getNodeParameter('toolResource', itemIndex, 'record') ?? 'record');
+    const runtimeContext: ISupplyDataFunctions = resource === 'record'
+      ? await agentRecordExecutionContext(this, itemIndex)
+      : this;
+"""
+          new_supply = """    const resource = String(this.getNodeParameter('toolResource', itemIndex, 'record') ?? 'record');
+    if (resource === 'record') currentRecordOperation(this, itemIndex);
+    const runtimeContext: ISupplyDataFunctions = resource === 'record'
+      ? await agentRecordExecutionContext(this, itemIndex)
+      : this;
+"""
+          old_execute = """    const resource = String(this.getNodeParameter('toolResource', 0, 'record') ?? 'record');
+    const runtimeContext: IExecuteFunctions = resource === 'record'
+      ? await agentRecordExecutionContext(this, 0)
+      : this;
+"""
+          new_execute = """    const resource = String(this.getNodeParameter('toolResource', 0, 'record') ?? 'record');
+    if (resource === 'record') currentRecordOperation(this, 0);
+    const runtimeContext: IExecuteFunctions = resource === 'record'
+      ? await agentRecordExecutionContext(this, 0)
+      : this;
+"""
+          if content.count(old_supply) != 1 or content.count(old_execute) != 1:
+              raise SystemExit('could not find normalized Agent runtime context anchors')
+          content = content.replace(old_supply, new_supply).replace(old_execute, new_execute)
+          path.write_text(content)
+          PY
+
       - name: Install dependencies
         run: npm ci
 
