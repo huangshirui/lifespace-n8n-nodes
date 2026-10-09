@@ -6,6 +6,7 @@ on:
       - fix/config-model-discovery
     paths:
       - scripts/prepare-config-model-discovery.mjs
+      - scripts/run-config-model-discovery-preparation.mjs
       - .github/workflows/prepare-config-model-discovery.yml
 
 permissions:
@@ -28,61 +29,8 @@ jobs:
       - name: Install pinned npm
         run: npm install --global npm@11.15.0
 
-      - name: Repair one-shot script quoting
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('scripts/prepare-config-model-discovery.mjs')
-          lines = path.read_text().splitlines()
-          replacement = "    content = content.replace(marker, marker + '\\n> **Configuration selectors are not Authority.** In the Agent Tool, Space may be selected from currently reachable Spaces or entered directly as a stable spc_* ID. Record Type may be selected or entered as a stable model key; its static semantics come from LifeSpace configuration model discovery (Credential Scope × Application × Model Access × published model capability), not from a current Space Data Grant. Every actual read/write/action still rechecks current Direct Agent Authority or an explicit User Delegation.\\n\\n');"
-          matches = 0
-          for index, line in enumerate(lines):
-              if 'content = content.replace(marker,' in line:
-                  lines[index] = replacement
-                  matches += 1
-          if matches != 1:
-              raise SystemExit(f'expected one README replacement line, found {matches}')
-          path.write_text('\n'.join(lines) + '\n')
-          PY
-
       - name: Apply deterministic patch
-        run: node scripts/prepare-config-model-discovery.mjs
-
-      - name: Preserve legacy batchCreate rejection ordering
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('nodes/LifeSpaceAgentTool/LifeSpaceAgentTool.node.ts')
-          content = path.read_text()
-          old_supply = """    const resource = String(this.getNodeParameter('toolResource', itemIndex, 'record') ?? 'record');
-    const runtimeContext: ISupplyDataFunctions = resource === 'record'
-      ? await agentRecordExecutionContext(this, itemIndex)
-      : this;
-"""
-          new_supply = """    const resource = String(this.getNodeParameter('toolResource', itemIndex, 'record') ?? 'record');
-    if (resource === 'record') currentRecordOperation(this, itemIndex);
-    const runtimeContext: ISupplyDataFunctions = resource === 'record'
-      ? await agentRecordExecutionContext(this, itemIndex)
-      : this;
-"""
-          old_execute = """    const resource = String(this.getNodeParameter('toolResource', 0, 'record') ?? 'record');
-    const runtimeContext: IExecuteFunctions = resource === 'record'
-      ? await agentRecordExecutionContext(this, 0)
-      : this;
-"""
-          new_execute = """    const resource = String(this.getNodeParameter('toolResource', 0, 'record') ?? 'record');
-    if (resource === 'record') currentRecordOperation(this, 0);
-    const runtimeContext: IExecuteFunctions = resource === 'record'
-      ? await agentRecordExecutionContext(this, 0)
-      : this;
-"""
-          if content.count(old_supply) != 1 or content.count(old_execute) != 1:
-              raise SystemExit('could not find normalized Agent runtime context anchors')
-          content = content.replace(old_supply, new_supply).replace(old_execute, new_execute)
-          path.write_text(content)
-          PY
+        run: node scripts/run-config-model-discovery-preparation.mjs
 
       - name: Install dependencies
         run: npm ci
@@ -96,6 +44,7 @@ jobs:
       - name: Remove one-shot preparation files
         run: |
           rm scripts/prepare-config-model-discovery.mjs
+          rm scripts/run-config-model-discovery-preparation.mjs
           rm .github/workflows/prepare-config-model-discovery.yml
 
       - name: Commit prepared changes
