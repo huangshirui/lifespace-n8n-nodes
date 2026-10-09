@@ -371,6 +371,24 @@ type SemanticDetailResponse = {
   data: SemanticDetail;
 };
 
+type ConfigurationInventoryModel = InventoryModel & {
+  access: DiscoveryAccess[];
+};
+
+type ConfigurationInventoryResponse = {
+  data: {
+    semanticDetailPathTemplate: string;
+    models: ConfigurationInventoryModel[];
+  };
+};
+
+type ConfigurationSemanticDetailResponse = {
+  data: {
+    access: DiscoveryAccess[];
+    model: SemanticDetail;
+  };
+};
+
 export type DiscoveryTransport = {
   baseUrl: string;
   request: (options: IHttpRequestOptions) => Promise<unknown>;
@@ -608,6 +626,66 @@ export async function loadDesignTimeSemanticDetail(
   }
 
   return detailedModel(detail, identity.access);
+}
+
+export async function loadConfigurationModelInventory(
+  context: ILoadOptionsFunctions | IExecuteFunctions | ISupplyDataFunctions,
+  transport: DiscoveryTransport,
+): Promise<DiscoveryModel[]> {
+  let response: ConfigurationInventoryResponse;
+  try {
+    response = await authenticatedGet<ConfigurationInventoryResponse>(
+      context,
+      transport.baseUrl,
+      '/me/_discovery/models',
+      transport,
+    );
+  } catch (error) {
+    throw new NodeApiError(context.getNode(), error as JsonObject);
+  }
+
+  if (!response?.data || !Array.isArray(response.data.models)) {
+    throw new NodeOperationError(
+      context.getNode(),
+      'LifeSpace configuration model discovery returned an invalid response',
+    );
+  }
+
+  return response.data.models.map((identity) => stubModel(identity, identity.access));
+}
+
+export async function loadConfigurationModelSemanticDetail(
+  context: ILoadOptionsFunctions | IExecuteFunctions | ISupplyDataFunctions,
+  modelKey: string,
+  transport: DiscoveryTransport,
+): Promise<DiscoveryModel> {
+  let response: ConfigurationSemanticDetailResponse;
+  try {
+    response = await authenticatedGet<ConfigurationSemanticDetailResponse>(
+      context,
+      transport.baseUrl,
+      `/me/_discovery/models/${encodeURIComponent(modelKey)}`,
+      transport,
+    );
+  } catch (error) {
+    throw new NodeApiError(context.getNode(), error as JsonObject);
+  }
+
+  const detail = response?.data?.model;
+  const access = response?.data?.access;
+  if (
+    !detail
+    || detail.key !== modelKey
+    || !Array.isArray(access)
+    || access.some((value) => !['read', 'write', 'manage'].includes(value))
+  ) {
+    throw new NodeOperationError(
+      context.getNode(),
+      `LifeSpace configuration model discovery returned invalid semantic detail for ${modelKey}`,
+    );
+  }
+
+  return detailedModel(detail, access);
 }
 
 async function requestProgressiveRuntimeDiscovery(
