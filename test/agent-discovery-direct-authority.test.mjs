@@ -60,6 +60,8 @@ function loadOptionsContext(readDelegationId = '') {
   };
 }
 
+// Editor configuration happens before any User Authorization can produce a dlg_*.
+// Every Discovery request in this context must therefore remain direct Agent execution.
 async function assertDirectEditorDiscovery(readDelegationId = '') {
   const node = new LifeSpaceAgentTool();
   const context = loadOptionsContext(readDelegationId);
