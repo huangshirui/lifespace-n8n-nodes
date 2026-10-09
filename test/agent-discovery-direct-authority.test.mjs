@@ -73,10 +73,10 @@ async function assertDirectEditorDiscovery(readDelegationId = '') {
   assert.equal(context.calls[0].options.headers?.['X-LifeSpace-Delegation-Id'], undefined);
 }
 
-test('Agent Tool Space options use direct Agent authority without a Delegation', async () => {
+test('Agent Tool configuration Discovery uses direct Agent authority without a Delegation', async () => {
   await assertDirectEditorDiscovery();
 });
 
-test('Agent Tool editor Discovery ignores stale read Delegation selectors', async () => {
+test('Agent Tool configuration Discovery never reuses a stale legacy read Delegation', async () => {
   await assertDirectEditorDiscovery('dlg_stale_legacy_value');
 });
