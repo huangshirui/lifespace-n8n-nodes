@@ -101,7 +101,12 @@ export async function delegatedAgentAuthority(
   if (delegationValue && !/^dlg_[A-Za-z0-9_-]+$/u.test(delegationValue)) {
     throw new NodeOperationError(context.getNode(), 'Delegation ID must be a valid dlg_* identifier');
   }
-  if (!delegationValue && options.requireDelegation === true) {
+
+  // Since 0.2.0, discovery/helper reads may execute with direct Agent authority.
+  // A configured readDelegationId still selects represented User/Agent execution,
+  // but its absence must not make the Agent Tool editor unusable.
+  const helperReadMayUseDirectAgent = delegationParameter === 'readDelegationId';
+  if (!delegationValue && options.requireDelegation === true && !helperReadMayUseDirectAgent) {
     throw new NodeOperationError(
       context.getNode(),
       'Delegation ID is required for represented Agent execution',
