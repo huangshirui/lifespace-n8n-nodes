@@ -82,6 +82,11 @@ export function requestedResourceScopes(requiredAccess: 'read' | 'write' | 'mana
  *   Principal is resolved by Core from the current Delegation chain / Actor=Agent.
  * The adapter never authenticates represented execution from a caller-supplied `usr_*`.
  *
+ * Design-time n8n option loading is configuration, not represented execution. When the
+ * editor asks for Discovery through the legacy `readDelegationId` helper path, any saved
+ * selector is deliberately ignored and the Agent credential's own Authority is used.
+ * `dlg_*` belongs to runtime user authorization only.
+ *
  * `principalUserId` remains available to Authorization Request nodes as trusted workflow
  * context only; it is not an execution credential and is deliberately ignored here.
  */
@@ -96,12 +101,16 @@ export async function delegatedAgentAuthority(
   } = {},
 ): Promise<LifeSpaceExecutionAuthority> {
   const delegationParameter = options.delegationParameter ?? 'delegationId';
-  const delegationValue = String(nodeParameter(context, delegationParameter, itemIndex, '') ?? '').trim();
+  const isDesignTime = typeof (context as ILoadOptionsFunctions).getCurrentNodeParameter === 'function';
+  const designTimeDiscovery = isDesignTime && delegationParameter === 'readDelegationId';
+  const delegationValue = designTimeDiscovery
+    ? ''
+    : String(nodeParameter(context, delegationParameter, itemIndex, '') ?? '').trim();
 
   if (delegationValue && !/^dlg_[A-Za-z0-9_-]+$/u.test(delegationValue)) {
     throw new NodeOperationError(context.getNode(), 'Delegation ID must be a valid dlg_* identifier');
   }
-  if (!delegationValue && options.requireDelegation === true) {
+  if (!delegationValue && options.requireDelegation === true && !designTimeDiscovery) {
     throw new NodeOperationError(
       context.getNode(),
       'Delegation ID is required for represented Agent execution',
