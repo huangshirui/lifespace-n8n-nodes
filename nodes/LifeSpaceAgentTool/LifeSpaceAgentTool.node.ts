@@ -2,8 +2,10 @@ import type {
   IDataObject,
   IExecuteFunctions,
   IHttpRequestOptions,
+  ILoadOptionsFunctions,
   INodeExecutionData,
   INodeProperties,
+  INodePropertyOptions,
   ISupplyDataFunctions,
   SupplyData,
 } from 'n8n-workflow';
@@ -26,7 +28,19 @@ import {
   type PersonToolOperation,
 } from '../agent/lifeSpacePersonTool';
 import type { AgentToolConfig, AgentToolRequest, AgentToolSchema } from '../agent/lifeSpaceToolFactory';
-import { decodeAgentToolSemanticSnapshot } from '../agent/lifeSpaceToolSnapshot';
+import {
+  decodeAgentToolSemanticSnapshot,
+  encodeAgentToolSemanticSnapshot,
+} from '../agent/lifeSpaceToolSnapshot';
+import {
+  decodeRecordTypeSelector,
+  loadConfigurationModelInventory,
+  loadConfigurationModelSemanticDetail,
+  loadOptionParameter,
+  loadRuntimeDiscoveryInventory,
+  type DiscoveryModel,
+  type DiscoveryTransport,
+} from '../lifespaceDiscovery';
 import { LifeSpaceTool } from '../LifeSpaceTool/LifeSpaceTool.node';
 import {
   delegatedAgentCoreBaseUrl,
@@ -44,6 +58,7 @@ type StructuralAiTool = {
 };
 
 type AgentRuntimeContext = IExecuteFunctions | ISupplyDataFunctions;
+type AgentConfigurationContext = AgentRuntimeContext | ILoadOptionsFunctions;
 
 type AuthorizationScope = {
   target: { type: 'space' | 'model' | 'record'; id: string };
@@ -81,6 +96,90 @@ const USER_AUTH_RECOVERABLE_CODES = new Set([
 ]);
 
 const FROM_AI_KEY = /\$fromAI\s*\(\s*(['"])([A-Za-z0-9_-]{1,64})\1/u;
+
+async function agentConfigurationTransport(
+  context: AgentConfigurationContext,
+  itemIndex = 0,
+): Promise<DiscoveryTransport> {
+  const credentials = await context.getCredentials('lifeSpaceAgentExecutionApi', itemIndex);
+  const baseUrl = delegatedAgentCoreBaseUrl(context, credentials);
+  return {
+    baseUrl,
+    request: async (options) => await context.helpers.httpRequestWithAuthentication.call(
+      context,
+      'lifeSpaceAgentExecutionApi',
+      options,
+    ),
+  };
+}
+
+function modelSupportsConfigurationOperation(model: DiscoveryModel, operation: string): boolean {
+  if (operation === 'query') return model.access.includes('read');
+  if (['create', 'update', 'delete'].includes(operation)) return model.access.includes('write');
+  if (operation === 'action') {
+    return model.actions.some((action) => model.access.includes(action.access));
+  }
+  return false;
+}
+
+async function selectedAgentConfigurationModel(
+  context: ILoadOptionsFunctions,
+): Promise<{ model: DiscoveryModel; spaceId: string } | null> {
+  const spaceId = loadOptionParameter(context, 'spaceId');
+  const rawRecordType = loadOptionParameter(context, 'recordType');
+  if (!spaceId || !rawRecordType) return null;
+
+  const snapshot = decodeAgentToolSemanticSnapshot(rawRecordType);
+  if (snapshot) {
+    return snapshot.spaceId === spaceId ? { model: snapshot.model, spaceId } : null;
+  }
+
+  const selector = decodeRecordTypeSelector(rawRecordType);
+  if (!selector) return null;
+  const transport = await agentConfigurationTransport(context);
+  const model = await loadConfigurationModelSemanticDetail(context, selector.modelKey, transport);
+  return { model, spaceId };
+}
+
+async function configuredRecordTypeValue(
+  context: AgentRuntimeContext,
+  itemIndex: number,
+): Promise<string> {
+  const spaceId = String(context.getNodeParameter('spaceId', itemIndex, '') ?? '').trim();
+  const raw = String(context.getNodeParameter('recordType', itemIndex, '') ?? '').trim();
+  const snapshot = decodeAgentToolSemanticSnapshot(raw);
+  if (snapshot) {
+    if (snapshot.spaceId !== spaceId) {
+      throw new NodeOperationError(
+        context.getNode(),
+        'The saved LifeSpace Agent Tool semantic contract belongs to a different Space. Reselect Record Type or enter the intended model key.',
+        { itemIndex },
+      );
+    }
+    return raw;
+  }
+
+  const selector = decodeRecordTypeSelector(raw);
+  if (!selector) {
+    throw new NodeOperationError(
+      context.getNode(),
+      'Record Type must be a LifeSpace model key or a saved semantic selection',
+      { itemIndex },
+    );
+  }
+  if (!/^spc_[A-Za-z0-9_-]+$/u.test(spaceId)) {
+    throw new NodeOperationError(context.getNode(), 'Space must be a valid LifeSpace spc_* ID', { itemIndex });
+  }
+
+  const transport = await agentConfigurationTransport(context, itemIndex);
+  const model = await loadConfigurationModelSemanticDetail(context, selector.modelKey, transport);
+  return encodeAgentToolSemanticSnapshot({
+    format: 1,
+    spaceId,
+    spaceName: null,
+    model,
+  });
+}
 
 function internalOnly(property: INodeProperties): INodeProperties {
   if (!LEGACY_AUTH_PARAMETERS.has(property.name)) return property;
@@ -197,8 +296,25 @@ function withRecordOnly(property: INodeProperties): INodeProperties {
       displayOptions: { show: { toolResource: ['record'] } },
     };
   }
+  if (property.name === 'spaceId') {
+    return {
+      ...property,
+      allowArbitraryValues: true,
+      typeOptions: { loadOptionsMethod: 'getSpaces' },
+      description: 'Choose a Space currently reachable by this Agent, or enter a stable spc_* ID directly. Configuration does not grant data Authority; runtime execution rechecks Direct Agent Authority or an explicit User Delegation.',
+    };
+  }
   if (property.name === 'recordType') {
-    return { ...property, displayOptions: { show: { toolResource: ['record'] } } };
+    return {
+      ...property,
+      allowArbitraryValues: true,
+      typeOptions: {
+        loadOptionsMethod: 'getRecordTypes',
+        loadOptionsDependsOn: ['spaceId', 'operation'],
+      },
+      displayOptions: { show: { toolResource: ['record'] } },
+      description: 'Choose a Record Type allowed by the Agent credential/Application, or enter its stable model key directly. Static model semantics are loaded independently of Space Data Grants; runtime execution still rechecks current Space Authority.',
+    };
   }
   if (property.name === 'actionKey') {
     return {
@@ -231,12 +347,14 @@ function agentExecutionContext<T extends AgentRuntimeContext>(
   itemIndex: number,
   principalUserId: string,
   delegationId: string,
+  recordTypeOverride: string | null = null,
 ): T {
   return new Proxy(context, {
     get(target, property, receiver) {
       if (property !== 'getNodeParameter') return Reflect.get(target, property, receiver);
       return (name: string, requestedItemIndex: number, fallback?: unknown, options?: unknown) => {
         if (name === 'authorityMode') return 'delegatedAgent';
+        if (name === 'recordType' && recordTypeOverride) return recordTypeOverride;
         if (name === 'principalUserId') return delegationId ? principalUserId : '';
         if (name === 'delegationId' || name === 'readDelegationId') return delegationId;
         return target.getNodeParameter(
@@ -248,6 +366,19 @@ function agentExecutionContext<T extends AgentRuntimeContext>(
       };
     },
   }) as T;
+}
+
+async function agentRecordExecutionContext<T extends AgentRuntimeContext>(
+  context: T,
+  itemIndex: number,
+): Promise<T> {
+  return agentExecutionContext(
+    context,
+    itemIndex,
+    '',
+    '',
+    await configuredRecordTypeValue(context, itemIndex),
+  );
 }
 
 function toolInput(query: unknown): { semantic: unknown; delegationId: string } {
@@ -823,28 +954,90 @@ export class LifeSpaceAgentTool extends LifeSpaceTool {
       ],
       properties: agentProperties(this.description.properties),
     };
+
+    this.methods = {
+      ...this.methods,
+      loadOptions: {
+        ...this.methods.loadOptions,
+        async getSpaces(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+          const transport = await agentConfigurationTransport(this);
+          const discovery = await loadRuntimeDiscoveryInventory.call(this, transport);
+          return discovery.data.spaces.map((space) => ({
+            name: space.spaceName?.trim() || space.spaceId,
+            value: space.spaceId,
+          }));
+        },
+        async getRecordTypes(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+          const spaceId = loadOptionParameter(this, 'spaceId');
+          const operation = loadOptionParameter(this, 'operation') || 'query';
+          if (!spaceId) return [];
+
+          const transport = await agentConfigurationTransport(this);
+          const inventory = await loadConfigurationModelInventory(this, transport);
+          const candidates = inventory.filter((model) => modelSupportsConfigurationOperation(model, operation));
+          const models = await Promise.all(
+            candidates.map((model) => loadConfigurationModelSemanticDetail(this, model.key, transport)),
+          );
+
+          return models.map((model) => ({
+            name: model.display.singular?.trim() || model.key,
+            value: encodeAgentToolSemanticSnapshot({
+              format: 1,
+              spaceId,
+              spaceName: null,
+              model,
+            }),
+            description: model.description ?? undefined,
+          }));
+        },
+        async getActions(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+          const selected = await selectedAgentConfigurationModel(this);
+          if (!selected) return [];
+          return selected.model.actions
+            .filter((action) => selected.model.access.includes(action.access))
+            .map((action) => ({
+              name: action.key,
+              value: action.key,
+              description: `${action.kind} Action · requires ${action.access} access`,
+            }));
+        },
+        async getCapabilityQueries(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+          const selected = await selectedAgentConfigurationModel(this);
+          if (!selected) return [];
+          return (selected.model.query.capabilityQueries ?? []).map((query) => ({
+            name: `${query.capability} · ${query.key}`,
+            value: query.key,
+            description: query.semantics,
+          }));
+        },
+      },
+    };
   }
 
   async supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {
     const resource = String(this.getNodeParameter('toolResource', itemIndex, 'record') ?? 'record');
-    const auth = authorizationSettings(this, itemIndex);
+    if (resource === 'record') currentRecordOperation(this, itemIndex);
+    const runtimeContext: ISupplyDataFunctions = resource === 'record'
+      ? await agentRecordExecutionContext(this, itemIndex)
+      : this;
+    const auth = authorizationSettings(runtimeContext, itemIndex);
 
     if (resource === 'person') {
-      const runtime = await personRuntime(this, itemIndex);
+      const runtime = await personRuntime(runtimeContext, itemIndex);
       const direct = customTool(
-        this,
+        runtimeContext,
         itemIndex,
         runtime,
-        async (query) => invokePerson(this, itemIndex, query, ''),
+        async (query) => invokePerson(runtimeContext, itemIndex, query, ''),
       );
       if (!auth.enabled) return { response: direct };
       return {
         response: wrapOptionalAuthorization(
-          this,
+          runtimeContext,
           itemIndex,
           direct,
           auth.principalUserId,
-          async (semantic, delegationId) => invokePerson(this, itemIndex, semantic, delegationId),
+          async (semantic, delegationId) => invokePerson(runtimeContext, itemIndex, semantic, delegationId),
         ),
       };
     }
@@ -854,37 +1047,37 @@ export class LifeSpaceAgentTool extends LifeSpaceTool {
       ? recordBatchSettings(this, itemIndex)
       : null;
     if (batchSettings?.batchProcessing) {
-      const runtime = await multiRuntime(this, itemIndex);
+      const runtime = await multiRuntime(runtimeContext, itemIndex);
       const direct = customTool(
-        this,
+        runtimeContext,
         itemIndex,
         runtime,
-        async (query) => invokeMulti(this, itemIndex, query, ''),
+        async (query) => invokeMulti(runtimeContext, itemIndex, query, ''),
       );
       if (!auth.enabled) return { response: direct };
       return {
         response: wrapOptionalAuthorization(
-          this,
+          runtimeContext,
           itemIndex,
           direct,
           auth.principalUserId,
-          async (semantic, delegationId) => invokeMulti(this, itemIndex, semantic, delegationId),
+          async (semantic, delegationId) => invokeMulti(runtimeContext, itemIndex, semantic, delegationId),
         ),
       };
     }
 
-    const directContext = agentExecutionContext(this, itemIndex, '', '');
+    const directContext = agentExecutionContext(runtimeContext, itemIndex, '', '');
     const supplied = await LifeSpaceTool.prototype.supplyData.call(directContext, itemIndex);
     if (!auth.enabled) return supplied;
     const baseTool = supplied.response as unknown as StructuralAiTool;
     return {
       response: wrapOptionalAuthorization(
-        this,
+        runtimeContext,
         itemIndex,
         baseTool,
         auth.principalUserId,
         async (semantic, delegationId) => {
-          const executionContext = agentExecutionContext(this, itemIndex, auth.principalUserId, delegationId);
+          const executionContext = agentExecutionContext(runtimeContext, itemIndex, auth.principalUserId, delegationId);
           const runtimeSupply = await LifeSpaceTool.prototype.supplyData.call(executionContext, itemIndex);
           const runtimeTool = runtimeSupply.response as unknown as StructuralAiTool;
           return await runtimeTool.invoke(semantic as IDataObject);
@@ -897,20 +1090,24 @@ export class LifeSpaceAgentTool extends LifeSpaceTool {
     const items = this.getInputData();
     if (!items.length) return [[]];
     const resource = String(this.getNodeParameter('toolResource', 0, 'record') ?? 'record');
-    const operation = resource === 'person' ? 'query' : currentRecordOperation(this, 0);
+    if (resource === 'record') currentRecordOperation(this, 0);
+    const runtimeContext: IExecuteFunctions = resource === 'record'
+      ? await agentRecordExecutionContext(this, 0)
+      : this;
+    const operation = resource === 'person' ? 'query' : currentRecordOperation(runtimeContext, 0);
     const batchSettings = resource === 'record' && ['create', 'update', 'delete'].includes(operation)
-      ? recordBatchSettings(this, 0)
+      ? recordBatchSettings(runtimeContext, 0)
       : null;
     const custom = resource === 'person' || batchSettings?.batchProcessing === true;
-    if (!custom) return await LifeSpaceTool.prototype.execute.call(this);
+    if (!custom) return await LifeSpaceTool.prototype.execute.call(runtimeContext);
 
     const output: INodeExecutionData[] = [];
     for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
       const item = items[itemIndex];
       if (!item) continue;
       const runtime = resource === 'person'
-        ? await personRuntime(this, itemIndex)
-        : await multiRuntime(this, itemIndex);
+        ? await personRuntime(runtimeContext, itemIndex)
+        : await multiRuntime(runtimeContext, itemIndex);
       const projected = semanticToolInput(runtime.schema, item.json);
       const { semantic, delegationId } = toolInput(projected);
       let response: string;
@@ -919,13 +1116,13 @@ export class LifeSpaceAgentTool extends LifeSpaceTool {
       } else {
         try {
           response = resource === 'person'
-            ? await invokePerson(this, itemIndex, semantic, delegationId)
-            : await invokeMulti(this, itemIndex, semantic, delegationId);
+            ? await invokePerson(runtimeContext, itemIndex, semantic, delegationId)
+            : await invokeMulti(runtimeContext, itemIndex, semantic, delegationId);
         } catch (error) {
           response = structuredFailure(error);
         }
-        if (authorizationSettings(this, itemIndex).enabled) {
-          response = withAuthorizationRequired(response, authorizationScope(this, itemIndex, semantic));
+        if (authorizationSettings(runtimeContext, itemIndex).enabled) {
+          response = withAuthorizationRequired(response, authorizationScope(runtimeContext, itemIndex, semantic));
         }
       }
       output.push({ json: { response }, pairedItem: { item: itemIndex } });

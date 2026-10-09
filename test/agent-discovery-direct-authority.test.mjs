@@ -10,7 +10,6 @@ const CORE_BASE = 'https://core.example.com/api/v1';
 function loadOptionsContext(readDelegationId = '') {
   const calls = [];
   const parameters = {
-    authorityMode: 'delegatedAgent',
     readDelegationId,
     operation: 'query',
     spaceId: '',

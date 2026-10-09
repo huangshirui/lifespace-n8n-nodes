@@ -51,7 +51,7 @@ export class LifeSpaceAgentExecutionApi implements ICredentialType {
   test: ICredentialTestRequest = {
     request: {
       baseURL: '={{$credentials.coreBaseUrl.replace(/\\/$/, "")}}',
-      url: '/status',
+      url: '/me',
       method: 'GET',
     },
   };
