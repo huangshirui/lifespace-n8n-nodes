@@ -82,6 +82,11 @@ export function requestedResourceScopes(requiredAccess: 'read' | 'write' | 'mana
  *   Principal is resolved by Core from the current Delegation chain / Actor=Agent.
  * The adapter never authenticates represented execution from a caller-supplied `usr_*`.
  *
+ * Design-time n8n option loading is configuration, not represented execution. When the
+ * editor asks for Discovery through the legacy `readDelegationId` helper path, any saved
+ * selector is deliberately ignored and the Agent credential's own Authority is used.
+ * `dlg_*` belongs to runtime user authorization only.
+ *
  * `principalUserId` remains available to Authorization Request nodes as trusted workflow
  * context only; it is not an execution credential and is deliberately ignored here.
  */
@@ -96,17 +101,15 @@ export async function delegatedAgentAuthority(
   } = {},
 ): Promise<LifeSpaceExecutionAuthority> {
   const delegationParameter = options.delegationParameter ?? 'delegationId';
-  const delegationValue = String(nodeParameter(context, delegationParameter, itemIndex, '') ?? '').trim();
+  const isDesignTime = typeof (context as ILoadOptionsFunctions).getCurrentNodeParameter === 'function';
+  const designTimeDiscovery = isDesignTime && delegationParameter === 'readDelegationId';
+  const configuredDelegation = String(nodeParameter(context, delegationParameter, itemIndex, '') ?? '').trim();
+  const delegationValue = designTimeDiscovery ? '' : configuredDelegation;
 
   if (delegationValue && !/^dlg_[A-Za-z0-9_-]+$/u.test(delegationValue)) {
     throw new NodeOperationError(context.getNode(), 'Delegation ID must be a valid dlg_* identifier');
   }
-
-  // Since 0.2.0, discovery/helper reads may execute with direct Agent authority.
-  // A configured readDelegationId still selects represented User/Agent execution,
-  // but its absence must not make the Agent Tool editor unusable.
-  const helperReadMayUseDirectAgent = delegationParameter === 'readDelegationId';
-  if (!delegationValue && options.requireDelegation === true && !helperReadMayUseDirectAgent) {
+  if (!delegationValue && options.requireDelegation === true && !designTimeDiscovery) {
     throw new NodeOperationError(
       context.getNode(),
       'Delegation ID is required for represented Agent execution',
