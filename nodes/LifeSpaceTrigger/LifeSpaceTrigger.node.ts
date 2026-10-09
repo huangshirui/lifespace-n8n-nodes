@@ -21,11 +21,26 @@ import {
 
 const MAX_TIMESTAMP_SKEW_SECONDS = 300;
 const SIGNING_SECRET_PATTERN = /^[a-f0-9]{64}$/;
+const AGGREGATED_EVENT_TYPES = new Set(['bulk.completed', 'change_set.committed']);
 
 function safeEqual(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left, 'utf8');
   const rightBuffer = Buffer.from(right, 'utf8');
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function matchesConfiguredRecordEvent(
+  event: IDataObject,
+  selectedSpaceId: string,
+  selectedRecordTypes: string[],
+  selectedEventTypes: string[],
+): boolean {
+  const eventType = String(event.type ?? '');
+  const modelKey = String(event.modelKey ?? '');
+  if (!selectedEventTypes.includes(eventType) || String(event.spaceId ?? '') !== selectedSpaceId) {
+    return false;
+  }
+  return selectedRecordTypes.some((value) => decodeRecordTypeSelector(value)?.modelKey === modelKey);
 }
 
 export class LifeSpaceTrigger implements INodeType {
@@ -116,7 +131,7 @@ export class LifeSpaceTrigger implements INodeType {
           },
         ],
         default: ['record.created', 'record.updated', 'record.deleted'],
-        description: 'Only emit selected event types. LifeSpace endpoint.test events are always accepted for end-to-end webhook testing.',
+        description: 'Only emit selected record event types. LifeSpace endpoint.test events are always accepted, while bulk.completed and change_set.committed transport envelopes are automatically unpacked into their contained record events.',
       },
     ],
   };
@@ -230,19 +245,46 @@ export class LifeSpaceTrigger implements INodeType {
     const selectedEventTypes = this.getNodeParameter('eventTypes') as string[];
     const selectedSpaceId = String(this.getNodeParameter('spaceId', '')).trim();
     const selectedRecordTypes = this.getNodeParameter('recordTypes', []) as string[];
-    const matchedRecordType = selectedRecordTypes.find((value) =>
-      decodeRecordTypeSelector(value)?.modelKey === String(bodyData.modelKey ?? ''),
-    );
 
-    if (!selectedEventTypes.includes(eventType)) {
-      response.status(204).end();
-      return { noWebhookResponse: true };
+    if (AGGREGATED_EVENT_TYPES.has(eventType)) {
+      if (String(bodyData.spaceId ?? '') !== selectedSpaceId || !Array.isArray(bodyData.events)) {
+        response.status(204).end();
+        return { noWebhookResponse: true };
+      }
+
+      const correlation = eventType === 'bulk.completed'
+        ? { bulkId: String(bodyData.bulkId ?? '') }
+        : { changeSetId: String(bodyData.changeSetId ?? '') };
+      const matchedEvents = bodyData.events
+        .filter((value): value is IDataObject => Boolean(value) && typeof value === 'object' && !Array.isArray(value))
+        .filter((event) => matchesConfiguredRecordEvent(
+          event,
+          selectedSpaceId,
+          selectedRecordTypes,
+          selectedEventTypes,
+        ))
+        .map((event) => ({
+          ...event,
+          ...correlation,
+          recordType: String(event.modelKey ?? ''),
+        }));
+
+      if (!matchedEvents.length) {
+        response.status(204).end();
+        return { noWebhookResponse: true };
+      }
+
+      return {
+        workflowData: [matchedEvents.map((event) => ({ json: event }))],
+      };
     }
 
-    if (
-      String(bodyData.spaceId ?? '') !== selectedSpaceId ||
-      !matchedRecordType
-    ) {
+    if (!matchesConfiguredRecordEvent(
+      bodyData,
+      selectedSpaceId,
+      selectedRecordTypes,
+      selectedEventTypes,
+    )) {
       response.status(204).end();
       return { noWebhookResponse: true };
     }
