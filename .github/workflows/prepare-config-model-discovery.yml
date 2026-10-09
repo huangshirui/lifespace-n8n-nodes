@@ -28,6 +28,24 @@ jobs:
       - name: Install pinned npm
         run: npm install --global npm@11.15.0
 
+      - name: Repair one-shot script quoting
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/prepare-config-model-discovery.mjs')
+          lines = path.read_text().splitlines()
+          replacement = "    content = content.replace(marker, marker + '\\n> **Configuration selectors are not Authority.** In the Agent Tool, Space may be selected from currently reachable Spaces or entered directly as a stable spc_* ID. Record Type may be selected or entered as a stable model key; its static semantics come from LifeSpace configuration model discovery (Credential Scope × Application × Model Access × published model capability), not from a current Space Data Grant. Every actual read/write/action still rechecks current Direct Agent Authority or an explicit User Delegation.\\n\\n');"
+          matches = 0
+          for index, line in enumerate(lines):
+              if 'content = content.replace(marker,' in line:
+                  lines[index] = replacement
+                  matches += 1
+          if matches != 1:
+              raise SystemExit(f'expected one README replacement line, found {matches}')
+          path.write_text('\n'.join(lines) + '\n')
+          PY
+
       - name: Apply deterministic patch
         run: node scripts/prepare-config-model-discovery.mjs
 
