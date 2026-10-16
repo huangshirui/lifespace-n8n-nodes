@@ -25,6 +25,7 @@ import {
   loadOptionParameter,
   loadRuntimeDiscovery,
   loadRuntimeDiscoveryInventory,
+  modelSupportsRuntimeOperation,
   normalizeBaseUrl,
   searchRelationTargetsForAgent,
   type DiscoveryAccess,
@@ -132,6 +133,7 @@ async function selectedOptionModel(context: ILoadOptionsFunctions): Promise<{ mo
 }
 
 function modelSupportsOperation(model: DiscoveryModel, operation: string): boolean {
+  if (!modelSupportsRuntimeOperation(model, operation)) return false;
   const access = requiredAccess(operation);
   if (access) return model.access.includes(access);
   if (operation === 'action') return model.actions.some((action) => model.access.includes(action.access));
@@ -1156,8 +1158,9 @@ export class LifeSpaceTool implements INodeType {
       schema: runtime.definition.schema,
       metadata: {
         lifeSpaceSemanticToolName: runtime.definition.name,
-        lifeSpaceModelVersion: runtime.model.version,
+        ...(runtime.model.version !== undefined ? { lifeSpaceModelVersion: runtime.model.version } : {}),
         lifeSpaceSchemaHash: runtime.model.schemaHash,
+        ...(runtime.model.origin ? { lifeSpaceModelOrigin: runtime.model.origin } : {}),
       },
       invoke: async (query: unknown): Promise<string> => {
         const { index } = this.addInputData(NodeConnectionTypes.AiTool, [[{ json: { query: inputForLog(query) } }]]);

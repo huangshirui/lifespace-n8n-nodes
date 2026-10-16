@@ -5,6 +5,7 @@ import type {
   DiscoveryField,
   DiscoveryModel,
 } from '../lifespaceDiscovery';
+import { modelSupportsRuntimeOperation } from '../lifespaceDiscovery';
 import {
   canonicalQueryPath,
   compileGenericQuery,
@@ -661,6 +662,9 @@ function defaultDescription(model: DiscoveryModel, config: AgentToolConfig): str
 
 export function buildAgentToolDefinition(model: DiscoveryModel, config: AgentToolConfig): LifeSpaceAgentToolDefinition {
   if (!text(config.spaceId)) throw new Error('LifeSpace Agent Tool requires a Space ID');
+  if (!modelSupportsRuntimeOperation(model, config.operation)) {
+    throw new Error(`LifeSpace ${model.key} does not expose ${config.operation} in its current runtime contract`);
+  }
   ensureConfiguredAccess(model, config);
   const descriptionOverride = config.descriptionOverride?.trim();
   return {
@@ -931,6 +935,9 @@ export function buildAgentToolRequest(
     return { method: 'POST', path: collectionPath(model, config), body: semanticBody(schema, validated, mutationFields(model, 'create')) };
   }
   if (config.operation === 'batchCreate') {
+    if (model.runtimeCapabilities && (!model.runtimeCapabilities.batchWrite || !model.runtimeCapabilities.atomicBatch)) {
+      throw new Error(`LifeSpace ${model.key} does not support atomic Batch Create`);
+    }
     const items = validated.items;
     if (!Array.isArray(items) || items.length < 1 || items.length > 20) {
       throw new Error('LifeSpace Batch Create requires 1-20 items');
@@ -952,10 +959,12 @@ export function buildAgentToolRequest(
   if (config.operation === 'update') {
     const body = semanticBody(schema, validated, mutationFields(model, 'update'), [RECORD_ID]);
     if (!Object.keys(body).length) throw new Error('LifeSpace Update requires at least one field to change');
+    if (model.runtimeCapabilities?.versionedWrite === false) return { method: 'PATCH', path, body };
     if (currentVersion === undefined) return { method: 'PATCH', path, body, needsCurrentVersion: true, versionParameter: 'version' };
     return { method: 'PATCH', path, body: { ...body, version: currentVersion } };
   }
   if (config.operation === 'delete') {
+    if (model.runtimeCapabilities?.versionedWrite === false) return { method: 'DELETE', path, body: {} };
     if (currentVersion === undefined) return { method: 'DELETE', path, needsCurrentVersion: true, versionParameter: 'version' };
     return { method: 'DELETE', path, body: { version: currentVersion } };
   }

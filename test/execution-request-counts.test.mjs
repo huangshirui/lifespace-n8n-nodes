@@ -10,6 +10,17 @@ const { encodeLifeSpaceActionSnapshot } = require('../dist/nodes/shared/lifeSpac
 
 const BASE_URL = 'https://example.invalid/api/v1';
 const TASK_RECORD_TYPE = encodeRecordTypeSelector('task');
+const EXTERNAL_RECORD_TYPE = encodeRecordTypeSelector({
+  key: 'health_document',
+  origin: 'external',
+  spaceId: 'spc_test',
+  schemaHash: 'sha256:notion-runtime',
+  runtimeCapabilities: {
+    get: true, query: true, create: true, update: true, delete: true,
+    batchWrite: true, atomicBatch: false, transaction: false,
+    versionedWrite: false, actions: false, relationTargetResolution: false,
+  },
+});
 
 function actionDetail() {
   return {
@@ -228,6 +239,34 @@ test('Delete without an explicit version performs only concurrency read plus mut
     ['GET', `${BASE_URL}/spaces/spc_test/models/task/records/rec_delete_auto`],
     ['DELETE', `${BASE_URL}/spaces/spc_test/models/task/records/rec_delete_auto`],
   ]);
+});
+
+
+test('versionless dynamic Record Type Update performs one PATCH without Native version pre-read', async () => {
+  const calls = await execute({
+    operation: 'update',
+    recordType: EXTERNAL_RECORD_TYPE,
+    recordId: 'rec_external_update',
+    recordOptions: {},
+    'fields.value': { f_title: 'Updated' },
+  });
+  assert.deepEqual(requestShape(calls), [
+    ['PATCH', `${BASE_URL}/spaces/spc_test/models/health_document/records/rec_external_update`],
+  ]);
+  assert.equal('version' in calls[0].body, false);
+});
+
+test('versionless dynamic Record Type Delete performs one DELETE with no Native version', async () => {
+  const calls = await execute({
+    operation: 'delete',
+    recordType: EXTERNAL_RECORD_TYPE,
+    recordId: 'rec_external_delete',
+    recordOptions: {},
+  });
+  assert.deepEqual(requestShape(calls), [
+    ['DELETE', `${BASE_URL}/spaces/spc_test/models/health_document/records/rec_external_delete`],
+  ]);
+  assert.deepEqual(calls[0].body, {});
 });
 
 test('Execute Action uses pinned design-time semantics, concurrency read, and zero Discovery', async () => {

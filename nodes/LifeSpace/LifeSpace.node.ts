@@ -13,12 +13,14 @@ import type {
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import {
   decodeRecordTypeSelector,
+  encodeRecordTypeSelector,
   discoveryModel,
   discoverySpace,
   humanizeKey,
   loadOptionParameter,
   loadRelationTargets,
   loadRuntimeDiscovery,
+  modelSupportsRuntimeOperation,
   normalizeBaseUrl,
   type DiscoveryAccess,
   type DiscoveryAction,
@@ -26,6 +28,7 @@ import {
   type DiscoveryComparison,
   type DiscoveryField,
   type DiscoveryModel,
+  type DiscoveryRuntimeCapabilities,
   type RelationTarget,
 } from '../lifespaceDiscovery';
 import {
@@ -719,15 +722,6 @@ function configuredMutationVersion(
   );
 }
 
-async function mutationVersion(
-  context: IExecuteFunctions,
-  itemIndex: number,
-  baseUrl: string,
-  recordPath: string,
-): Promise<number> {
-  return configuredMutationVersion(context, itemIndex)
-    ?? currentRecordVersion(context, itemIndex, baseUrl, recordPath);
-}
 
 type RecordBatchSettings = { batchProcessing: boolean; atomicConsistency: boolean };
 
@@ -742,6 +736,40 @@ function recordBatchSettings(
     batchProcessing: legacyAtomicBatch || options.batchProcessing === true,
     atomicConsistency: legacyAtomicBatch || options.atomicConsistency === true,
   };
+}
+
+
+function configuredRecordRuntimeCapabilities(
+  context: IExecuteFunctions,
+  itemIndex: number,
+): DiscoveryRuntimeCapabilities | undefined {
+  const selector = decodeRecordTypeSelector(context.getNodeParameter('recordType', itemIndex, ''));
+  if (!selector?.runtimeCapabilities) return undefined;
+  const spaceId = String(context.getNodeParameter('spaceId', itemIndex, '') ?? '').trim();
+  if (selector.spaceId && selector.spaceId !== spaceId) {
+    throw new NodeOperationError(
+      context.getNode(),
+      'The selected LifeSpace dynamic Record Type belongs to a different Space. Reselect Record Type and save the workflow.',
+      { itemIndex },
+    );
+  }
+  return selector.runtimeCapabilities;
+}
+
+function configuredVersionForCapabilities(
+  context: IExecuteFunctions,
+  itemIndex: number,
+  capabilities: DiscoveryRuntimeCapabilities | undefined,
+): number | undefined {
+  const version = configuredMutationVersion(context, itemIndex);
+  if (capabilities?.versionedWrite === false && version !== undefined) {
+    throw new NodeOperationError(
+      context.getNode(),
+      'Version is unavailable for this LifeSpace Record Type because its current runtime contract is not versioned.',
+      { itemIndex },
+    );
+  }
+  return capabilities?.versionedWrite === false ? undefined : version;
 }
 
 function configuredRecordModelKey(
@@ -761,12 +789,19 @@ function configuredRecordModelKey(
   return modelKey;
 }
 
-async function executeNativeRecordBatch(
+async function executeRecordBatch(
   context: IExecuteFunctions,
   items: INodeExecutionData[],
   atomicConsistency: boolean,
 ): Promise<INodeExecutionData[]> {
   if (items.length < 1) return [];
+  const runtimeCapabilities = configuredRecordRuntimeCapabilities(context, 0);
+  if (runtimeCapabilities && !runtimeCapabilities.batchWrite) {
+    throw new NodeOperationError(context.getNode(), 'The selected LifeSpace Record Type does not support grouped write processing');
+  }
+  if (atomicConsistency && runtimeCapabilities && !runtimeCapabilities.atomicBatch) {
+    throw new NodeOperationError(context.getNode(), 'Atomic Consistency is unavailable for the selected LifeSpace Record Type');
+  }
   if (items.length > 20) {
     throw new NodeOperationError(
       context.getNode(),
@@ -825,7 +860,7 @@ async function executeNativeRecordBatch(
         { itemIndex },
       );
     }
-    const version = configuredMutationVersion(context, itemIndex);
+    const version = configuredVersionForCapabilities(context, itemIndex, runtimeCapabilities);
 
     if (operation === 'delete') {
       operations.push({
@@ -1412,12 +1447,13 @@ export class LifeSpace implements INodeType {
         if (!space) return [];
         const operation = loadOptionParameter(this, 'operation') || 'list';
         return space.models
+          .filter((model) => modelSupportsRuntimeOperation(model, operation))
           .filter((model) => operation === 'executeAction'
             ? model.actions.length > 0
             : model.access.includes(requiredAccessForOperation(operation)))
           .map((model) => ({
             name: `${model.display.plural} (${model.key})`,
-            value: model.key,
+            value: encodeRecordTypeSelector(model),
             description: model.description ?? undefined,
           }));
       },
@@ -1601,7 +1637,7 @@ export class LifeSpace implements INodeType {
         && batchSettings.batchProcessing
       ) {
         try {
-          return [await executeNativeRecordBatch(this, items, batchSettings.atomicConsistency)];
+          return [await executeRecordBatch(this, items, batchSettings.atomicConsistency)];
         } catch (error) {
           if (this.continueOnFail()) {
             return [items.map((_item, itemIndex) => ({
@@ -1663,6 +1699,7 @@ export class LifeSpace implements INodeType {
           const operation = this.getNodeParameter('operation', itemIndex) as string;
           const rawSpaceId = String(this.getNodeParameter('spaceId', itemIndex));
           const rawModelKey = configuredRecordModelKey(this, itemIndex);
+          const runtimeCapabilities = configuredRecordRuntimeCapabilities(this, itemIndex);
           const spaceId = encodeURIComponent(rawSpaceId);
           const modelKey = encodeURIComponent(rawModelKey);
           const collectionPath = `/spaces/${spaceId}/models/${modelKey}/records`;
@@ -1732,20 +1769,25 @@ export class LifeSpace implements INodeType {
               options = { method: 'GET', url: `${baseUrl}${recordPath}`, json: true };
             } else if (operation === 'update') {
               const body = mutationMappedValues(this, itemIndex);
+              const configuredVersion = configuredVersionForCapabilities(this, itemIndex, runtimeCapabilities);
+              const version = runtimeCapabilities?.versionedWrite === false
+                ? undefined
+                : configuredVersion ?? await currentRecordVersion(this, itemIndex, baseUrl, recordPath);
               options = {
                 method: 'PATCH',
                 url: `${baseUrl}${recordPath}`,
-                body: {
-                  ...body,
-                  version: await mutationVersion(this, itemIndex, baseUrl, recordPath),
-                },
+                body: version === undefined ? body : { ...body, version },
                 json: true,
               };
             } else if (operation === 'delete') {
+              const configuredVersion = configuredVersionForCapabilities(this, itemIndex, runtimeCapabilities);
+              const version = runtimeCapabilities?.versionedWrite === false
+                ? undefined
+                : configuredVersion ?? await currentRecordVersion(this, itemIndex, baseUrl, recordPath);
               options = {
                 method: 'DELETE',
                 url: `${baseUrl}${recordPath}`,
-                body: { version: await mutationVersion(this, itemIndex, baseUrl, recordPath) },
+                body: version === undefined ? {} : { version },
                 json: true,
               };
             } else {

@@ -109,6 +109,25 @@ export type DiscoveryCapabilityBindings = {
   temporal?: DiscoveryTemporalCapabilityBinding;
 };
 
+export type DiscoveryRuntimeCapabilities = {
+  get: boolean;
+  query: boolean;
+  create: boolean;
+  update: boolean;
+  delete: boolean;
+  batchWrite: boolean;
+  atomicBatch: boolean;
+  transaction: boolean;
+  versionedWrite: boolean;
+  actions: boolean;
+  relationTargetResolution: boolean;
+};
+
+export type DiscoveryDynamicContract = {
+  kind: 'dynamic';
+  revision: null;
+};
+
 export type DiscoveryComparisonOperator = 'eq' | 'lt' | 'lte' | 'gt' | 'gte';
 
 export type DiscoveryComparisonTransport = {
@@ -211,7 +230,7 @@ export type DiscoveryCanonicalQuery = {
     directions: Array<'asc' | 'desc'>;
     maxCriteria: number;
     default: Array<{ field: string; direction: 'asc' | 'desc' }>;
-    nullPlacement: 'last';
+    nullPlacement: 'last' | 'provider-defined';
     stableTieBreaker: string;
     temporalRange?: null | {
       context: 'context.viewingTimezone';
@@ -230,7 +249,10 @@ export type DiscoveryCanonicalQuery = {
 
 export type DiscoveryModel = {
   key: string;
-  version: number;
+  version?: number;
+  origin?: 'external';
+  spaceId?: string;
+  fieldsDynamic?: boolean;
   schemaHash: string;
   display: { singular: string; plural: string };
   description: string | null;
@@ -253,7 +275,7 @@ export type DiscoveryModel = {
       maxCriteria: number;
       default: string[];
       envelopeFields: string[];
-      nullPlacement: 'last';
+      nullPlacement: 'last' | 'provider-defined';
       genericValues: string[];
     };
     pagination: DiscoveryQueryPagination;
@@ -262,6 +284,8 @@ export type DiscoveryModel = {
   actions: DiscoveryAction[];
   capabilities?: string[];
   capabilityBindings?: DiscoveryCapabilityBindings;
+  runtimeCapabilities?: DiscoveryRuntimeCapabilities;
+  contract?: DiscoveryDynamicContract;
 };
 
 export type DiscoverySpace = {
@@ -294,14 +318,28 @@ type InventoryAction = {
   kind: 'workflow' | 'capability';
 };
 
-type InventoryModel = {
+type PublishedInventoryModel = {
   key: string;
   version: number;
   schemaHash: string;
   display: { singular: string; plural: string };
   capabilities: string[];
   actions: InventoryAction[];
+  origin?: 'external';
+  fieldsDynamic?: boolean;
 };
+
+type ExternalRuntimeInventoryModel = {
+  key: string;
+  origin: 'external';
+  spaceId: string;
+  schemaHash: string;
+  display: { singular: string; plural: string };
+  runtimeCapabilities: DiscoveryRuntimeCapabilities;
+  contract: DiscoveryDynamicContract;
+};
+
+type RuntimeInventoryModel = PublishedInventoryModel | ExternalRuntimeInventoryModel;
 
 type InventorySpace = {
   spaceId: string;
@@ -315,7 +353,7 @@ type InventorySpace = {
 type InventoryResponse = {
   data: {
     semanticDetailPathTemplate: string;
-    models: InventoryModel[];
+    models: RuntimeInventoryModel[];
     spaces: InventorySpace[];
   };
 };
@@ -331,8 +369,9 @@ type SemanticField = Omit<DiscoveryField, 'relation'> & {
   relation?: SemanticRelation;
 };
 
-type SemanticDetail = {
+type NativeSemanticDetail = {
   key: string;
+  origin?: never;
   version: number;
   schemaHash: string;
   display: { singular: string; plural: string };
@@ -356,7 +395,7 @@ type SemanticDetail = {
       maxCriteria: number;
       genericDefault: string[];
       envelopeFields: string[];
-      nullPlacement: 'last';
+      nullPlacement: 'last' | 'provider-defined';
       genericValues: string[];
     };
     pagination: DiscoveryQueryPagination;
@@ -367,11 +406,44 @@ type SemanticDetail = {
   capabilityBindings: DiscoveryCapabilityBindings;
 };
 
-type SemanticDetailResponse = {
-  data: SemanticDetail;
+type ExternalSemanticField = {
+  key: string;
+  title: string;
+  type: DiscoveryField['type'];
+  nullable: boolean;
+  readable: true;
+  writable: boolean;
+  operators: string[];
+  sortable: boolean;
+  values?: string[];
 };
 
-type ConfigurationInventoryModel = InventoryModel & {
+type ExternalSemanticDetail = {
+  key: string;
+  modelKey?: string;
+  origin: 'external';
+  spaceId: string;
+  schemaHash: string;
+  display: { singular: string; plural: string };
+  description?: string | null;
+  access: DiscoveryAccess[];
+  fields: ExternalSemanticField[];
+  actions: DiscoveryAction[];
+  capabilities: string[];
+  capabilityBindings: DiscoveryCapabilityBindings;
+  runtimeCapabilities: DiscoveryRuntimeCapabilities;
+  contract: DiscoveryDynamicContract;
+  query: { canonical: DiscoveryCanonicalQuery };
+};
+
+type RuntimeSemanticDetail = NativeSemanticDetail | ExternalSemanticDetail;
+
+type SemanticDetailResponse = {
+  data: RuntimeSemanticDetail;
+};
+
+
+type ConfigurationInventoryModel = PublishedInventoryModel & {
   access: DiscoveryAccess[];
 };
 
@@ -385,7 +457,7 @@ type ConfigurationInventoryResponse = {
 type ConfigurationSemanticDetailResponse = {
   data: {
     access: DiscoveryAccess[];
-    model: SemanticDetail;
+    model: NativeSemanticDetail;
   };
 };
 
@@ -404,18 +476,53 @@ const RELATION_TARGET_OPTION_LIMIT = 1000;
 const RELATION_TARGET_LOOKUP_PATH = '/api/v1/spaces/{spaceId}/_relation-targets/{modelKey}/{fieldKey}';
 const MODEL_SEMANTIC_DETAIL_PATH = '/api/v1/spaces/{spaceId}/_discovery/models/{modelKey}';
 const RECORD_TYPE_SELECTOR_PREFIX = 'lsrt1.';
+const DYNAMIC_RECORD_TYPE_SELECTOR_PREFIX = 'lsrt2.';
 
 export type RecordTypeSelector = {
   modelKey: string;
+  origin?: 'external';
+  spaceId?: string;
+  schemaHash?: string;
+  runtimeCapabilities?: DiscoveryRuntimeCapabilities;
 };
 
-export function encodeRecordTypeSelector(modelKey: string): string {
-  return modelKey.trim();
+export function encodeRecordTypeSelector(value: string | DiscoveryModel): string {
+  if (typeof value === 'string') return value.trim();
+  if (value.origin !== 'external' || !value.spaceId || !value.runtimeCapabilities) return value.key.trim();
+  return DYNAMIC_RECORD_TYPE_SELECTOR_PREFIX
+    + Buffer.from(JSON.stringify([
+      value.key,
+      value.spaceId,
+      value.schemaHash,
+      value.runtimeCapabilities,
+    ]), 'utf8').toString('base64url');
 }
 
 export function decodeRecordTypeSelector(value: unknown): RecordTypeSelector | null {
   const raw = String(value ?? '').trim();
   if (/^[a-z][a-z0-9_]{1,62}$/u.test(raw)) return { modelKey: raw };
+  if (raw.startsWith(DYNAMIC_RECORD_TYPE_SELECTOR_PREFIX)) {
+    try {
+      const decoded = JSON.parse(Buffer.from(raw.slice(DYNAMIC_RECORD_TYPE_SELECTOR_PREFIX.length), 'base64url').toString('utf8')) as unknown;
+      if (!Array.isArray(decoded) || decoded.length !== 4) return null;
+      const [modelKey, spaceId, schemaHash, runtimeCapabilities] = decoded;
+      if (
+        typeof modelKey !== 'string' || !/^[a-z][a-z0-9_]{1,62}$/u.test(modelKey)
+        || typeof spaceId !== 'string' || !spaceId.startsWith('spc_')
+        || typeof schemaHash !== 'string' || !schemaHash
+        || !runtimeCapabilities || typeof runtimeCapabilities !== 'object' || Array.isArray(runtimeCapabilities)
+      ) return null;
+      return {
+        modelKey,
+        origin: 'external',
+        spaceId,
+        schemaHash,
+        runtimeCapabilities: runtimeCapabilities as DiscoveryRuntimeCapabilities,
+      };
+    } catch {
+      return null;
+    }
+  }
   if (!raw.startsWith(RECORD_TYPE_SELECTOR_PREFIX)) return null;
   try {
     const decoded = JSON.parse(Buffer.from(raw.slice(RECORD_TYPE_SELECTOR_PREFIX.length), 'base64url').toString('utf8')) as unknown;
@@ -425,6 +532,19 @@ export function decodeRecordTypeSelector(value: unknown): RecordTypeSelector | n
   } catch {
     return null;
   }
+}
+
+export function modelSupportsRuntimeOperation(model: DiscoveryModel, operation: string): boolean {
+  const capabilities = model.runtimeCapabilities;
+  if (!capabilities) return true;
+  if (operation === 'list' || operation === 'query') return capabilities.query;
+  if (operation === 'get') return capabilities.get;
+  if (operation === 'create') return capabilities.create;
+  if (operation === 'update') return capabilities.update;
+  if (operation === 'delete') return capabilities.delete;
+  if (operation === 'executeAction' || operation === 'action') return capabilities.actions;
+  if (operation === 'batchCreate') return capabilities.create && capabilities.batchWrite && capabilities.atomicBatch;
+  return true;
 }
 
 export function normalizeBaseUrl(value: unknown): string {
@@ -461,8 +581,34 @@ async function requestFullRuntimeDiscovery(
   transport?: DiscoveryTransport,
 ): Promise<DiscoveryResponse> {
   try {
-    return await authenticatedGet<DiscoveryResponse>(context, baseUrl, '/me/_discovery', transport);
+    const response = await authenticatedGet<{ data?: { spaces?: Array<{ spaceId: string; spaceName?: string | null; models?: unknown[] }> } }>(
+      context,
+      baseUrl,
+      '/me/_discovery',
+      transport,
+    );
+    if (!response?.data || !Array.isArray(response.data.spaces)) {
+      throw new NodeOperationError(context.getNode(), 'LifeSpace Runtime Discovery returned an invalid response');
+    }
+    return {
+      data: {
+        spaces: response.data.spaces.map((space) => ({
+          spaceId: space.spaceId,
+          spaceName: space.spaceName,
+          models: (space.models ?? []).map((model) => {
+            if (model && typeof model === 'object' && !Array.isArray(model) && (model as { origin?: unknown }).origin === 'external') {
+              const detail = model as ExternalSemanticDetail;
+              return externalDetailedModel(detail, detail.access ?? []);
+            }
+            return model as DiscoveryModel;
+          }),
+        })),
+      },
+    };
   } catch (error) {
+    if (error instanceof NodeOperationError) {
+      throw new NodeOperationError(context.getNode(), error.message);
+    }
     throw new NodeApiError(context.getNode(), error as JsonObject);
   }
 }
@@ -506,47 +652,85 @@ function normalizedField(field: SemanticField): DiscoveryField {
   };
 }
 
-function stubModel(identity: InventoryModel, access: DiscoveryAccess[]): DiscoveryModel {
+function emptyQuery(canonical?: DiscoveryCanonicalQuery): DiscoveryModel['query'] {
+  const sortFields = canonical?.sort.fields ?? [];
+  return {
+    searchable: canonical?.search?.fields ?? [],
+    filterable: canonical?.filter.targets.map((target) => target.field) ?? [],
+    sortable: sortFields,
+    search: null,
+    filters: [],
+    comparisons: [],
+    capabilityQueries: [],
+    sort: {
+      parameter: 'sort',
+      syntax: 'field:direction',
+      repeatable: true,
+      ordered: true,
+      maxCriteria: canonical?.sort.maxCriteria ?? 8,
+      default: (canonical?.sort.default ?? []).map((sort) => `${sort.field}:${sort.direction}`),
+      envelopeFields: [],
+      nullPlacement: canonical?.sort.nullPlacement ?? 'last',
+      genericValues: sortFields.flatMap((field) => [`${field}:asc`, `${field}:desc`]),
+    },
+    pagination: {
+      limit: {
+        parameter: 'limit',
+        minimum: canonical?.pagination.limit.minimum ?? 1,
+        maximum: canonical?.pagination.limit.maximum ?? 200,
+        default: canonical?.pagination.limit.default ?? 100,
+      },
+      cursor: { parameter: 'cursor', type: 'string' },
+    },
+    ...(canonical ? { canonical } : {}),
+  };
+}
+
+function isExternalRuntimeInventoryModel(identity: RuntimeInventoryModel): identity is ExternalRuntimeInventoryModel {
+  return identity.origin === 'external' && 'spaceId' in identity && 'runtimeCapabilities' in identity;
+}
+
+function stubModel(identity: PublishedInventoryModel, access: DiscoveryAccess[]): DiscoveryModel {
   return {
     key: identity.key,
     version: identity.version,
+    ...(identity.origin === 'external' ? { origin: 'external' as const } : {}),
+    ...(identity.fieldsDynamic === true ? { fieldsDynamic: true } : {}),
     schemaHash: identity.schemaHash,
     display: identity.display,
     description: null,
     access,
     fields: [],
     defaults: {},
-    query: {
-      searchable: [],
-      filterable: [],
-      sortable: [],
-      search: null,
-      filters: [],
-      comparisons: [],
-      capabilityQueries: [],
-      sort: {
-        parameter: 'sort',
-        syntax: 'field:direction',
-        repeatable: true,
-        ordered: true,
-        maxCriteria: 8,
-        default: ['createdAt:desc'],
-        envelopeFields: ['createdAt', 'updatedAt'],
-        nullPlacement: 'last',
-        genericValues: ['createdAt:asc', 'createdAt:desc', 'updatedAt:asc', 'updatedAt:desc'],
-      },
-      pagination: {
-        limit: { parameter: 'limit', minimum: 1, maximum: 200, default: 100 },
-        cursor: { parameter: 'cursor', type: 'string' },
-      },
-    },
+    query: emptyQuery(),
     actions: identity.actions.map((action) => ({ ...action, input: { fields: [] } })),
     capabilities: [...identity.capabilities],
     capabilityBindings: {},
   };
 }
 
-function detailedModel(detail: SemanticDetail, access: DiscoveryAccess[]): DiscoveryModel {
+function stubRuntimeModel(identity: RuntimeInventoryModel, access: DiscoveryAccess[]): DiscoveryModel {
+  if (!isExternalRuntimeInventoryModel(identity)) return stubModel(identity, access);
+  return {
+    key: identity.key,
+    origin: 'external',
+    spaceId: identity.spaceId,
+    schemaHash: identity.schemaHash,
+    display: identity.display,
+    description: null,
+    access,
+    fields: [],
+    defaults: {},
+    query: emptyQuery(),
+    actions: [],
+    capabilities: [],
+    capabilityBindings: {},
+    runtimeCapabilities: identity.runtimeCapabilities,
+    contract: identity.contract,
+  };
+}
+
+function detailedModel(detail: NativeSemanticDetail, access: DiscoveryAccess[]): DiscoveryModel {
   return {
     key: detail.key,
     version: detail.version,
@@ -584,6 +768,65 @@ function detailedModel(detail: SemanticDetail, access: DiscoveryAccess[]): Disco
   };
 }
 
+function externalDetailedModel(detail: ExternalSemanticDetail, access: DiscoveryAccess[]): DiscoveryModel {
+  return {
+    key: detail.key,
+    origin: 'external',
+    spaceId: detail.spaceId,
+    schemaHash: detail.schemaHash,
+    display: detail.display,
+    description: detail.description ?? null,
+    access,
+    fields: detail.fields.map((field) => ({
+      key: field.key,
+      title: field.title,
+      type: field.type,
+      nullable: field.nullable,
+      readOnly: !field.writable,
+      values: field.values,
+    })),
+    defaults: {},
+    query: emptyQuery(detail.query.canonical),
+    actions: detail.actions ?? [],
+    capabilities: detail.capabilities ?? [],
+    capabilityBindings: detail.capabilityBindings ?? {},
+    runtimeCapabilities: detail.runtimeCapabilities,
+    contract: detail.contract,
+  };
+}
+
+function runtimeDetailModel(detail: RuntimeSemanticDetail, access: DiscoveryAccess[]): DiscoveryModel {
+  return detail.origin === 'external'
+    ? externalDetailedModel(detail, access)
+    : detailedModel(detail, access);
+}
+
+function runtimeInventoryIdentity(
+  models: RuntimeInventoryModel[],
+  spaceId: string,
+  modelKey: string,
+): RuntimeInventoryModel | undefined {
+  return models.find((model) => model.key === modelKey
+    && (!isExternalRuntimeInventoryModel(model) || model.spaceId === spaceId));
+}
+
+function runtimeDetailMatches(
+  identity: RuntimeInventoryModel,
+  detail: RuntimeSemanticDetail,
+  spaceId: string,
+): boolean {
+  if (isExternalRuntimeInventoryModel(identity)) {
+    return detail.origin === 'external'
+      && detail.key === identity.key
+      && detail.spaceId === spaceId
+      && detail.schemaHash === identity.schemaHash;
+  }
+  return detail.origin !== 'external'
+    && detail.key === identity.key
+    && detail.version === identity.version
+    && detail.schemaHash === identity.schemaHash;
+}
+
 function replacePathTemplate(template: string, values: Record<string, string>): string {
   return Object.entries(values).reduce(
     (path, [key, value]) => path.replace(`{${key}}`, encodeURIComponent(value)),
@@ -594,7 +837,7 @@ function replacePathTemplate(template: string, values: Record<string, string>): 
 export async function loadDesignTimeSemanticDetail(
   this: ILoadOptionsFunctions,
   spaceId: string,
-  identity: Pick<DiscoveryModel, 'key' | 'version' | 'schemaHash' | 'access'>,
+  identity: Pick<DiscoveryModel, 'key' | 'version' | 'schemaHash' | 'access' | 'origin' | 'spaceId'>,
   transport?: DiscoveryTransport,
 ): Promise<DiscoveryModel> {
   const baseUrl = transport
@@ -613,19 +856,23 @@ export async function loadDesignTimeSemanticDetail(
   }
 
   const detail = response?.data;
-  if (
-    !detail
-    || detail.key !== identity.key
-    || detail.version !== identity.version
-    || detail.schemaHash !== identity.schemaHash
-  ) {
+  const matches = detail && (identity.origin === 'external'
+    ? detail.origin === 'external'
+      && detail.key === identity.key
+      && detail.spaceId === spaceId
+      && detail.schemaHash === identity.schemaHash
+    : detail.origin !== 'external'
+      && detail.key === identity.key
+      && detail.version === identity.version
+      && detail.schemaHash === identity.schemaHash);
+  if (!detail || !matches) {
     throw new NodeOperationError(
       this.getNode(),
       `LifeSpace Runtime Discovery semantic detail identity drifted for ${identity.key}`,
     );
   }
 
-  return detailedModel(detail, identity.access);
+  return runtimeDetailModel(detail, identity.access);
 }
 
 export async function loadConfigurationModelInventory(
@@ -705,16 +952,16 @@ async function requestProgressiveRuntimeDiscovery(
     throw new NodeOperationError(context.getNode(), 'LifeSpace Runtime Discovery inventory returned an invalid response');
   }
 
-  const identities = new Map(inventory.data.models.map((model) => [model.key, model]));
   const selectedSpaceId = selection?.spaceId ?? '';
   const selectedModelKey = selection?.modelKey ?? '';
-  let selectedDetail: SemanticDetail | null = null;
+  let selectedDetail: RuntimeSemanticDetail | null = null;
+  let selectedIdentity: RuntimeInventoryModel | undefined;
 
   if (selectedSpaceId && selectedModelKey) {
     const selectedSpace = inventory.data.spaces.find((space) => space.spaceId === selectedSpaceId);
-    const selectedIdentity = identities.get(selectedModelKey);
+    selectedIdentity = runtimeInventoryIdentity(inventory.data.models, selectedSpaceId, selectedModelKey);
     const visible = selectedSpace && selectedIdentity
-      && selectedSpace.models.some((edge) => edge.modelKey === selectedIdentity.key);
+      && selectedSpace.models.some((edge) => edge.modelKey === selectedIdentity!.key);
 
     if (visible && selectedIdentity) {
       const path = replacePathTemplate(inventory.data.semanticDetailPathTemplate, {
@@ -724,7 +971,7 @@ async function requestProgressiveRuntimeDiscovery(
       try {
         const response = await authenticatedGet<SemanticDetailResponse>(context, baseUrl, path, transport);
         const detail = response.data;
-        if (!detail || detail.key !== selectedIdentity.key || detail.version !== selectedIdentity.version || detail.schemaHash !== selectedIdentity.schemaHash) {
+        if (!detail || !runtimeDetailMatches(selectedIdentity, detail, selectedSpaceId)) {
           throw new NodeOperationError(
             context.getNode(),
             `LifeSpace Runtime Discovery semantic detail identity drifted for ${selectedIdentity.key}`,
@@ -743,11 +990,11 @@ async function requestProgressiveRuntimeDiscovery(
         spaceId: space.spaceId,
         spaceName: space.spaceName,
         models: space.models.flatMap((edge) => {
-          const identity = identities.get(edge.modelKey);
+          const identity = runtimeInventoryIdentity(inventory.data.models, space.spaceId, edge.modelKey);
           if (!identity) return [];
           return [selectedDetail && edge.modelKey === selectedModelKey && space.spaceId === selectedSpaceId
-            ? detailedModel(selectedDetail, edge.access)
-            : stubModel(identity, edge.access)];
+            ? runtimeDetailModel(selectedDetail, edge.access)
+            : stubRuntimeModel(identity, edge.access)];
         }),
       })),
     },

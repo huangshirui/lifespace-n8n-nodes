@@ -939,3 +939,28 @@ test('runtime rejects legacy Agent Tool configuration without performing Discove
   );
   assert.equal(context.calls.length, 0);
 });
+
+
+test('dynamic External Tool Update/Delete never synthesize Native record version', async () => {
+  const { buildAgentToolRequest } = require('../dist/nodes/agent/lifeSpaceToolFactory.js');
+  const model = {
+    key: 'health_document', origin: 'external', spaceId: 'spc_test', schemaHash: 'sha256:external',
+    display: { singular: 'Document', plural: 'Documents' }, description: null,
+    access: ['read', 'write'],
+    fields: [{ key: 'f_title', title: 'Title', type: 'string', readOnly: false }], defaults: {},
+    query: { searchable: [], filterable: [], sortable: [], search: null, filters: [], comparisons: [], capabilityQueries: [], sort: { parameter: 'sort', syntax: 'field:direction', repeatable: true, ordered: true, maxCriteria: 8, default: [], envelopeFields: [], nullPlacement: 'provider-defined', genericValues: [] }, pagination: { limit: { parameter: 'limit', minimum: 1, maximum: 100, default: 100 }, cursor: { parameter: 'cursor', type: 'string' } } },
+    actions: [], capabilities: [], capabilityBindings: {},
+    runtimeCapabilities: { get: true, query: true, create: true, update: true, delete: true, batchWrite: true, atomicBatch: false, transaction: false, versionedWrite: false, actions: false, relationTargetResolution: false },
+    contract: { kind: 'dynamic', revision: null },
+  };
+  const update = buildAgentToolRequest(model, { spaceId: 'spc_test', operation: 'update' }, { recordId: 'rec_external_1', f_title: 'Changed' });
+  assert.equal(update.needsCurrentVersion, undefined);
+  assert.deepEqual(update.body, { f_title: 'Changed' });
+  const remove = buildAgentToolRequest(model, { spaceId: 'spc_test', operation: 'delete' }, { recordId: 'rec_external_1' });
+  assert.equal(remove.needsCurrentVersion, undefined);
+  assert.deepEqual(remove.body, {});
+  assert.throws(
+    () => buildAgentToolRequest(model, { spaceId: 'spc_test', operation: 'batchCreate' }, { items: [{ f_title: 'One' }] }),
+    /does not support atomic Batch Create/u,
+  );
+});
