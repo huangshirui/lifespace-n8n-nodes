@@ -43,6 +43,8 @@ function mapperType(field: DiscoveryField | undefined, valueType?: QueryPredicat
     'date-range',
     'instant-range',
     'temporal-range',
+    'recurrence_rule',
+    'entity_ref',
   ].includes(type)) return 'object';
   if (type === 'person_list' || type === 'record_list') return 'array';
   if (type === 'enum') return 'options';

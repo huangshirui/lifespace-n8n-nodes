@@ -1,0 +1,297 @@
+{
+  "structuralTool": {
+    "name": "LifeSpace_Tool",
+    "description": "Create a Event record in Space \"Test Space\". A calendar occurrence. Use only when this configured operation and Space match the user's intent. Interpret local/relative dates in workflow timezone Asia/Shanghai; timed values must be absolute RFC3339 date-times. If a Tool result has error.retryable=true, correct the arguments and retry. If error.retryable=false, do not repeat the same call or guess values; follow error.nextAction.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string",
+          "description": "Summary (string)."
+        },
+        "description": {
+          "description": "Description (text).",
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 5000,
+              "description": "Description (text)."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "location": {
+          "description": "Location (string).",
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 500,
+              "description": "Location (string)."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "when": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "date"
+                  ]
+                },
+                "start": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "end": {
+                  "type": "string",
+                  "format": "date"
+                }
+              },
+              "required": [
+                "kind",
+                "start",
+                "end"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "instant"
+                  ]
+                },
+                "start": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "end": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "required": [
+                "kind",
+                "start",
+                "end"
+              ],
+              "additionalProperties": false
+            }
+          ],
+          "description": "When the occurrence happens. Supply one object with kind, start, and end. kind=date uses inclusive YYYY-MM-DD dates; kind=instant uses absolute RFC3339 date-times."
+        },
+        "attendeePersonIds": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              }
+            ]
+          },
+          "description": "Attendees (person_list). Supply an array of references. Prefer {\"name\":\"...\"} values when the user names targets; {\"id\":\"...\"} or stable ID strings are also accepted."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "cancelled"
+          ],
+          "description": "Status (enum). Optional: LifeSpace applies its published default when omitted.",
+          "default": "active"
+        }
+      },
+      "required": [
+        "summary",
+        "when"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "openAiFunctionTool": {
+    "type": "function",
+    "function": {
+      "name": "LifeSpace_Tool",
+      "description": "Create a Event record in Space \"Test Space\". A calendar occurrence. Use only when this configured operation and Space match the user's intent. Interpret local/relative dates in workflow timezone Asia/Shanghai; timed values must be absolute RFC3339 date-times. If a Tool result has error.retryable=true, correct the arguments and retry. If error.retryable=false, do not repeat the same call or guess values; follow error.nextAction.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "string",
+            "description": "Summary (string)."
+          },
+          "description": {
+            "description": "Description (text).",
+            "oneOf": [
+              {
+                "type": "string",
+                "maxLength": 5000,
+                "description": "Description (text)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "location": {
+            "description": "Location (string).",
+            "oneOf": [
+              {
+                "type": "string",
+                "maxLength": 500,
+                "description": "Location (string)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "when": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "date"
+                    ]
+                  },
+                  "start": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "end": {
+                    "type": "string",
+                    "format": "date"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "start",
+                  "end"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "instant"
+                    ]
+                  },
+                  "start": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "end": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "start",
+                  "end"
+                ],
+                "additionalProperties": false
+              }
+            ],
+            "description": "When the occurrence happens. Supply one object with kind, start, and end. kind=date uses inclusive YYYY-MM-DD dates; kind=instant uses absolute RFC3339 date-times."
+          },
+          "attendeePersonIds": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "string",
+                  "minLength": 1
+                }
+              ]
+            },
+            "description": "Attendees (person_list). Supply an array of references. Prefer {\"name\":\"...\"} values when the user names targets; {\"id\":\"...\"} or stable ID strings are also accepted."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "cancelled"
+            ],
+            "description": "Status (enum). Optional: LifeSpace applies its published default when omitted.",
+            "default": "active"
+          }
+        },
+        "required": [
+          "summary",
+          "when"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

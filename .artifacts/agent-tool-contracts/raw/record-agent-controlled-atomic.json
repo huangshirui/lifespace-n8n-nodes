@@ -1,0 +1,95 @@
+{
+  "structuralTool": {
+    "name": "LifeSpace_Agent_Tool",
+    "description": "Create 1-20 Tasks in Space \"Test Space\". \"atomicConsistency\" defaults false: non-atomic Bulk; items commit independently and partial success is possible. Set true only when the user requires all items in this Tool call to commit or roll back together. Item count alone is not a reason to choose atomic. Atomicity never spans Tool calls, operations, models, or Spaces. After Bulk partial failure, retry only failed items; never resend succeeded items.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Name (string)."
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "done"
+                ],
+                "description": "Status (enum)."
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "additionalProperties": false
+          },
+          "description": "1-20 create inputs for the pinned task contract."
+        },
+        "atomicConsistency": {
+          "type": "boolean",
+          "default": false,
+          "description": "All-or-none for this Tool call. Defaults false. Set true only when the user requires every item to commit together; item count alone does not imply atomicity."
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "openAiFunctionTool": {
+    "type": "function",
+    "function": {
+      "name": "LifeSpace_Agent_Tool",
+      "description": "Create 1-20 Tasks in Space \"Test Space\". \"atomicConsistency\" defaults false: non-atomic Bulk; items commit independently and partial success is possible. Set true only when the user requires all items in this Tool call to commit or roll back together. Item count alone is not a reason to choose atomic. Atomicity never spans Tool calls, operations, models, or Spaces. After Bulk partial failure, retry only failed items; never resend succeeded items.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Name (string)."
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "open",
+                    "done"
+                  ],
+                  "description": "Status (enum)."
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false
+            },
+            "description": "1-20 create inputs for the pinned task contract."
+          },
+          "atomicConsistency": {
+            "type": "boolean",
+            "default": false,
+            "description": "All-or-none for this Tool call. Defaults false. Set true only when the user requires every item to commit together; item count alone does not imply atomicity."
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

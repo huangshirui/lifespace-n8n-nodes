@@ -67,6 +67,7 @@ function externalDetail(spaceId = 'spc_test') {
       fields: [
         { key: 'f_title', title: 'Title', type: 'string', nullable: false, readable: true, writable: other, operators: ['eq', 'contains'], sortable: true },
         { key: 'f_created', title: 'Created', type: 'instant', nullable: false, readable: true, writable: false, operators: ['eq', 'gte'], sortable: true },
+        { key: 'f_subject', title: 'Subject', type: 'entity_ref', valueSchema: { type: 'object', properties: { kind: { const: 'person' }, personId: { type: 'string' } }, required: ['kind', 'personId'], additionalProperties: false }, nullable: true, readable: true, writable: other, operators: [], sortable: false },
       ],
       actions: [], capabilities: [], capabilityBindings: {}, runtimeCapabilities,
       contract: { kind: 'dynamic', revision: null },
@@ -143,7 +144,8 @@ test('selected External Record Type loads Space-local dynamic fields without fab
 
   const fieldContext = context({ spaceId: 'spc_other', operation: 'create', recordType: external.value });
   const fields = await node.methods.resourceMapping.getHumanRecordFields.call(fieldContext);
-  assert.deepEqual(fields.fields.map((field) => field.id), ['lsf:string:f_title']);
+  assert.deepEqual(fields.fields.map((field) => field.id), ['lsf:string:f_title', 'lsf:entity_ref:f_subject']);
+  assert.equal(fields.fields.find((field) => field.id === 'lsf:entity_ref:f_subject')?.type, 'object');
   const selector = decodeRecordTypeSelector(external.value);
   assert.equal(selector.schemaHash, 'sha256:notion-b');
   assert.equal(fieldContext.calls.some((call) => call.url.endsWith('/spaces/spc_other/_discovery/models/health_document')), true);

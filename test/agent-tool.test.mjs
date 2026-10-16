@@ -947,12 +947,18 @@ test('dynamic External Tool Update/Delete never synthesize Native record version
     key: 'health_document', origin: 'external', spaceId: 'spc_test', schemaHash: 'sha256:external',
     display: { singular: 'Document', plural: 'Documents' }, description: null,
     access: ['read', 'write'],
-    fields: [{ key: 'f_title', title: 'Title', type: 'string', readOnly: false }], defaults: {},
+    fields: [
+      { key: 'f_title', title: 'Title', type: 'string', readOnly: false },
+      { key: 'f_subject', title: 'Subject', type: 'entity_ref', readOnly: false, valueSchema: { type: 'object', properties: { kind: { const: 'person' }, personId: { type: 'string', pattern: '^per_' } }, required: ['kind', 'personId'], additionalProperties: false } },
+    ], defaults: {},
     query: { searchable: [], filterable: [], sortable: [], search: null, filters: [], comparisons: [], capabilityQueries: [], sort: { parameter: 'sort', syntax: 'field:direction', repeatable: true, ordered: true, maxCriteria: 8, default: [], envelopeFields: [], nullPlacement: 'provider-defined', genericValues: [] }, pagination: { limit: { parameter: 'limit', minimum: 1, maximum: 100, default: 100 }, cursor: { parameter: 'cursor', type: 'string' } } },
     actions: [], capabilities: [], capabilityBindings: {},
     runtimeCapabilities: { get: true, query: true, create: true, update: true, delete: true, batchWrite: true, atomicBatch: false, transaction: false, versionedWrite: false, actions: false, relationTargetResolution: false },
     contract: { kind: 'dynamic', revision: null },
   };
+  const definition = buildAgentToolDefinition(model, { spaceId: 'spc_test', operation: 'create' });
+  assert.equal(definition.schema.properties.f_subject.type, 'object');
+  assert.equal(definition.schema.properties.f_subject.properties.kind.const, 'person');
   const update = buildAgentToolRequest(model, { spaceId: 'spc_test', operation: 'update' }, { recordId: 'rec_external_1', f_title: 'Changed' });
   assert.equal(update.needsCurrentVersion, undefined);
   assert.deepEqual(update.body, { f_title: 'Changed' });

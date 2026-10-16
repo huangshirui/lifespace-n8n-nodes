@@ -1,0 +1,59 @@
+{
+  "structuralTool": {
+    "name": "LifeSpace_Agent_Tool",
+    "description": "List or search Space People by canonical or alternate name in Space \"spc_test\". Person is a Kernel first-class directory resource, not an ordinary LifeSpace model.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "search": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional substring search across canonical display names and active alternate names."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 50,
+          "description": "Maximum People to return in this page."
+        },
+        "cursor": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque cursor from a previous Person Directory page."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "openAiFunctionTool": {
+    "type": "function",
+    "function": {
+      "name": "LifeSpace_Agent_Tool",
+      "description": "List or search Space People by canonical or alternate name in Space \"spc_test\". Person is a Kernel first-class directory resource, not an ordinary LifeSpace model.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "search": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Optional substring search across canonical display names and active alternate names."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 50,
+            "description": "Maximum People to return in this page."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque cursor from a previous Person Directory page."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

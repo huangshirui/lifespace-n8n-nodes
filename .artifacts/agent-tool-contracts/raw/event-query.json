@@ -1,0 +1,549 @@
+{
+  "structuralTool": {
+    "name": "LifeSpace_Tool",
+    "description": "Query Events using the published LifeSpace query contract in Space \"Test Space\". A calendar occurrence. Use only when this configured operation and Space match the user's intent. Interpret local/relative dates in workflow timezone Asia/Shanghai; timed values must be absolute RFC3339 date-times. Calendar query guidance: use timeWindow for today/tomorrow/this week/date ranges; for a named attendee use filters with field \"attendeePersonIds\", operator \"contains\", value {\"name\":\"...\"}; for chronological order sort by \"when\" directly. Search matches only summary and must not be used for attendee names. Never invent nested sort paths such as \"when.start\" or \"when.start.instant\". Example date+attendee+chronological query: {\"timeWindow\":{\"startDate\":\"YYYY-MM-DD\",\"endDate\":\"YYYY-MM-DD\"},\"filters\":[{\"field\":\"attendeePersonIds\",\"operator\":\"contains\",\"value\":{\"name\":\"Person\"}}],\"sort\":[{\"field\":\"when\",\"direction\":\"asc\"}]}. If a Tool result has error.retryable=true, correct the arguments and retry. If error.retryable=false, do not repeat the same call or guess values; follow error.nextAction.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "search": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Searches summary only. Never attendee names; use attendeePersonIds contains {\"name\":\"...\"}."
+        },
+        "timeWindow": {
+          "type": "object",
+          "description": "When calendar window for today/tomorrow/this week/date ranges. Inclusive local dates; workflow timezone; matches overlaps.",
+          "properties": {
+            "startDate": {
+              "type": "string",
+              "format": "date"
+            },
+            "endDate": {
+              "type": "string",
+              "format": "date",
+              "description": "Inclusive."
+            }
+          },
+          "required": [
+            "startDate",
+            "endDate"
+          ],
+          "additionalProperties": false
+        },
+        "filters": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string",
+                    "enum": [
+                      "attendeePersonIds"
+                    ],
+                    "description": "Attendees"
+                  },
+                  "operator": {
+                    "type": "string",
+                    "enum": [
+                      "contains"
+                    ],
+                    "description": "Field/range contains the supplied value."
+                  },
+                  "value": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "name"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    ],
+                    "description": "Reference by name or stable ID. The string \"me\" means the current actor Person."
+                  }
+                },
+                "required": [
+                  "field",
+                  "operator",
+                  "value"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string",
+                    "enum": [
+                      "when"
+                    ],
+                    "description": "When the occurrence happens."
+                  },
+                  "operator": {
+                    "type": "string",
+                    "enum": [
+                      "overlaps",
+                      "contains",
+                      "before",
+                      "after"
+                    ],
+                    "description": "Allowed range operators: overlaps, contains, before, after."
+                  },
+                  "value": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "date"
+                            ]
+                          },
+                          "start": {
+                            "type": "string",
+                            "format": "date"
+                          },
+                          "end": {
+                            "type": "string",
+                            "format": "date",
+                            "description": "Inclusive."
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "start",
+                          "end"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "instant"
+                            ]
+                          },
+                          "start": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "end": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "start",
+                          "end"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "field",
+                  "operator",
+                  "value"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string",
+                    "enum": [
+                      "when"
+                    ],
+                    "description": "When the occurrence happens."
+                  },
+                  "operator": {
+                    "type": "string",
+                    "enum": [
+                      "kindIs"
+                    ],
+                    "description": "TemporalRange kind: date (all-day) or instant (timed)."
+                  },
+                  "value": {
+                    "type": "string",
+                    "enum": [
+                      "date",
+                      "instant"
+                    ]
+                  }
+                },
+                "required": [
+                  "field",
+                  "operator",
+                  "value"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "maxItems": 100,
+          "description": "Published predicates. match=all means AND; match=any means OR."
+        },
+        "match": {
+          "type": "string",
+          "enum": [
+            "all",
+            "any"
+          ],
+          "description": "Combine filters: all=AND (default), any=OR."
+        },
+        "sort": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string",
+                "enum": [
+                  "createdAt",
+                  "summary",
+                  "updatedAt",
+                  "when"
+                ],
+                "description": "Published sort field. Chronological calendar order = \"when\". Never use nested paths."
+              },
+              "direction": {
+                "type": "string",
+                "enum": [
+                  "asc",
+                  "desc"
+                ],
+                "description": "Sort direction for the selected published field."
+              }
+            },
+            "required": [
+              "field",
+              "direction"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 8,
+          "description": "Ordered sort. Use exact published field names only."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Maximum records to return."
+        },
+        "cursor": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque pagination cursor."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "openAiFunctionTool": {
+    "type": "function",
+    "function": {
+      "name": "LifeSpace_Tool",
+      "description": "Query Events using the published LifeSpace query contract in Space \"Test Space\". A calendar occurrence. Use only when this configured operation and Space match the user's intent. Interpret local/relative dates in workflow timezone Asia/Shanghai; timed values must be absolute RFC3339 date-times. Calendar query guidance: use timeWindow for today/tomorrow/this week/date ranges; for a named attendee use filters with field \"attendeePersonIds\", operator \"contains\", value {\"name\":\"...\"}; for chronological order sort by \"when\" directly. Search matches only summary and must not be used for attendee names. Never invent nested sort paths such as \"when.start\" or \"when.start.instant\". Example date+attendee+chronological query: {\"timeWindow\":{\"startDate\":\"YYYY-MM-DD\",\"endDate\":\"YYYY-MM-DD\"},\"filters\":[{\"field\":\"attendeePersonIds\",\"operator\":\"contains\",\"value\":{\"name\":\"Person\"}}],\"sort\":[{\"field\":\"when\",\"direction\":\"asc\"}]}. If a Tool result has error.retryable=true, correct the arguments and retry. If error.retryable=false, do not repeat the same call or guess values; follow error.nextAction.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "search": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Searches summary only. Never attendee names; use attendeePersonIds contains {\"name\":\"...\"}."
+          },
+          "timeWindow": {
+            "type": "object",
+            "description": "When calendar window for today/tomorrow/this week/date ranges. Inclusive local dates; workflow timezone; matches overlaps.",
+            "properties": {
+              "startDate": {
+                "type": "string",
+                "format": "date"
+              },
+              "endDate": {
+                "type": "string",
+                "format": "date",
+                "description": "Inclusive."
+              }
+            },
+            "required": [
+              "startDate",
+              "endDate"
+            ],
+            "additionalProperties": false
+          },
+          "filters": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string",
+                      "enum": [
+                        "attendeePersonIds"
+                      ],
+                      "description": "Attendees"
+                    },
+                    "operator": {
+                      "type": "string",
+                      "enum": [
+                        "contains"
+                      ],
+                      "description": "Field/range contains the supplied value."
+                    },
+                    "value": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "name"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "id"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      ],
+                      "description": "Reference by name or stable ID. The string \"me\" means the current actor Person."
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "operator",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string",
+                      "enum": [
+                        "when"
+                      ],
+                      "description": "When the occurrence happens."
+                    },
+                    "operator": {
+                      "type": "string",
+                      "enum": [
+                        "overlaps",
+                        "contains",
+                        "before",
+                        "after"
+                      ],
+                      "description": "Allowed range operators: overlaps, contains, before, after."
+                    },
+                    "value": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "date"
+                              ]
+                            },
+                            "start": {
+                              "type": "string",
+                              "format": "date"
+                            },
+                            "end": {
+                              "type": "string",
+                              "format": "date",
+                              "description": "Inclusive."
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "start",
+                            "end"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "instant"
+                              ]
+                            },
+                            "start": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "end": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "start",
+                            "end"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "operator",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string",
+                      "enum": [
+                        "when"
+                      ],
+                      "description": "When the occurrence happens."
+                    },
+                    "operator": {
+                      "type": "string",
+                      "enum": [
+                        "kindIs"
+                      ],
+                      "description": "TemporalRange kind: date (all-day) or instant (timed)."
+                    },
+                    "value": {
+                      "type": "string",
+                      "enum": [
+                        "date",
+                        "instant"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "operator",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "maxItems": 100,
+            "description": "Published predicates. match=all means AND; match=any means OR."
+          },
+          "match": {
+            "type": "string",
+            "enum": [
+              "all",
+              "any"
+            ],
+            "description": "Combine filters: all=AND (default), any=OR."
+          },
+          "sort": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "enum": [
+                    "createdAt",
+                    "summary",
+                    "updatedAt",
+                    "when"
+                  ],
+                  "description": "Published sort field. Chronological calendar order = \"when\". Never use nested paths."
+                },
+                "direction": {
+                  "type": "string",
+                  "enum": [
+                    "asc",
+                    "desc"
+                  ],
+                  "description": "Sort direction for the selected published field."
+                }
+              },
+              "required": [
+                "field",
+                "direction"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 8,
+            "description": "Ordered sort. Use exact published field names only."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "description": "Maximum records to return."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Opaque pagination cursor."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}
