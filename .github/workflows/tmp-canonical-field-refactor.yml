@@ -1,0 +1,41 @@
+name: Temporary canonical field refactor
+
+on:
+  push:
+    branches:
+      - refactor/canonical-field-language
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refactor/canonical-field-language
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24.20.0'
+      - name: Apply targeted canonical field patch
+        run: node tmp-canonical-field-refactor.mjs
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Test
+        run: npm test
+        env:
+          LIFESPACE_AGENT_TOOL_CONTRACT_DIR: .artifacts/agent-tool-contracts/raw
+      - name: Commit refactor
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --quiet && { echo 'No changes'; exit 1; }
+          git commit -m 'refactor: consume canonical field language'
+          git push origin HEAD:refactor/canonical-field-language
