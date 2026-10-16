@@ -8,7 +8,7 @@ async function text(path) {
 
 test('package registers separate human workflow and native Agent Tool surfaces', async () => {
   const packageJson = JSON.parse(await text('package.json'));
-  assert.ok(packageJson.n8n.nodes.includes('dist/nodes/LifeSpaceWorkflow/LifeSpaceWorkflow.node.js'));
+  assert.ok(packageJson.n8n.nodes.includes('dist/nodes/LifeSpaceWorkflow/LifeSpaceWorkflowCompat.node.js'));
   assert.ok(packageJson.n8n.nodes.includes('dist/nodes/LifeSpaceAgentTool/LifeSpaceAgentTool.node.js'));
   assert.ok(packageJson.n8n.nodes.includes('dist/nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.js'));
   assert.equal(packageJson.n8n.nodes.includes('dist/nodes/LifeSpace/LifeSpace.node.js'), false);
@@ -62,7 +62,7 @@ test('human workflow projection is not exposed through usableAsTool', async () =
   const workflow = await text('nodes/LifeSpaceWorkflow/LifeSpaceWorkflow.node.ts');
   const packageJson = JSON.parse(await text('package.json'));
   assert.match(workflow, /delete description\.usableAsTool/u);
-  assert.ok(packageJson.n8n.nodes.includes('dist/nodes/LifeSpaceWorkflow/LifeSpaceWorkflow.node.js'));
+  assert.ok(packageJson.n8n.nodes.includes('dist/nodes/LifeSpaceWorkflow/LifeSpaceWorkflowCompat.node.js'));
 });
 
 test('Agent Tool source uses only public-safe examples and no private infrastructure', async () => {
