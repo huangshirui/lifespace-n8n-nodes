@@ -1,0 +1,30 @@
+name: Temporary verified 0.2.5 tag
+
+on:
+  push:
+    branches:
+      - release/tag-0.2.5
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout helper branch
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Tag exact verified main commit
+        shell: bash
+        env:
+          EXPECTED_SHA: 48c4e212059d0909ef056fe3062c9d0e8cb8044d
+        run: |
+          set -euo pipefail
+          main_sha="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          test "$main_sha" = "$EXPECTED_SHA" || { echo "main moved: $main_sha" >&2; exit 1; }
+          test "$(git show "$EXPECTED_SHA:package.json" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s).version))")" = "0.2.5"
+          git tag 0.2.5 "$EXPECTED_SHA"
+          git push origin refs/tags/0.2.5
