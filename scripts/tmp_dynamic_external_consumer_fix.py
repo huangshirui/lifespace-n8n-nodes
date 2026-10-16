@@ -49,4 +49,24 @@ if old_import not in s:
 s = s.replace(old_import, new_import, 1)
 p.write_text(s)
 
-print('lint and TypeScript corrections staged')
+for test_path in [
+    Path('test/agent-tool-source-contract.test.mjs'),
+    Path('test/query-ui-regression.test.mjs'),
+]:
+    t = test_path.read_text()
+    t = t.replace(
+        'dist/nodes/LifeSpaceWorkflow/LifeSpaceWorkflowCompat.node.js',
+        'dist/nodes/LifeSpaceWorkflow/LifeSpaceWorkflow.node.js',
+    )
+    test_path.write_text(t)
+
+p = Path('test/external-discovery-compat.test.mjs')
+s = p.read_text()
+old_field = "assert.deepEqual(fields.fields.map((field) => field.id), ['f_title']);"
+new_field = "assert.deepEqual(fields.fields.map((field) => field.id), ['lsf:string:f_title']);"
+if old_field not in s:
+    raise SystemExit('missing External field mapper assertion')
+s = s.replace(old_field, new_field, 1)
+p.write_text(s)
+
+print('lint, TypeScript, and regression baseline corrections staged')
