@@ -108,7 +108,7 @@ test('workflow node is a human-only projection with Discovery-driven Create fiel
 
   const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.deepEqual(packageJson.n8n.nodes, [
-    'dist/nodes/LifeSpaceWorkflow/LifeSpaceWorkflow.node.js',
+    'dist/nodes/LifeSpaceWorkflow/LifeSpaceWorkflowCompat.node.js',
     'dist/nodes/LifeSpaceDelegation/LifeSpaceDelegation.node.js',
     'dist/nodes/LifeSpaceTrigger/LifeSpaceTrigger.node.js',
     'dist/nodes/LifeSpaceAgentTool/LifeSpaceAgentTool.node.js',
