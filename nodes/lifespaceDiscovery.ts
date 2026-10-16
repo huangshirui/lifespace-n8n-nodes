@@ -44,7 +44,8 @@ export type DiscoveryRelation = {
 
 export type DiscoveryField = {
   key: string;
-  type: 'string' | 'text' | 'integer' | 'number' | 'boolean' | 'date' | 'instant' | 'datetime' | 'timezone' | 'enum' | 'person' | 'person_list' | 'record' | 'record_list' | 'range<date>' | 'range<instant>' | 'temporal_range';
+  type: 'string' | 'text' | 'integer' | 'number' | 'boolean' | 'date' | 'instant' | 'datetime' | 'timezone' | 'enum' | 'person' | 'person_list' | 'record' | 'record_list' | 'range<date>' | 'range<instant>' | 'temporal_range' | 'recurrence_rule' | 'entity_ref';
+  valueSchema?: Record<string, unknown>;
   title?: string;
   description?: string;
   required?: boolean;
@@ -410,6 +411,7 @@ type ExternalSemanticField = {
   key: string;
   title: string;
   type: DiscoveryField['type'];
+  valueSchema?: Record<string, unknown>;
   nullable: boolean;
   readable: true;
   writable: boolean;
@@ -781,6 +783,7 @@ function externalDetailedModel(detail: ExternalSemanticDetail, access: Discovery
       key: field.key,
       title: field.title,
       type: field.type,
+      valueSchema: field.valueSchema,
       nullable: field.nullable,
       readOnly: !field.writable,
       values: field.values,

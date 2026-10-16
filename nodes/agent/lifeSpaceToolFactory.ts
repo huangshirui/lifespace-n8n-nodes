@@ -273,6 +273,11 @@ function fieldSchema(field: DiscoveryField): JsonSchema {
     case 'temporal_range':
       schema = temporalRangeSchema();
       break;
+    case 'recurrence_rule':
+    case 'entity_ref':
+      if (!field.valueSchema) throw new Error(`LifeSpace structured field ${field.key} is missing canonical valueSchema`);
+      schema = structuredClone(field.valueSchema) as JsonSchema;
+      break;
     case 'timezone':
       schema = { type: 'string', minLength: 1 };
       break;

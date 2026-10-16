@@ -626,8 +626,15 @@ function resourceMapperType(field: DiscoveryField): FieldType {
     case 'boolean':
       return 'boolean';
     case 'date':
+    case 'instant':
     case 'datetime':
       return 'dateTime';
+    case 'range<date>':
+    case 'range<instant>':
+    case 'temporal_range':
+    case 'recurrence_rule':
+    case 'entity_ref':
+      return 'object';
     case 'person_list':
     case 'record_list':
       return 'array';
