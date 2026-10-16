@@ -17,11 +17,17 @@ function validModel(value: unknown): value is DiscoveryModel {
   if (!objectValue(value)) return false;
   const display = value.display;
   const query = value.query;
+  const versionIdentity = value.origin === 'external'
+    ? value.version === undefined
+      && typeof value.spaceId === 'string'
+      && value.spaceId.length > 0
+      && objectValue(value.runtimeCapabilities)
+    : typeof value.version === 'number'
+      && Number.isInteger(value.version)
+      && value.version >= 1;
   return typeof value.key === 'string'
     && /^[a-z][a-z0-9_]{1,62}$/u.test(value.key)
-    && typeof value.version === 'number'
-    && Number.isInteger(value.version)
-    && value.version >= 1
+    && versionIdentity
     && typeof value.schemaHash === 'string'
     && value.schemaHash.length > 0
     && objectValue(display)

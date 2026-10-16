@@ -89,6 +89,16 @@ function responseFor(url) {
           capabilities: ['calendar'],
           actions: [{ key: 'reschedule', access: 'write', kind: 'workflow' }],
           access: ['read', 'write'],
+        }, {
+          key: 'health_document',
+          version: 1,
+          schemaHash: 'published-external-definition',
+          display: { singular: 'Health Document', plural: 'Health Documents' },
+          capabilities: [],
+          actions: [],
+          access: ['read', 'write'],
+          origin: 'external',
+          fieldsDynamic: true,
         }],
       },
     };
@@ -97,7 +107,47 @@ function responseFor(url) {
     return { data: { access: ['read', 'write'], model: semanticDetail() } };
   }
   if (url === `${CORE_BASE}/me/_discovery/inventory`) {
-    return { data: { semanticDetailPathTemplate: '', models: [], spaces: [] } };
+    return { data: {
+      semanticDetailPathTemplate: '/api/v1/spaces/{spaceId}/_discovery/models/{modelKey}',
+      models: [{
+        key: 'health_document', origin: 'external', spaceId: 'spc_external', schemaHash: 'external-space-schema',
+        display: { singular: 'Health Document', plural: 'Health Documents' },
+        runtimeCapabilities: {
+          get: true, query: true, create: false, update: false, delete: false,
+          batchWrite: false, atomicBatch: false, transaction: false,
+          versionedWrite: false, actions: false, relationTargetResolution: false,
+        },
+        contract: { kind: 'dynamic', revision: null },
+      }],
+      spaces: [{
+        spaceId: 'spc_external', spaceName: 'External Space',
+        models: [{ modelKey: 'health_document', access: ['read'] }],
+      }],
+    } };
+  }
+  if (url === `${CORE_BASE}/spaces/spc_external/_discovery/models/health_document`) {
+    return { data: {
+      key: 'health_document', modelKey: 'health_document', origin: 'external', spaceId: 'spc_external',
+      schemaHash: 'external-space-schema',
+      display: { singular: 'Health Document', plural: 'Health Documents' },
+      description: 'Space-local provider schema', access: ['read'],
+      fields: [{ key: 'f_title', title: 'Title', type: 'string', nullable: false, readable: true, writable: false, operators: ['eq', 'contains'], sortable: true }],
+      actions: [], capabilities: [], capabilityBindings: {},
+      runtimeCapabilities: {
+        get: true, query: true, create: false, update: false, delete: false,
+        batchWrite: false, atomicBatch: false, transaction: false,
+        versionedWrite: false, actions: false, relationTargetResolution: false,
+      },
+      contract: { kind: 'dynamic', revision: null },
+      query: { canonical: {
+        invocation: { method: 'POST', pathTemplate: '/api/v1/spaces/{spaceId}/models/{modelKey}/records/query' },
+        composition: { selectionFacets: ['filter'], selectionCombine: 'intersection', ordering: 'sort', pagination: 'cursor-pagination' },
+        search: null,
+        filter: { maxDepth: 2, maxNodes: 100, targets: [{ field: 'f_title', kind: 'field', valueType: 'string', operators: ['eq', 'contains'], nullable: false }] },
+        sort: { fields: ['f_title'], directions: ['asc', 'desc'], maxCriteria: 8, default: [], nullPlacement: 'provider-defined', stableTieBreaker: 'provider-defined', temporalRange: null },
+        pagination: { limit: { minimum: 1, maximum: 100, default: 100 }, cursor: { opaque: true, binds: ['space', 'model', 'schema'], snapshotConsistency: false } },
+      } },
+    } };
   }
   throw new Error(`Unexpected URL ${url}`);
 }
@@ -184,6 +234,7 @@ test('Record Type options use configuration model discovery and do not require a
   assert.deepEqual(snapshot.model.access, ['read', 'write']);
   assert.deepEqual(context.calls.map((call) => call.url), [
     `${CORE_BASE}/me/_discovery/models`,
+    `${CORE_BASE}/me/_discovery/inventory`,
     `${CORE_BASE}/me/_discovery/models/event`,
   ]);
 });
@@ -197,7 +248,41 @@ test('Actions can be discovered from a directly entered model key without Space 
     value: 'reschedule',
     description: 'workflow Action · requires write access',
   }]);
-  assert.deepEqual(context.calls.map((call) => call.url), [`${CORE_BASE}/me/_discovery/models/event`]);
+  assert.deepEqual(context.calls.map((call) => call.url), [
+    `${CORE_BASE}/me/_discovery/models`,
+    `${CORE_BASE}/me/_discovery/models/event`,
+  ]);
+});
+
+test('External Record Type options pin the selected Space dynamic contract instead of the global definition', async () => {
+  const node = new LifeSpaceAgentTool();
+  const context = editorContext({ spaceId: 'spc_external', operation: 'query' });
+  const options = await node.methods.loadOptions.getRecordTypes.call(context);
+  const external = options.find((option) => option.name === 'Health Document');
+  assert.ok(external);
+  const snapshot = decodeAgentToolSemanticSnapshot(external.value);
+  assert.equal(snapshot.spaceId, 'spc_external');
+  assert.equal(snapshot.model.origin, 'external');
+  assert.equal(snapshot.model.version, undefined);
+  assert.equal(snapshot.model.schemaHash, 'external-space-schema');
+  assert.equal(snapshot.model.fields[0].key, 'f_title');
+  assert.equal(snapshot.model.runtimeCapabilities.query, true);
+  const urls = context.calls.map((call) => call.url);
+  assert.deepEqual(urls.slice(0, 2), [
+    `${CORE_BASE}/me/_discovery/models`,
+    `${CORE_BASE}/me/_discovery/inventory`,
+  ]);
+  assert.deepEqual(new Set(urls.slice(2)), new Set([
+    `${CORE_BASE}/spaces/spc_external/_discovery/models/health_document`,
+    `${CORE_BASE}/me/_discovery/models/event`,
+  ]));
+});
+
+test('External Record Type is not advertised for operations absent from its current Space runtime capabilities', async () => {
+  const node = new LifeSpaceAgentTool();
+  const context = editorContext({ spaceId: 'spc_external', operation: 'update' });
+  const options = await node.methods.loadOptions.getRecordTypes.call(context);
+  assert.equal(options.some((option) => option.name === 'Health Document'), false);
 });
 
 test('A directly entered model key resolves static semantics when the Tool is supplied', async () => {
@@ -206,5 +291,8 @@ test('A directly entered model key resolves static semantics when the Tool is su
   const supplied = await node.supplyData.call(context, 0);
   assert.ok(supplied.response);
   assert.equal(supplied.response.metadata.lifeSpaceModelVersion, 6);
-  assert.deepEqual(context.calls.map((call) => call.url), [`${CORE_BASE}/me/_discovery/models/event`]);
+  assert.deepEqual(context.calls.map((call) => call.url), [
+    `${CORE_BASE}/me/_discovery/models`,
+    `${CORE_BASE}/me/_discovery/models/event`,
+  ]);
 });
