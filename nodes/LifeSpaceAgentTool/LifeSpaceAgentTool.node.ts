@@ -34,10 +34,14 @@ import {
 } from '../agent/lifeSpaceToolSnapshot';
 import {
   decodeRecordTypeSelector,
+  discoverySpace,
   loadConfigurationModelInventory,
   loadConfigurationModelSemanticDetail,
+  loadDesignTimeSemanticDetail,
   loadOptionParameter,
   loadRuntimeDiscoveryInventory,
+  loadSpaceRuntimeModel,
+  modelSupportsRuntimeOperation,
   type DiscoveryModel,
   type DiscoveryTransport,
 } from '../lifespaceDiscovery';
@@ -114,12 +118,32 @@ async function agentConfigurationTransport(
 }
 
 function modelSupportsConfigurationOperation(model: DiscoveryModel, operation: string): boolean {
+  if (!modelSupportsRuntimeOperation(model, operation)) return false;
   if (operation === 'query') return model.access.includes('read');
   if (['create', 'update', 'delete'].includes(operation)) return model.access.includes('write');
   if (operation === 'action') {
     return model.actions.some((action) => model.access.includes(action.access));
   }
   return false;
+}
+
+function dynamicConfigurationModel(model: DiscoveryModel): boolean {
+  return model.origin === 'external' || model.fieldsDynamic === true;
+}
+
+async function resolveAgentConfigurationModel(
+  context: AgentConfigurationContext,
+  spaceId: string,
+  modelKey: string,
+  transport: DiscoveryTransport,
+): Promise<DiscoveryModel | null> {
+  const inventory = await loadConfigurationModelInventory(context, transport);
+  const published = inventory.find((model) => model.key === modelKey);
+  if (!published) return null;
+  if (!dynamicConfigurationModel(published)) {
+    return loadConfigurationModelSemanticDetail(context, modelKey, transport);
+  }
+  return loadSpaceRuntimeModel(context, spaceId, modelKey, transport);
 }
 
 async function selectedAgentConfigurationModel(
@@ -137,8 +161,8 @@ async function selectedAgentConfigurationModel(
   const selector = decodeRecordTypeSelector(rawRecordType);
   if (!selector) return null;
   const transport = await agentConfigurationTransport(context);
-  const model = await loadConfigurationModelSemanticDetail(context, selector.modelKey, transport);
-  return { model, spaceId };
+  const model = await resolveAgentConfigurationModel(context, spaceId, selector.modelKey, transport);
+  return model ? { model, spaceId } : null;
 }
 
 async function configuredRecordTypeValue(
@@ -172,7 +196,14 @@ async function configuredRecordTypeValue(
   }
 
   const transport = await agentConfigurationTransport(context, itemIndex);
-  const model = await loadConfigurationModelSemanticDetail(context, selector.modelKey, transport);
+  const model = await resolveAgentConfigurationModel(context, spaceId, selector.modelKey, transport);
+  if (!model) {
+    throw new NodeOperationError(
+      context.getNode(),
+      `LifeSpace Record Type ${selector.modelKey} is not currently available in Space ${spaceId}. Dynamic External fields require current Space visibility.`,
+      { itemIndex },
+    );
+  }
   return encodeAgentToolSemanticSnapshot({
     format: 1,
     spaceId,
@@ -974,17 +1005,26 @@ export class LifeSpaceAgentTool extends LifeSpaceTool {
 
           const transport = await agentConfigurationTransport(this);
           const inventory = await loadConfigurationModelInventory(this, transport);
-          const candidates = inventory.filter((model) => modelSupportsConfigurationOperation(model, operation));
-          const models = await Promise.all(
-            candidates.map((model) => loadConfigurationModelSemanticDetail(this, model.key, transport)),
-          );
+          const needsDynamic = inventory.some(dynamicConfigurationModel);
+          const runtime = needsDynamic ? await loadRuntimeDiscoveryInventory.call(this, transport) : null;
+          const runtimeSpace = runtime ? discoverySpace(runtime, spaceId) : undefined;
+
+          const models = (await Promise.all(inventory.map(async (published) => {
+            if (!dynamicConfigurationModel(published)) {
+              if (!modelSupportsConfigurationOperation(published, operation)) return null;
+              return loadConfigurationModelSemanticDetail(this, published.key, transport);
+            }
+            const identity = runtimeSpace?.models.find((model) => model.key === published.key && model.origin === 'external');
+            if (!identity || !modelSupportsConfigurationOperation(identity, operation)) return null;
+            return loadDesignTimeSemanticDetail.call(this, spaceId, identity, transport);
+          }))).filter((model): model is DiscoveryModel => model !== null);
 
           return models.map((model) => ({
             name: model.display.singular?.trim() || model.key,
             value: encodeAgentToolSemanticSnapshot({
               format: 1,
               spaceId,
-              spaceName: null,
+              spaceName: runtimeSpace?.spaceName ?? null,
               model,
             }),
             description: model.description ?? undefined,

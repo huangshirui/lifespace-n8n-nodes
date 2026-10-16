@@ -576,7 +576,7 @@ async function authenticatedGet<T>(
 }
 
 async function requestFullRuntimeDiscovery(
-  context: ILoadOptionsFunctions | IExecuteFunctions,
+  context: ILoadOptionsFunctions | IExecuteFunctions | ISupplyDataFunctions,
   baseUrl: string,
   transport?: DiscoveryTransport,
 ): Promise<DiscoveryResponse> {
@@ -1142,6 +1142,22 @@ export async function loadRuntimeDiscoveryInventory(
     : normalizeBaseUrl((await this.getCredentials('lifeSpaceApi')).baseUrl);
   const progressive = await requestProgressiveRuntimeDiscovery(this, baseUrl, undefined, transport);
   return progressive ?? requestFullRuntimeDiscovery(this, baseUrl, transport);
+}
+
+export async function loadSpaceRuntimeModel(
+  context: ILoadOptionsFunctions | IExecuteFunctions | ISupplyDataFunctions,
+  spaceId: string,
+  modelKey: string,
+  transport: DiscoveryTransport,
+): Promise<DiscoveryModel | null> {
+  const progressive = await requestProgressiveRuntimeDiscovery(
+    context,
+    transport.baseUrl,
+    { spaceId, modelKey },
+    transport,
+  );
+  const discovery = progressive ?? await requestFullRuntimeDiscovery(context, transport.baseUrl, transport);
+  return discoveryModel(discovery, spaceId, modelKey) ?? null;
 }
 
 export async function loadRuntimeDiscovery(
