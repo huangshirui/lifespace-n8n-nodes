@@ -69,7 +69,11 @@ test('Space selector survives External models while n8n dynamic contracts are no
 
   const spaces = await node.methods.loadOptions.getSpaces.call(current);
 
-  assert.deepEqual(spaces, [{ name: 'Test Space', value: 'spc_test' }]);
+  assert.deepEqual(spaces, [{
+    name: 'Test Space',
+    value: 'spc_test',
+    description: 'spc_test · 1 available Record Type',
+  }]);
   assert.deepEqual(current.calls.map((call) => call.url), [`${BASE_URL}/me/_discovery/inventory`]);
 });
 
@@ -79,6 +83,6 @@ test('Record Type selector advertises only supported Native models from mixed in
 
   const recordTypes = await node.methods.loadOptions.getRecordTypes.call(current);
 
-  assert.deepEqual(recordTypes.map((item) => [item.name, item.value]), [['Tasks', 'task']]);
+  assert.deepEqual(recordTypes.map((item) => [item.name, item.value]), [['Tasks (task)', 'task']]);
   assert.deepEqual(current.calls.map((call) => call.url), [`${BASE_URL}/me/_discovery/inventory`]);
 });
