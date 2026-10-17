@@ -615,7 +615,7 @@ function queryPage(context: IExecuteFunctions, itemIndex: number, response: unkn
 }
 
 function requiredAccessForOperation(operation: string): DiscoveryAccess {
-  return ['create', 'update', 'delete'].includes(operation) ? 'write' : 'read';
+  return ['create', 'update', 'delete', 'uploadFile'].includes(operation) ? 'write' : 'read';
 }
 
 function resourceMapperType(field: DiscoveryField): FieldType {
@@ -637,6 +637,9 @@ function resourceMapperType(field: DiscoveryField): FieldType {
       return 'object';
     case 'person_list':
     case 'record_list':
+    case 'enum_list':
+    case 'file_list':
+    case 'file_ref_list':
       return 'array';
     case 'enum':
       return 'options';

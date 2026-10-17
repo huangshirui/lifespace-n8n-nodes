@@ -44,7 +44,7 @@ export type DiscoveryRelation = {
 
 export type DiscoveryField = {
   key: string;
-  type: 'string' | 'text' | 'integer' | 'number' | 'boolean' | 'date' | 'instant' | 'datetime' | 'timezone' | 'enum' | 'enum_list' | 'file_ref_list' | 'person' | 'person_list' | 'record' | 'record_list' | 'range<date>' | 'range<instant>' | 'temporal_range' | 'recurrence_rule' | 'entity_ref';
+  type: 'string' | 'text' | 'integer' | 'number' | 'boolean' | 'date' | 'instant' | 'datetime' | 'timezone' | 'enum' | 'enum_list' | 'file' | 'file_list' | 'file_ref_list' | 'person' | 'person_list' | 'record' | 'record_list' | 'range<date>' | 'range<instant>' | 'temporal_range' | 'recurrence_rule' | 'entity_ref';
   valueSchema?: Record<string, unknown>;
   title?: string;
   description?: string;
@@ -59,6 +59,7 @@ export type DiscoveryField = {
   values?: string[];
   targetModel?: string;
   relation?: DiscoveryRelation;
+  upload?: { supported: true; maxBytes: number };
 };
 
 export type DiscoveryActionConcurrency = {
@@ -418,6 +419,7 @@ type ExternalSemanticField = {
   operators: string[];
   sortable: boolean;
   values?: string[];
+  upload?: { supported: true; maxBytes: number };
 };
 
 type ExternalSemanticDetail = {
@@ -787,6 +789,7 @@ function externalDetailedModel(detail: ExternalSemanticDetail, access: Discovery
       nullable: field.nullable,
       readOnly: !field.writable,
       values: field.values,
+      upload: field.upload,
     })),
     defaults: {},
     query: emptyQuery(detail.query.canonical),

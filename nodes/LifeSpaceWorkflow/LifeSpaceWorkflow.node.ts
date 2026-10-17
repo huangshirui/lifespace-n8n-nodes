@@ -10,6 +10,7 @@ import { NodeOperationError } from 'n8n-workflow';
 import { LifeSpace } from '../LifeSpace/LifeSpace.node';
 import { normalizeBaseUrl } from '../lifespaceDiscovery';
 import { restoreLifeSpaceContinueOnFailErrors } from './lifeSpaceErrorProjection';
+import { executeFileUploadWorkflow, getUploadFields } from './fileUpload';
 import {
   getCanonicalFilterFields,
   getCanonicalFilterOperators,
@@ -364,11 +365,78 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
       continue;
     }
 
+    if (property.name === 'operation') {
+      const options = [...(property.options ?? [])];
+      const updateIndex = options.findIndex((option) => 'value' in option && option.value === 'update');
+      const upload = {
+        name: 'Upload File',
+        value: 'uploadFile',
+        action: 'Upload a file',
+        description: 'Upload n8n binary data through a LifeSpace Upload Session. Native fields return a stable fil_* ID; External fields transfer bytes to the Provider.',
+      };
+      const next = updateIndex < 0
+        ? [...options, upload]
+        : [...options.slice(0, updateIndex), upload, ...options.slice(updateIndex)];
+      result.push({ ...property, options: next });
+      continue;
+    }
+
     if (property.name === 'spaceId') {
       result.push({
         ...property,
         displayOptions: { show: { resource: ['modelRecord', 'person'] } },
       });
+      continue;
+    }
+
+    if (property.name === 'recordId') {
+      result.push(
+        property,
+        {
+          displayName: 'Upload Field Name or ID',
+          name: 'uploadField',
+          type: 'options',
+          typeOptions: { loadOptionsMethod: 'getUploadFields', loadOptionsDependsOn: ['spaceId', 'recordType'] },
+          options: [],
+          default: '',
+          required: true,
+          displayOptions: { show: { resource: ['modelRecord'], operation: ['uploadFile'] } },
+          description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+        },
+        {
+          displayName: 'Record ID',
+          name: 'uploadRecordId',
+          type: 'string',
+          default: '',
+          displayOptions: { show: { resource: ['modelRecord'], operation: ['uploadFile'] } },
+          description: 'Required by External uploads; Native uploads may leave this empty and use the returned fil_* ID in a later Create or Update',
+        },
+        {
+          displayName: 'Input Binary Field',
+          name: 'uploadBinaryProperty',
+          type: 'string',
+          default: 'data',
+          required: true,
+          displayOptions: { show: { resource: ['modelRecord'], operation: ['uploadFile'] } },
+          description: 'Binary property containing the file bytes, for example data',
+        },
+        {
+          displayName: 'File Name',
+          name: 'uploadFileName',
+          type: 'string',
+          default: '',
+          displayOptions: { show: { resource: ['modelRecord'], operation: ['uploadFile'] } },
+          description: 'Optional override; by default the n8n binary file name is used',
+        },
+        {
+          displayName: 'Content Type',
+          name: 'uploadContentType',
+          type: 'string',
+          default: '',
+          displayOptions: { show: { resource: ['modelRecord'], operation: ['uploadFile'] } },
+          description: 'Optional MIME type override; by default the n8n binary MIME type is used',
+        },
+      );
       continue;
     }
 
@@ -705,6 +773,7 @@ export class LifeSpaceWorkflow extends LifeSpace {
         getCanonicalFilterOperators,
         getCanonicalFilterOptions,
         getCanonicalTimeWindowFields,
+        getUploadFields,
         getSortableFields: getHumanSortableFields,
       },
       resourceMapping: {
@@ -723,6 +792,10 @@ export class LifeSpaceWorkflow extends LifeSpace {
       ? String(this.getNodeParameter('resource', 0, '') ?? '')
       : '';
     if (resource === 'person') return executePersonWorkflow(this);
+    if (resource === 'modelRecord') {
+      const operation = String(this.getNodeParameter('operation', 0, '') ?? '');
+      if (operation === 'uploadFile') return executeFileUploadWorkflow(this);
+    }
     const executions = await LifeSpace.prototype.execute.call(canonicalOnlyExecutionContext(this));
     return restoreLifeSpaceContinueOnFailErrors(executions);
   }
