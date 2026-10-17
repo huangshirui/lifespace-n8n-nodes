@@ -65,9 +65,11 @@ function externalDetail(spaceId = 'spc_test') {
       description: 'Provider-neutral dynamic document.',
       access: other ? ['read', 'write'] : ['read'],
       fields: [
-        { key: 'f_title', title: 'Title', type: 'string', nullable: false, readable: true, writable: other, operators: ['eq', 'contains'], sortable: true },
-        { key: 'f_created', title: 'Created', type: 'instant', nullable: false, readable: true, writable: false, operators: ['eq', 'gte'], sortable: true },
-        { key: 'f_subject', title: 'Subject', type: 'entity_ref', valueSchema: { type: 'object', properties: { kind: { const: 'person' }, personId: { type: 'string' } }, required: ['kind', 'personId'], additionalProperties: false }, nullable: true, readable: true, writable: other, operators: [], sortable: false },
+        { key: 'title', title: 'Title', type: 'string', nullable: false, readable: true, writable: other, operators: ['eq', 'contains'], sortable: true },
+        { key: 'created', title: 'Created', type: 'instant', nullable: false, readable: true, writable: false, operators: ['eq', 'gte'], sortable: true },
+        { key: 'subject', title: 'Subject', type: 'entity_ref', valueSchema: { type: 'object', properties: { kind: { const: 'person' }, personId: { type: 'string' } }, required: ['kind', 'personId'], additionalProperties: false }, nullable: true, readable: true, writable: other, operators: [], sortable: false },
+        { key: 'tags', title: 'Tags', type: 'enum_list', values: ['Alpha', 'Beta'], nullable: false, readable: true, writable: other, operators: ['contains'], sortable: false },
+        { key: 'files', title: 'Files', type: 'file_ref_list', nullable: true, readable: true, writable: false, operators: [], sortable: false },
       ],
       actions: [], capabilities: [], capabilityBindings: {}, runtimeCapabilities,
       contract: { kind: 'dynamic', revision: null },
@@ -76,10 +78,11 @@ function externalDetail(spaceId = 'spc_test') {
         composition: { selectionFacets: ['search', 'filter'], selectionCombine: 'intersection', ordering: 'sort', pagination: 'cursor-pagination' },
         search: null,
         filter: { maxDepth: 2, maxNodes: 100, targets: [
-          { field: 'f_title', kind: 'field', valueType: 'string', operators: ['eq', 'contains'], nullable: false },
-          { field: 'f_created', kind: 'field', valueType: 'instant', operators: ['eq', 'gte'], nullable: false },
+          { field: 'title', kind: 'field', valueType: 'string', operators: ['eq', 'contains'], nullable: false },
+          { field: 'created', kind: 'field', valueType: 'instant', operators: ['eq', 'gte'], nullable: false },
+          { field: 'tags', kind: 'field', valueType: 'enum_list', operators: ['contains'], nullable: false },
         ] },
-        sort: { fields: ['f_title', 'f_created'], directions: ['asc', 'desc'], maxCriteria: 8, default: [], nullPlacement: 'provider-defined', stableTieBreaker: 'provider-defined', temporalRange: null },
+        sort: { fields: ['title', 'created'], directions: ['asc', 'desc'], maxCriteria: 8, default: [], nullPlacement: 'provider-defined', stableTieBreaker: 'provider-defined', temporalRange: null },
         pagination: { limit: { minimum: 1, maximum: 100, default: 100 }, cursor: { opaque: true, binds: ['space', 'model', 'schema'], snapshotConsistency: false } },
       } },
     },
@@ -144,8 +147,10 @@ test('selected External Record Type loads Space-local dynamic fields without fab
 
   const fieldContext = context({ spaceId: 'spc_other', operation: 'create', recordType: external.value });
   const fields = await node.methods.resourceMapping.getHumanRecordFields.call(fieldContext);
-  assert.deepEqual(fields.fields.map((field) => field.id), ['lsf:string:f_title', 'lsf:entity_ref:f_subject']);
-  assert.equal(fields.fields.find((field) => field.id === 'lsf:entity_ref:f_subject')?.type, 'object');
+  assert.deepEqual(fields.fields.map((field) => field.id), ['lsf:string:title', 'lsf:entity_ref:subject', 'lsf:enum_list:tags']);
+  assert.equal(fields.fields.find((field) => field.id === 'lsf:entity_ref:subject')?.type, 'object');
+  assert.equal(fields.fields.find((field) => field.id === 'lsf:enum_list:tags')?.type, 'array');
+  assert.equal(fields.fields.some((field) => field.id.includes('files')), false, 'read-only file_ref_list must not appear in mutation mapper');
   const selector = decodeRecordTypeSelector(external.value);
   assert.equal(selector.schemaHash, 'sha256:notion-b');
   assert.equal(fieldContext.calls.some((call) => call.url.endsWith('/spaces/spc_other/_discovery/models/health_document')), true);
