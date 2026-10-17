@@ -3,7 +3,9 @@ import fs from 'node:fs';
 function replaceOnce(path, from, to) {
   const before = fs.readFileSync(path, 'utf8');
   if (!before.includes(from)) throw new Error(`${path}: anchor not found: ${from.slice(0, 80)}`);
-  const after = before.replace(from, to);
+  // Use a callback so replacement text containing `$'` (for example a regex ending in `$`)
+  // is never interpreted as a String.replace replacement token.
+  const after = before.replace(from, () => to);
   fs.writeFileSync(path, after);
 }
 
@@ -79,7 +81,7 @@ replaceOnce(
         name: 'Upload File',
         value: 'uploadFile',
         action: 'Upload a file',
-        description: 'Upload n8n binary data through a LifeSpace Upload Session. Native fields return a stable fil_* ID; External fields transfer bytes to the Provider.',
+        description: 'Upload n8n binary data through a LifeSpace Upload Session. Native fields return a stable fil_* ID; External fields transfer bytes to the Provider',
       };
       const next = updateIndex < 0
         ? [...options, upload]
@@ -105,7 +107,7 @@ replaceOnce(
           default: '',
           required: true,
           displayOptions: { show: { resource: ['modelRecord'], operation: ['uploadFile'] } },
-          description: 'Native writable file/file_list fields and External file_ref_list fields that explicitly advertise upload capability.',
+          description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
         },
         {
           displayName: 'Record ID',
@@ -113,7 +115,7 @@ replaceOnce(
           type: 'string',
           default: '',
           displayOptions: { show: { resource: ['modelRecord'], operation: ['uploadFile'] } },
-          description: 'Required by External uploads. Native uploads may leave this empty and use the returned fil_* ID in a later Create or Update.',
+          description: 'Required by External uploads; Native uploads may leave this empty and use the returned fil_* ID in a later Create or Update',
         },
         {
           displayName: 'Input Binary Field',
@@ -122,7 +124,7 @@ replaceOnce(
           default: 'data',
           required: true,
           displayOptions: { show: { resource: ['modelRecord'], operation: ['uploadFile'] } },
-          description: 'n8n binary property containing the file bytes, for example data.',
+          description: 'Binary property containing the file bytes, for example data',
         },
         {
           displayName: 'File Name',
@@ -130,7 +132,7 @@ replaceOnce(
           type: 'string',
           default: '',
           displayOptions: { show: { resource: ['modelRecord'], operation: ['uploadFile'] } },
-          description: 'Optional override. By default the n8n binary file name is used.',
+          description: 'Optional override; by default the n8n binary file name is used',
         },
         {
           displayName: 'Content Type',
@@ -138,7 +140,7 @@ replaceOnce(
           type: 'string',
           default: '',
           displayOptions: { show: { resource: ['modelRecord'], operation: ['uploadFile'] } },
-          description: 'Optional MIME type override. By default the n8n binary MIME type is used.',
+          description: 'Optional MIME type override; by default the n8n binary MIME type is used',
         },
       );
       continue;
