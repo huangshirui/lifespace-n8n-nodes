@@ -46,7 +46,7 @@ function mapperType(field: DiscoveryField | undefined, valueType?: QueryPredicat
     'recurrence_rule',
     'entity_ref',
   ].includes(type)) return 'object';
-  if (type === 'person_list' || type === 'record_list') return 'array';
+  if (['person_list', 'record_list', 'enum_list', 'file_ref_list'].includes(type)) return 'array';
   if (type === 'enum') return 'options';
   return 'string';
 }

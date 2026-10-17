@@ -41,6 +41,7 @@ export type JsonSchema = {
   items?: JsonSchema;
   minItems?: number;
   maxItems?: number;
+  uniqueItems?: boolean;
   minLength?: number;
   maxLength?: number;
   minimum?: number;
@@ -222,6 +223,23 @@ function temporalRangeSchema(): JsonSchema {
   };
 }
 
+function fileRefListSchema(): JsonSchema {
+  return {
+    type: 'array',
+    maxItems: 100,
+    items: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', minLength: 1, maxLength: 512 },
+        url: { type: 'string', format: 'uri', maxLength: 8192 },
+        expiresAt: { type: 'string', format: 'date-time' },
+      },
+      required: ['name', 'url'],
+      additionalProperties: false,
+    },
+  };
+}
+
 function withNullable(field: DiscoveryField, schema: JsonSchema): JsonSchema {
   schema.description = fieldDescription(field);
   if (field.nullable === true) {
@@ -248,6 +266,17 @@ function fieldSchema(field: DiscoveryField): JsonSchema {
     case 'enum':
       if (!field.values?.length) throw new Error(`LifeSpace enum field ${field.key} has no published values`);
       schema = { type: 'string', enum: [...field.values] };
+      break;
+    case 'enum_list':
+      if (!field.values?.length) throw new Error(`LifeSpace enum_list field ${field.key} has no published values`);
+      schema = {
+        type: 'array',
+        uniqueItems: true,
+        items: { type: 'string', enum: [...field.values] },
+      };
+      break;
+    case 'file_ref_list':
+      schema = fileRefListSchema();
       break;
     case 'person':
     case 'record':
