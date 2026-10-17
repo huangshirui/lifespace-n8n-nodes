@@ -34,3 +34,7 @@ Canonical value is a references-only array of at most 100 entries:
 ## Compatibility rule
 
 LifeSpace is the source of truth for field type, writable/read-only state, query operators, stable key, and value constraints. This package projects those semantics into n8n UI and Agent Tool schemas and must not fork them.
+
+### Upload capability
+
+External `file_ref_list` remains read-only in ordinary Record mutation. When Runtime Discovery exposes `field.upload = { supported: true, maxBytes }`, the Workflow node may use the LifeSpace Upload Session. It never turns the field into a writable array and never contains Provider-specific Notion logic. The signed R2 URL is used without the LifeSpace Authorization header. Native `file` / `file_list` fields carry stable `fil_*` references; binary upload is a separate operation that returns the reference for later Record mutation.
