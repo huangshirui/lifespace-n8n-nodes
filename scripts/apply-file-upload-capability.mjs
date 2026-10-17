@@ -81,7 +81,7 @@ replaceOnce(
         name: 'Upload File',
         value: 'uploadFile',
         action: 'Upload a file',
-        description: 'Upload n8n binary data through a LifeSpace Upload Session. Native fields return a stable fil_* ID; External fields transfer bytes to the Provider',
+        description: 'Upload n8n binary data through a LifeSpace Upload Session. Native fields return a stable fil_* ID; External fields transfer bytes to the Provider.',
       };
       const next = updateIndex < 0
         ? [...options, upload]
