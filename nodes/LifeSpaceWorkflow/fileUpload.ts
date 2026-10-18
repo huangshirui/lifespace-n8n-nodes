@@ -53,7 +53,7 @@ function sessionData(
   const upload = data.upload;
   if (
     typeof data.id !== 'string'
-    || !/^upl_[A-Za-z0-9_-]+$/u.test(data.id)
+    || !/^upl_[a-f0-9]{32}$/u.test(data.id)
     || (data.destination !== 'native' && data.destination !== 'external')
     || !upload
     || typeof upload !== 'object'
