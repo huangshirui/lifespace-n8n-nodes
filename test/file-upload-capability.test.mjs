@@ -56,9 +56,9 @@ test('Agent Tool accepts stable Native File references but not binary payloads',
     { key: 'cover', title: 'Cover', type: 'file', nullable: false, readOnly: false },
     { key: 'attachments', title: 'Attachments', type: 'file_list', nullable: false, readOnly: false },
   ]), { spaceId: 'spc_test', operation: 'create' });
-  assert.equal(definition.schema.properties.cover.pattern, '^fil_[A-Za-z0-9_-]+$');
+  assert.equal(definition.schema.properties.cover.pattern, '^fil_[a-f0-9]{32}$');
   assert.equal(definition.schema.properties.attachments.type, 'array');
-  assert.equal(definition.schema.properties.attachments.items.pattern, '^fil_[A-Za-z0-9_-]+$');
+  assert.equal(definition.schema.properties.attachments.items.pattern, '^fil_[a-f0-9]{32}$');
 });
 
 test('Workflow upload uses authenticated Core calls but never forwards Authorization to presigned R2', async () => {
@@ -90,7 +90,7 @@ test('Workflow upload uses authenticated Core calls but never forwards Authoriza
         if (options.url.endsWith('/file-uploads')) {
           return {
             data: {
-              id: 'upl_1234',
+              id: 'upl_' + 'a'.repeat(32),
               destination: 'native',
               upload: {
                 method: 'PUT',
@@ -101,7 +101,7 @@ test('Workflow upload uses authenticated Core calls but never forwards Authoriza
             },
           };
         }
-        return { data: { id: 'fil_1234', name: 'note.txt', contentType: 'text/plain', size: 5 } };
+        return { data: { id: 'fil_' + 'b'.repeat(32), name: 'note.txt', contentType: 'text/plain', size: 5 } };
       },
       httpRequest: async (options) => {
         rawCalls.push(options);
@@ -120,5 +120,5 @@ test('Workflow upload uses authenticated Core calls but never forwards Authoriza
   assert.deepEqual(rawCalls[0].headers, { 'content-type': 'text/plain' });
   assert.equal(rawCalls[0].headers.Authorization, undefined);
   assert.ok(Buffer.isBuffer(rawCalls[0].body));
-  assert.equal(output[0][0].json.id, 'fil_1234');
+  assert.equal(output[0][0].json.id, 'fil_' + 'b'.repeat(32));
 });
