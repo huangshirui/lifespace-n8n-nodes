@@ -47,6 +47,7 @@ export type JsonSchema = {
   minimum?: number;
   maximum?: number;
   format?: string;
+  pattern?: string;
   default?: unknown;
   oneOf?: JsonSchema[];
   properties?: Record<string, JsonSchema>;
@@ -160,6 +161,8 @@ function fieldDescription(field: DiscoveryField): string {
   if (field.type === 'temporal_range') {
     return `${base} Supply one object with kind, start, and end. kind=date uses inclusive YYYY-MM-DD dates; kind=instant uses absolute RFC3339 date-times.`;
   }
+  if (field.type === 'file') return `${base} Supply one stable fil_* ID returned by the LifeSpace upload capability.`;
+  if (field.type === 'file_list') return `${base} Supply stable fil_* IDs returned by the LifeSpace upload capability.`;
   return base;
 }
 
@@ -273,6 +276,16 @@ function fieldSchema(field: DiscoveryField): JsonSchema {
         type: 'array',
         uniqueItems: true,
         items: { type: 'string', enum: [...field.values] },
+      };
+      break;
+    case 'file':
+      schema = { type: 'string', pattern: '^fil_[a-f0-9]{32}$' };
+      break;
+    case 'file_list':
+      schema = {
+        type: 'array',
+        uniqueItems: true,
+        items: { type: 'string', pattern: '^fil_[a-f0-9]{32}$' },
       };
       break;
     case 'file_ref_list':
