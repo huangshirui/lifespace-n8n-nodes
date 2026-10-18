@@ -279,13 +279,13 @@ function fieldSchema(field: DiscoveryField): JsonSchema {
       };
       break;
     case 'file':
-      schema = { type: 'string', pattern: '^fil_[A-Za-z0-9_-]+$' };
+      schema = { type: 'string', pattern: '^fil_[a-f0-9]{32}$' };
       break;
     case 'file_list':
       schema = {
         type: 'array',
         uniqueItems: true,
-        items: { type: 'string', pattern: '^fil_[A-Za-z0-9_-]+$' },
+        items: { type: 'string', pattern: '^fil_[a-f0-9]{32}$' },
       };
       break;
     case 'file_ref_list':
