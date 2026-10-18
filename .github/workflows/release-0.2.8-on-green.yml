@@ -1,0 +1,66 @@
+name: Release 0.2.8 after verified main CI
+
+# One-time bootstrap for v0.2.8; remove after the release.
+# A GITHUB_TOKEN-created tag does not trigger a push-tag workflow, so the
+# existing provenance-enabled Publish workflow is explicitly dispatched
+# on the new tag after its commit has been verified.
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  tag-and-dispatch:
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success'
+          && github.event.workflow_run.event == 'push'
+          && github.event.workflow_run.head_branch == 'main'
+          && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the exact verified main commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Validate release version, remote main, and tag absence
+        shell: bash
+        env:
+          VERIFIED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$VERIFIED_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$VERIFIED_SHA" || {
+            echo "Verified CI commit is no longer remote main; refusing to tag" >&2
+            exit 1
+          }
+          test "$(node -p "require('./package.json').version")" = "0.2.8"
+          test "$(node -p "require('./package-lock.json').version")" = "0.2.8"
+          test "$(node -p "require('./package-lock.json').packages[''].version")" = "0.2.8"
+          if git ls-remote --tags origin refs/tags/0.2.8 | grep -q .; then
+            echo "Tag 0.2.8 already exists; refusing to move or re-publish it" >&2
+            exit 1
+          fi
+
+      - name: Tag verified main and dispatch provenance Publish
+        shell: bash
+        env:
+          VERIFIED_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git tag 0.2.8 "$VERIFIED_SHA"
+          git push origin refs/tags/0.2.8
+          # GITHUB_TOKEN tag pushes do not trigger push workflows. Dispatch
+          # the existing trusted publishing workflow with the tag as ref.
+          gh workflow run publish.yml --ref 0.2.8
+          echo "Tagged $VERIFIED_SHA as 0.2.8 and dispatched Publish"
