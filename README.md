@@ -312,6 +312,23 @@ Execute Action performs zero Runtime Discovery requests. Human Action Input stil
 
 This means actions such as `complete` / `reopen` no longer ask users to type an internal version value.
 
+### Semantic Relations / 语义关系（Service Workflow）
+
+Use **LifeSpace → Resource: Semantic Relation** to manage directed, independently stored edges between existing LifeSpace records. This is a first-class UI for the Core [Semantic Relations contract](https://github.com/huangshirui/LifeSpace/blob/main/apps/core/src/semantic-relation-model-contract.ts), not a new Record field type.
+
+- **Create**: Select Space, set Source Model Key / Source Record ID, the registered Predicate (such as `relates_to`), and Target Model Key / Target Record ID. The source Model Definition must declare `semanticRelations.outgoing` for that predicate. Duplicate creation is idempotent according to Core.
+- **Get**: Supply `rel_*` ID, optionally hydrate the source, target, or both currently visible records.
+- **List**: Filter by Source Model Key + Source Record ID and/or Target Model Key + Target Record ID, with an optional Predicate. Target filters enable **reverse browsing**, but do not reverse the edge direction. Optional hydration returns visible endpoint labels/records. Both identifiers for each selected endpoint must be supplied together.
+- **Delete**: Supply `rel_*` ID. Deletes only the edge; source and target records remain untouched.
+
+**List pagination:** With **Return All = off**, the node returns **one n8n item** containing `{items, nextCursor}`, preserving the opaque cursor even for empty pages; feed `nextCursor` to a subsequent List call. With **Return All = on**, it follows server cursors and outputs each relation as its own n8n item. Auto-pagination is capped at 100 pages (100 items per request); narrow the filters for larger data sets.
+
+For example, link an Activity record (`activity / rec_...`) to a Task (`task / rec_...`) using `relates_to`. To read related tasks, List with **Source Model Key = activity**, **Source Record ID = its rec_* ID**, **Predicate = relates_to**, **Hydrate = Target**. To find Activities that point at a Task, List using **Target Model Key = task** and its record ID.
+
+Core enforces source-write/target-read authority for mutations and both endpoints' current read authority for reads, including Space, Model Policy and current credentials. The Workflow node uses only the configured **LifeSpace Service API** credential and never elevates authority or caches/hides these checks. Edge records do **not** appear in ordinary Record Get payloads. Fixed model references (`record`/`record_list`) are a separate mechanism.
+
+This resource consumes the currently published Core Semantic Relations API. An older Core deployment without these endpoints returns its normal HTTP error; it is not silently converted to a Record relation. **The npm package must be built/published and installed in n8n before this UI appears.**
+
 ### Advanced API Request
 
 The **API Request** resource is an escape hatch for LifeSpace routes that do not yet have dedicated node UX.
