@@ -11,6 +11,7 @@ import { LifeSpace } from '../LifeSpace/LifeSpace.node';
 import { normalizeBaseUrl } from '../lifespaceDiscovery';
 import { restoreLifeSpaceContinueOnFailErrors } from './lifeSpaceErrorProjection';
 import { executeFileUploadWorkflow, getUploadFields } from './fileUpload';
+import { executeSemanticRelationWorkflow, semanticRelationProperties } from './semanticRelations';
 import {
   getCanonicalFilterFields,
   getCanonicalFilterOperators,
@@ -357,11 +358,14 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
         (option) => !('value' in option) || option.value !== 'batchMutation',
       );
       const apiRequestIndex = options.findIndex((option) => 'value' in option && option.value === 'apiRequest');
-      const personOption = { name: 'Person', value: 'person' };
-      const personOptions = apiRequestIndex < 0
-        ? [...options, personOption]
-        : [...options.slice(0, apiRequestIndex), personOption, ...options.slice(apiRequestIndex)];
-      result.push({ ...property, options: personOptions }, ...personProperties());
+      const addedOptions = [
+        { name: 'Person', value: 'person' },
+        { name: 'Semantic Relation', value: 'semanticRelation' },
+      ];
+      const resourceOptions = apiRequestIndex < 0
+        ? [...options, ...addedOptions]
+        : [...options.slice(0, apiRequestIndex), ...addedOptions, ...options.slice(apiRequestIndex)];
+      result.push({ ...property, options: resourceOptions }, ...personProperties(), ...semanticRelationProperties());
       continue;
     }
 
@@ -384,7 +388,7 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
     if (property.name === 'spaceId') {
       result.push({
         ...property,
-        displayOptions: { show: { resource: ['modelRecord', 'person'] } },
+        displayOptions: { show: { resource: ['modelRecord', 'person', 'semanticRelation'] } },
       });
       continue;
     }
@@ -753,7 +757,7 @@ export class LifeSpaceWorkflow extends LifeSpace {
         light: 'file:lifespace.svg',
         dark: 'file:lifespace.dark.svg',
       },
-      subtitle: '={{$parameter["resource"] === "person" ? $parameter["personOperation"] : ($parameter["resource"] === "modelRecord" ? $parameter["operation"] : "API Request")}}',
+      subtitle: '={{$parameter["resource"] === "person" ? $parameter["personOperation"] : ($parameter["resource"] === "semanticRelation" ? $parameter["semanticRelationOperation"] : ($parameter["resource"] === "modelRecord" ? $parameter["operation"] : "API Request"))}}',
       description: 'Use LifeSpace with Service Authority in human-authored n8n workflows',
       credentials: [
         {
@@ -792,6 +796,7 @@ export class LifeSpaceWorkflow extends LifeSpace {
       ? String(this.getNodeParameter('resource', 0, '') ?? '')
       : '';
     if (resource === 'person') return executePersonWorkflow(this);
+    if (resource === 'semanticRelation') return executeSemanticRelationWorkflow(this);
     if (resource === 'modelRecord') {
       const operation = String(this.getNodeParameter('operation', 0, '') ?? '');
       if (operation === 'uploadFile') return executeFileUploadWorkflow(this);
