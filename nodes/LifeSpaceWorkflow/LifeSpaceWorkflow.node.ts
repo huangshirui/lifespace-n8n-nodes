@@ -339,6 +339,7 @@ function personProperties(): INodeProperties[] {
 
 function humanProperties(properties: INodeProperties[]): INodeProperties[] {
   const result: INodeProperties[] = [];
+  const relationProperties = semanticRelationProperties();
   for (const property of properties) {
     if ([
       'batchAuthorityMode',
@@ -365,7 +366,9 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
       const resourceOptions = apiRequestIndex < 0
         ? [...options, ...addedOptions]
         : [...options.slice(0, apiRequestIndex), ...addedOptions, ...options.slice(apiRequestIndex)];
-      result.push({ ...property, options: resourceOptions }, ...personProperties(), ...semanticRelationProperties());
+      // Keep the resource-specific operation next to Resource, as Record and Person do.
+      // The remaining relation inputs must follow Space, not precede it.
+      result.push({ ...property, options: resourceOptions }, ...personProperties(), ...relationProperties.slice(0, 1));
       continue;
     }
 
@@ -389,7 +392,7 @@ function humanProperties(properties: INodeProperties[]): INodeProperties[] {
       result.push({
         ...property,
         displayOptions: { show: { resource: ['modelRecord', 'person', 'semanticRelation'] } },
-      });
+      }, ...relationProperties.slice(1));
       continue;
     }
 
