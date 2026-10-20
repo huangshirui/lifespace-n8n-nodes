@@ -99,7 +99,7 @@ export function semanticRelationProperties(): INodeProperties[] {
       type: 'boolean',
       default: false,
       displayOptions: operationShow('list'),
-      description: 'Whether to follow all available relation cursors. The node stops after at most 100 pages to bound requests',
+      description: 'Whether to follow all available relation cursors. The node stops after at most 100 pages to bound requests.',
     },
     {
       displayName: 'Limit',
@@ -108,7 +108,7 @@ export function semanticRelationProperties(): INodeProperties[] {
       typeOptions: { minValue: 1, maxValue: 100, numberPrecision: 0 },
       default: 50,
       displayOptions: { show: { resource: ['semanticRelation'], semanticRelationOperation: ['list'], relationReturnAll: [false] } },
-      description: 'Maximum relations in the current page (1 to 100). The response includes nextCursor',
+      description: 'Maximum relations in the current page (1 to 100). The response includes nextCursor.',
     },
     stringProperty('Cursor', 'relationCursor', ['list'],
       'Opaque nextCursor returned from an earlier List call; ignored when Return All is enabled'),
