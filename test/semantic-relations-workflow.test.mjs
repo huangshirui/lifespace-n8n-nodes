@@ -50,6 +50,40 @@ test('Semantic Relation appears as a first-class Service-authority workflow reso
   assert.ok(property(node, 'relationQuerySourceRecordId').displayOptions.show.semanticRelationOperation.includes('list'));
 });
 
+function visibleRelationFields(node, operation, returnAll = false) {
+  return node.description.properties
+    .filter((entry) => {
+      if (entry.name === 'resource') return true;
+      const show = entry.displayOptions?.show;
+      if (!show?.resource?.includes('semanticRelation')) return false;
+      if (show.semanticRelationOperation && !show.semanticRelationOperation.includes(operation)) return false;
+      if (show.relationReturnAll && !show.relationReturnAll.includes(returnAll)) return false;
+      return true;
+    })
+    .map((entry) => entry.name);
+}
+
+test('Semantic Relation controls follow Resource → Operation → Space → fields for every operation', () => {
+  const node = new LifeSpaceWorkflow();
+  assert.deepEqual(visibleRelationFields(node, 'create'), [
+    'resource', 'semanticRelationOperation', 'spaceId',
+    'relationSourceModelKey', 'relationSourceRecordId', 'relationPredicate',
+    'relationTargetModelKey', 'relationTargetRecordId',
+  ]);
+  assert.deepEqual(visibleRelationFields(node, 'get'), [
+    'resource', 'semanticRelationOperation', 'spaceId', 'relationId', 'relationHydrate',
+  ]);
+  assert.deepEqual(visibleRelationFields(node, 'delete'), [
+    'resource', 'semanticRelationOperation', 'spaceId', 'relationId',
+  ]);
+  assert.deepEqual(visibleRelationFields(node, 'list'), [
+    'resource', 'semanticRelationOperation', 'spaceId',
+    'relationQuerySourceModelKey', 'relationQuerySourceRecordId',
+    'relationQueryTargetModelKey', 'relationQueryTargetRecordId',
+    'relationQueryPredicate', 'relationHydrate', 'relationReturnAll', 'relationLimit', 'relationCursor',
+  ]);
+});
+
 test('Create uses one governed Core POST with directed record endpoints', async () => {
   const node = new LifeSpaceWorkflow();
   const context = executionContext({
