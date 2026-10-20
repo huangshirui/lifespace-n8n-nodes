@@ -16,7 +16,7 @@ test('0.2.0 ordinary Workflow exposes Record, Person, and API Request with Servi
 
   const resource = property(node, 'resource');
   assert.ok(resource);
-  assert.deepEqual(resource.options.map((option) => option.value), ['modelRecord', 'person', 'apiRequest']);
+  assert.deepEqual(resource.options.map((option) => option.value), ['modelRecord', 'person', 'semanticRelation', 'apiRequest']);
 
   const personOperation = property(node, 'personOperation');
   assert.ok(personOperation);
