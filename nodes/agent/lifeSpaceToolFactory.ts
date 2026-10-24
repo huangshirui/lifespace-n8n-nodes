@@ -161,6 +161,7 @@ function fieldDescription(field: DiscoveryField): string {
   if (field.type === 'temporal_range') {
     return `${base} Supply one object with kind, start, and end. kind=date uses inclusive YYYY-MM-DD dates; kind=instant uses absolute RFC3339 date-times.`;
   }
+  if (field.type === 'location') return `${base} Supply {name,address?,coordinates?} with optional WGS84 latitude/longitude. No automatic geocoding; do not invent coordinates.`;
   if (field.type === 'file') return `${base} Supply one stable fil_* ID returned by the LifeSpace upload capability.`;
   if (field.type === 'file_list') return `${base} Supply stable fil_* IDs returned by the LifeSpace upload capability.`;
   return base;
@@ -315,6 +316,7 @@ function fieldSchema(field: DiscoveryField): JsonSchema {
     case 'temporal_range':
       schema = temporalRangeSchema();
       break;
+    case 'location':
     case 'recurrence_rule':
     case 'entity_ref':
       if (!field.valueSchema) throw new Error(`LifeSpace structured field ${field.key} is missing canonical valueSchema`);
