@@ -245,6 +245,43 @@ function normalizeRangeValue(
   throw new Error(`${target.field} range kind is invalid`);
 }
 
+function locationDistanceValueSchema(): JsonSchema {
+  return {
+    type: 'object',
+    description: 'Distance around an explicit WGS84 point; do not infer coordinates from a place name.',
+    properties: {
+      point: {
+        type: 'object',
+        properties: {
+          latitude: { type: 'number', minimum: -90, maximum: 90 },
+          longitude: { type: 'number', minimum: -180, maximum: 180 },
+        },
+        required: ['latitude', 'longitude'],
+        additionalProperties: false,
+      },
+      meters: { type: 'number', minimum: 0.000000001, maximum: 5000000 },
+    },
+    required: ['point', 'meters'],
+    additionalProperties: false,
+  };
+}
+
+function normalizeLocationDistance(raw: unknown): Record<string, unknown> {
+  const value = asObject(raw);
+  const point = asObject(value.point);
+  if (Object.keys(value).length !== 2 || Object.keys(point).length !== 2) {
+    throw new Error('withinDistance accepts only {point:{latitude,longitude},meters}');
+  }
+  const { latitude, longitude } = point;
+  const { meters } = value;
+  if (typeof latitude !== 'number' || !Number.isFinite(latitude) || latitude < -90 || latitude > 90
+    || typeof longitude !== 'number' || !Number.isFinite(longitude) || longitude < -180 || longitude > 180
+    || typeof meters !== 'number' || !Number.isFinite(meters) || meters <= 0 || meters > 5000000) {
+    throw new Error('withinDistance requires WGS84 latitude/longitude and 0 < meters <= 5000000');
+  }
+  return { point: { latitude, longitude }, meters };
+}
+
 function isRangeOperator(target: DiscoveryCanonicalFilterTarget, operator: string): boolean {
   const valueType = String(target.valueType);
   return ['within', 'overlaps', 'before', 'after'].includes(operator)
@@ -285,12 +322,14 @@ function filterBranches(model: DiscoveryModel, target: DiscoveryCanonicalFilterT
   const field = model.fields.find((entry) => entry.key === target.field);
   const noValue = target.operators.filter((operator) => operator === 'isNull' || operator === 'isNotNull');
   const kind = target.operators.filter((operator) => operator === 'kindIs');
+  const spatial = target.operators.filter((operator) => operator === 'withinDistance');
   const range = target.operators.filter((operator) => isRangeOperator(target, operator));
   const noValueSet = new Set<string>(noValue);
   const kindSet = new Set<string>(kind);
   const rangeSet = new Set<string>(range);
+  const spatialSet = new Set<string>(spatial);
   const scalar = target.operators.filter(
-    (operator) => !noValueSet.has(operator) && !kindSet.has(operator) && !rangeSet.has(operator),
+    (operator) => !noValueSet.has(operator) && !kindSet.has(operator) && !rangeSet.has(operator) && !spatialSet.has(operator),
   );
   const branches: JsonSchema[] = [];
   if (noValue.length) branches.push(filterBranch(model, target, noValue));
@@ -303,6 +342,7 @@ function filterBranches(model: DiscoveryModel, target: DiscoveryCanonicalFilterT
       rangeValueSchema(target, target.field !== calendarRangeField),
     ));
   }
+  if (spatial.length) branches.push(filterBranch(model, target, spatial, locationDistanceValueSchema()));
   if (kind.length) branches.push(filterBranch(model, target, kind, { type: 'string', enum: ['date', 'instant'] }));
   if (scalar.length) branches.push(filterBranch(model, target, scalar, scalarValueSchema(field, target)));
   return branches;
@@ -427,7 +467,9 @@ function predicate(model: DiscoveryModel, raw: unknown, viewingTimezone?: string
   return {
     field,
     op,
-    value: rangeOperator ? normalizeRangeValue(target, input.value, viewingTimezone) : input.value,
+    value: op === 'withinDistance'
+      ? normalizeLocationDistance(input.value)
+      : rangeOperator ? normalizeRangeValue(target, input.value, viewingTimezone) : input.value,
   };
 }
 
