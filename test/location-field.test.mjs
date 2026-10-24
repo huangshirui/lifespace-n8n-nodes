@@ -68,5 +68,5 @@ test('n8n human query JSON input preserves typed withinDistance value', () => {
       value: JSON.stringify(point) }],
     [],
   );
-  assert.deepEqual(result, { field: 'location', op: 'withinDistance', value: point });
+  assert.deepEqual(result, [{ field: 'location', op: 'withinDistance', value: point }]);
 });
