@@ -32,6 +32,7 @@ const OPERATOR_LABELS: Record<string, string> = {
   before: 'Before',
   after: 'After',
   kindIs: 'Range Kind Is',
+  withinDistance: 'Within Distance (meters)',
 };
 
 function label(field: DiscoveryField | undefined, key: string): string {
