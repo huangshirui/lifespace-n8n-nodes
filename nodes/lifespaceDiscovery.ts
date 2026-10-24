@@ -44,7 +44,7 @@ export type DiscoveryRelation = {
 
 export type DiscoveryField = {
   key: string;
-  type: 'string' | 'text' | 'integer' | 'number' | 'boolean' | 'date' | 'instant' | 'datetime' | 'timezone' | 'enum' | 'enum_list' | 'file' | 'file_list' | 'file_ref_list' | 'person' | 'person_list' | 'record' | 'record_list' | 'range<date>' | 'range<instant>' | 'temporal_range' | 'recurrence_rule' | 'entity_ref';
+  type: 'string' | 'text' | 'integer' | 'number' | 'boolean' | 'date' | 'instant' | 'datetime' | 'timezone' | 'enum' | 'enum_list' | 'file' | 'file_list' | 'file_ref_list' | 'person' | 'person_list' | 'record' | 'record_list' | 'range<date>' | 'range<instant>' | 'temporal_range' | 'location' | 'recurrence_rule' | 'entity_ref';
   valueSchema?: Record<string, unknown>;
   title?: string;
   description?: string;
