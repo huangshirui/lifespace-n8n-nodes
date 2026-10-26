@@ -137,7 +137,8 @@ test('Human Workflow Resource Mapper presents Location as a structured object', 
   };
   const node = new LifeSpaceWorkflow();
   const mapped = await node.methods.resourceMapping.getHumanRecordFields.call(context);
-  const location = mapped.fields.find((field) => field.id === 'location');
+  const location = mapped.fields.find((field) => field.displayName === 'Location');
   assert.ok(location, 'Location should be available in the Resource Mapper');
   assert.equal(location.type, 'object');
+  assert.match(location.id, /^lsf:location:/u);
 });
