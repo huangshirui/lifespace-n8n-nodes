@@ -115,7 +115,7 @@ Current Calendar models expose the canonical `capabilityBindings.calendar.rangeF
 
 ## LifeSpace contract compatibility
 
-This package follows the current LifeSpace Core Kernel `0.46.0` contract family on `main`. Integration/Eventing is independently versioned at `0.3.0`.
+This package's supported n8n adapter surfaces are aligned to LifeSpace Core Kernel `0.53.0` on `main`; ordinary-model semantics remain Discovery-driven and are pinned by the published model schema hash, not inferred from the Kernel version. Integration/Eventing is independently versioned at `0.3.0`. This compatibility declaration describes source-level integration and regression coverage, **not** proof that all Core capabilities or every environment's latest migrations are deployed. See [0.2.10 compatibility notes](docs/core-compatibility-0.2.10.md).
 
 The current authority model separates verified Application / Principal / Actor context, supports Agent-as-Principal and bounded Delegation chains, and requires an explicit current `dlg_*` whenever an Agent executes under represented User authority. The adapter consumes the platform contract; it does not mint its own represented-user tokens or maintain a second authorization state.
 
@@ -145,6 +145,11 @@ The UX depends on these Kernel capabilities:
 - `0.44.0`: first-class opaque `lsp_agt_*` Agent API credentials authenticate Application + Agent Actor directly at Core;
 - `0.45.0`: transport-independent `arq_*` Authorization Request lifecycle with request/confirm/deny/cancel and atomic Delegation materialization;
 - `0.46.0`: first-class non-atomic `POST /spaces/{spaceId}/models/bulk` with independent per-item outcomes and `blk_*` correlation, while `/models/batch` remains the atomic `cgs_*` ChangeSet profile.
+- `0.47.0`: first-class Space Person Directory CRUD, search and alternate-name updates; n8n exposes a dedicated Person resource in both Workflow and Agent Tool.
+- `0.49.0`: configuration-time Model Semantic Discovery without requiring a Space Data Grant or Delegation; execution still rechecks current Authority.
+- `0.51.0`: `recurrence_rule` and `entity_ref` use the Discovery-published structured `valueSchema`, rather than an n8n-owned schema.
+- `0.52.0`: Native/External model discovery union; External models remain bound to a source Space and the current Provider capability ceiling.
+- `0.53.0`: current Core Kernel compatibility baseline, with existing Person Directory and Canonical Query semantics retained.
 
 The adapter prefers the `0.27+` progressive flow while configuring a node:
 
@@ -163,6 +168,12 @@ Execution is deliberately narrower. Get/List/Create/Update/Delete and Execute Ac
 The legacy aggregate `GET /me/_discovery` remains an intentional design-time compatibility fallback. Neither cached Discovery nor relation lookup is treated as authorization proof; every mutation still goes through canonical LifeSpace Runtime enforcement.
 
 Ordinary Record CRUD/Action routes remain model-contract surfaces derived from published Model Definitions; the n8n adapter does not maintain a second copy of those schemas.
+
+
+
+### Location field and schema migration / 位置字段与迁移
+
+As of n8n-nodes-lifespace `0.2.10`, when the target LifeSpace environment publishes a `location` field (such as the migrated Event model), Workflow Create/Update exposes the canonical structured object through the Resource Mapper; Agent Tools reuse the Core `valueSchema`. Canonical Query supports `withinDistance` (WGS84 point + meters), `isNull` and `isNotNull`. A place name alone is not geocoded or assigned inferred coordinates by the adapter. A saved Agent Tool pins the selected Model Discovery snapshot; after a breaking model migration, reselect or refresh the Record Type/Tool before using the new field.
 
 ## Canonical Query
 
