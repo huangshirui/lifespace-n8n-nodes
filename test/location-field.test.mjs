@@ -6,6 +6,8 @@ const require = createRequire(import.meta.url);
 const { genericQuerySchema, compileGenericQuery } = require('../dist/nodes/agent/lifeSpaceGenericQueryTool.js');
 const { queryPredicates } = require('../dist/nodes/shared/lifeSpaceQuerySemantics.js');
 const { humanFilterOperatorSelector, projectHumanFilterBuilder } = require('../dist/nodes/LifeSpaceWorkflow/humanProjection.js');
+const { buildAgentToolDefinition } = require('../dist/nodes/agent/lifeSpaceToolFactory.js');
+const { LifeSpaceWorkflow } = require('../dist/nodes/LifeSpaceWorkflow/LifeSpaceWorkflow.node.js');
 
 const model = {
   key: 'event',
@@ -69,4 +71,74 @@ test('n8n human query JSON input preserves typed withinDistance value', () => {
     [],
   );
   assert.deepEqual(result, [{ field: 'location', op: 'withinDistance', value: point }]);
+});
+
+test('Agent Create exposes the Discovery-provided Location object schema (not a string)', () => {
+  const definition = buildAgentToolDefinition({
+    ...model,
+    schemaHash: 'sha256:location-model',
+    display: { singular: 'Event', plural: 'Events' },
+    description: null,
+    access: ['read', 'write'],
+    defaults: {},
+    actions: [],
+  }, { spaceId: 'spc_test', operation: 'create' });
+  const location = definition.schema.properties.location;
+  const objectSchema = location.oneOf.find((branch) => branch.type === 'object');
+  assert.deepEqual(objectSchema.required, ['name']);
+  assert.equal(objectSchema.additionalProperties, false);
+  assert.deepEqual(Object.keys(objectSchema.properties), ['name', 'coordinates']);
+});
+
+test('Human Workflow Resource Mapper presents Location as a structured object', async () => {
+  const inventory = {
+    data: {
+      semanticDetailPathTemplate: '/api/v1/spaces/{spaceId}/_discovery/models/{modelKey}',
+      models: [{ key: 'event', version: 7, schemaHash: 'sha256:location-model',
+        display: { singular: 'Event', plural: 'Events' }, capabilities: [], actions: [] }],
+      spaces: [{ spaceId: 'spc_test', spaceName: 'Test Space',
+        models: [{ modelKey: 'event', access: ['read', 'write'] }] }],
+    },
+  };
+  const detail = {
+    data: {
+      ...model,
+      version: 7,
+      schemaHash: 'sha256:location-model',
+      display: { singular: 'Event', plural: 'Events' },
+      declaredAccess: ['read', 'write'],
+      defaults: {},
+      actions: [],
+      query: {
+        ...model.query,
+        searchable: [], filterable: [], sortable: [], search: null, filters: [],
+        comparisons: [], capabilityQueries: [],
+        sort: { parameter: 'sort', syntax: 'field:direction', repeatable: true,
+          ordered: true, maxCriteria: 8, genericDefault: [], envelopeFields: [],
+          nullPlacement: 'last', genericValues: [] },
+        pagination: { limit: { parameter: 'limit', minimum: 1, maximum: 200, default: 100 },
+          cursor: { parameter: 'cursor', type: 'string' } },
+      },
+    },
+  };
+  const parameters = { spaceId: 'spc_test', recordType: 'event', operation: 'create' };
+  const context = {
+    getNode: () => ({ name: 'LifeSpace' }),
+    getCredentials: async () => ({ baseUrl: 'https://example.invalid/api/v1' }),
+    getNodeParameter: (key, fallback) => parameters[key] ?? fallback,
+    getCurrentNodeParameter: (key) => parameters[key],
+    helpers: {
+      async httpRequestWithAuthentication(_credentialName, options) {
+        if (options.url.endsWith('/me/_discovery/inventory')) return inventory;
+        if (options.url.endsWith('/spaces/spc_test/_discovery/models/event')) return detail;
+        throw new Error('Unexpected Discovery request');
+      },
+    },
+  };
+  const node = new LifeSpaceWorkflow();
+  const mapped = await node.methods.resourceMapping.getHumanRecordFields.call(context);
+  const location = mapped.fields.find((field) => field.displayName === 'Location');
+  assert.ok(location, 'Location should be available in the Resource Mapper');
+  assert.equal(location.type, 'object');
+  assert.match(location.id, /^lsf:location:/u);
 });
