@@ -632,6 +632,7 @@ function resourceMapperType(field: DiscoveryField): FieldType {
     case 'range<date>':
     case 'range<instant>':
     case 'temporal_range':
+    case 'location':
     case 'recurrence_rule':
     case 'entity_ref':
       return 'object';

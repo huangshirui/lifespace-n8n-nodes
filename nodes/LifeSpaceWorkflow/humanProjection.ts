@@ -45,6 +45,7 @@ function mapperType(field: DiscoveryField | undefined, valueType?: QueryPredicat
     'temporal-range',
     'recurrence_rule',
     'entity_ref',
+    'location',
   ].includes(type)) return 'object';
   if (['person_list', 'record_list', 'enum_list', 'file_list', 'file_ref_list'].includes(type)) return 'array';
   if (type === 'enum') return 'options';
@@ -493,7 +494,7 @@ function humanFilterConditions(value: unknown): HumanFilterCondition[] {
 }
 
 function structuredQueryValue(predicate: QueryPredicate): boolean {
-  if (predicate.operator === 'within') return true;
+  if (predicate.operator === 'within' || predicate.operator === 'withinDistance') return true;
   if (predicate.operator === 'kindIs') return false;
   return rangeLikeValueType(predicate.valueType);
 }
